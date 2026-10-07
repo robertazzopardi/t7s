@@ -15,6 +15,44 @@ const DEFAULTS: &[(&str, KeyCode)] = &[
     ("remove", KeyCode::Char('D')),
 ];
 
+/// Actions live at the same time (every view shows a subset of these).
+const SCREENS: &[(&str, &[&str])] = &[(
+    "resource list",
+    &[
+        "start_stop",
+        "restart",
+        "logs",
+        "exec",
+        "describe",
+        "remove",
+    ],
+)];
+
+/// Fixed keys an action must not take over (navigation, quit, search...).
+const RESERVED: &[KeyCode] = &[
+    KeyCode::Esc,
+    KeyCode::Enter,
+    KeyCode::Delete,
+    KeyCode::Up,
+    KeyCode::Down,
+    KeyCode::Char('q'),
+    KeyCode::Char('/'),
+    KeyCode::Char(':'),
+    KeyCode::Char('a'),
+    KeyCode::Char('p'),
+    KeyCode::Char('i'),
+    KeyCode::Char('W'),
+    KeyCode::Char('j'),
+    KeyCode::Char('k'),
+    KeyCode::Char('g'),
+    KeyCode::Char('G'),
+    KeyCode::Char('S'),
+    KeyCode::Char('1'),
+    KeyCode::Char('2'),
+    KeyCode::Char('3'),
+    KeyCode::Char('4'),
+];
+
 /// Built-in bindings only; never touches the filesystem (tests and
 /// `App::new` use this).
 #[must_use]
@@ -27,7 +65,8 @@ pub fn defaults() -> Keymap {
 #[must_use]
 pub fn load() -> (Keymap, Vec<String>) {
     let mut keymap = defaults();
-    let warnings = keymap.load_overrides(PKG_NAME);
+    let mut warnings = keymap.load_overrides(PKG_NAME);
+    warnings.extend(keymap.validate(DEFAULTS, SCREENS, RESERVED, "keys.yml"));
     (keymap, warnings)
 }
 

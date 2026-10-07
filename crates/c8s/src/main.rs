@@ -22,9 +22,9 @@ async fn main() -> Result<()> {
     let result = run(|terminal| {
         let mut app = App::new();
         app.keymap = keymap;
-        if !warnings.is_empty() {
-            app.status_line
-                .set_message(format!("Config: {}", warnings.join("; ")));
+        if let Some(summary) = k9tui::config_dir::summarize_warnings(&warnings)
+        {
+            app.status_line.set_message(summary);
         }
         app.run(terminal)
     });

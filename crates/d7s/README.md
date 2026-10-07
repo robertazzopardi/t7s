@@ -125,6 +125,10 @@ Remappable actions (default key): `new_connection` (`n`), `edit_connection`
 remappable. The hotkey bar shows remapped keys; the `?` help panel still lists
 the default keys.
 
-Bad entries (unknown action, unknown key name, invalid YAML) are ignored with
-a one-line warning in the status bar; defaults stay in force. Bind each key
-to one action per screen, since conflicts are not detected.
+Bad entries (unknown action, unknown key name, invalid YAML, a key already
+used for navigation/quit/Esc) are ignored with a one-line warning in the
+status bar (all warnings are also printed on exit); defaults stay in force.
+Two actions on the same key on one screen are warned about, but only the
+first match fires. Color specs support ANSI names and 6-digit `#rrggbb`
+only (no `#rgb`, `rgb(...)` or 256-color indices). Config files over 256 KiB
+are ignored.

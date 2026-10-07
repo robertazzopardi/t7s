@@ -3,7 +3,10 @@ use std::{collections::HashMap, io::ErrorKind, path::Path};
 use crossterm::event::KeyCode;
 use serde::Deserialize;
 
-use crate::{config_dir::config_dir, widgets::hotkey::Hotkey};
+use crate::{
+    config_dir::{config_dir, read_config},
+    widgets::hotkey::Hotkey,
+};
 
 /// Parse a `keys.yml` key spec: a single character (`"s"`, `"?"`) or a
 /// named key (`"esc"`, `"enter"`, `"f5"`, `"pageup"`, ...), case-insensitive.
@@ -79,7 +82,7 @@ impl Keymap {
 
     /// Like [`Self::load_overrides`] but from an explicit file path.
     pub fn load_overrides_from(&mut self, path: &Path) -> Vec<String> {
-        match std::fs::read_to_string(path) {
+        match read_config(path) {
             Ok(contents) => {
                 self.apply_yaml(&contents, &path.display().to_string())
             }
@@ -130,6 +133,46 @@ impl Keymap {
                 warnings.push(format!(
                     "{source}: '{action}': unknown key '{spec}'; keeping default"
                 ));
+            }
+        }
+        warnings
+    }
+
+    /// Post-load sanity check. A binding that lands on a `reserved` key
+    /// (navigation, quit, Esc...) would shadow it, so it is reset to its
+    /// default. Two actions of one `screen` on the same key can't both fire
+    /// (the first match arm wins), so that is reported (bindings are kept).
+    pub fn validate(
+        &mut self,
+        defaults: &[(&'static str, KeyCode)],
+        screens: &[(&str, &[&str])],
+        reserved: &[KeyCode],
+        source: &str,
+    ) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for (action, default) in defaults {
+            if let Some(code) = self.bindings.get_mut(action)
+                && code != default
+                && reserved.contains(code)
+            {
+                warnings.push(format!(
+                    "{source}: '{action}': {code} is reserved; keeping default"
+                ));
+                *code = *default;
+            }
+        }
+        for (screen, actions) in screens {
+            for (i, a) in actions.iter().enumerate() {
+                for b in actions.iter().skip(i + 1) {
+                    if let (Some(ka), Some(kb)) =
+                        (self.bindings.get(a), self.bindings.get(b))
+                        && ka == kb
+                    {
+                        warnings.push(format!(
+                            "{source}: '{a}' and '{b}' share key {ka} on the {screen} screen; only one will fire"
+                        ));
+                    }
+                }
             }
         }
         warnings

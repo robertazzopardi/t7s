@@ -23,6 +23,9 @@ tokio = { version = "1.54.1", default-features = false, features = ["rt", "sync"
 unicode-width = { version = "0.2", default-features = false }
 directories = "6.0.0"
 serde = { version = "1", features = ["derive"] }
+# NOTE: serde_yaml 0.9 is deprecated/unmaintained upstream. Swapping to a
+# maintained fork (serde_norway / serde_yml / yaml-rust2) is a pending design
+# decision; all uses are confined to keymap.rs and theme.rs.
 serde_yaml = "0.9"
 
 [dev-dependencies]

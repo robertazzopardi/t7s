@@ -27,6 +27,90 @@ const DEFAULTS: &[(&str, KeyCode)] = &[
     ("delete_row", KeyCode::Char('D')),
 ];
 
+/// Actions that can be live at the same time, per screen. Keys are checked
+/// for duplicates within a screen only (`e`/`D` are deliberately shared
+/// across screens).
+const SCREENS: &[(&str, &[&str])] = &[
+    (
+        "connection list",
+        &[
+            "new_connection",
+            "edit_connection",
+            "delete_connection",
+            "describe",
+            "open_connection",
+            "copy_value",
+        ],
+    ),
+    (
+        "database",
+        &[
+            "sql_editor",
+            "table_structure",
+            "describe",
+            "run_sql",
+            "copy_value",
+        ],
+    ),
+    (
+        "table data",
+        &[
+            "sql_editor",
+            "table_structure",
+            "describe",
+            "run_sql",
+            "copy_value",
+            "refresh",
+            "new_row",
+            "duplicate_row",
+            "commit_row",
+            "delete_row",
+        ],
+    ),
+];
+
+/// Fixed keys an action must not take over (navigation, quit, help, Esc...).
+const RESERVED: &[KeyCode] = &[
+    KeyCode::Esc,
+    KeyCode::Enter,
+    KeyCode::Up,
+    KeyCode::Down,
+    KeyCode::Left,
+    KeyCode::Right,
+    KeyCode::Char('q'),
+    KeyCode::Char('?'),
+    KeyCode::Char('/'),
+    KeyCode::Char(':'),
+    KeyCode::Char('#'),
+    KeyCode::Char('h'),
+    KeyCode::Char('j'),
+    KeyCode::Char('k'),
+    KeyCode::Char('l'),
+    KeyCode::Char('g'),
+    KeyCode::Char('G'),
+    KeyCode::Char('0'),
+    KeyCode::Char('$'),
+    KeyCode::Char(' '),
+    KeyCode::Char('a'),
+    KeyCode::Char('A'),
+    KeyCode::Char('b'),
+    KeyCode::Char('i'),
+    KeyCode::Char('L'),
+    KeyCode::Char('N'),
+    KeyCode::Char('O'),
+    KeyCode::Char('p'),
+    KeyCode::Char('R'),
+    KeyCode::Char('w'),
+    KeyCode::Char('W'),
+    KeyCode::Char('x'),
+    KeyCode::Char('Y'),
+    KeyCode::Char('1'),
+    KeyCode::Char('2'),
+    KeyCode::Char('3'),
+    KeyCode::Char('4'),
+    KeyCode::Char('5'),
+];
+
 /// Built-in bindings only; never touches the filesystem (tests and
 /// `App::new` use this).
 #[must_use]
@@ -39,7 +123,8 @@ pub fn defaults() -> Keymap {
 #[must_use]
 pub fn load() -> (Keymap, Vec<String>) {
     let mut keymap = defaults();
-    let warnings = keymap.load_overrides(PKG_NAME);
+    let mut warnings = keymap.load_overrides(PKG_NAME);
+    warnings.extend(keymap.validate(DEFAULTS, SCREENS, RESERVED, "keys.yml"));
     (keymap, warnings)
 }
 

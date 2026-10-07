@@ -3,7 +3,7 @@ use std::{collections::HashMap, io::ErrorKind, path::Path, sync::OnceLock};
 use ratatui::style::{Color, Modifier, Style};
 use serde::Deserialize;
 
-use crate::config_dir::config_dir;
+use crate::config_dir::{config_dir, read_config};
 
 /// Named colors that make up a skin. Grouped by role, not by widget — several
 /// widgets share a role (e.g. `muted` backs borders, labels, and idle status).
@@ -75,7 +75,8 @@ fn palette() -> Palette {
 #[must_use]
 pub fn parse_color(s: &str) -> Option<Color> {
     if let Some(hex) = s.strip_prefix('#') {
-        if hex.len() == 6 {
+        // `from_str_radix` accepts a leading '+', so check digits explicitly.
+        if hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
             let r = u8::from_str_radix(hex.get(0..2)?, 16).ok()?;
             let g = u8::from_str_radix(hex.get(2..4)?, 16).ok()?;
             let b = u8::from_str_radix(hex.get(4..6)?, 16).ok()?;
@@ -270,7 +271,7 @@ pub fn load_skin(app: &str) -> Vec<String> {
 }
 
 fn load_skin_file(path: &Path) -> (Palette, Vec<String>) {
-    match std::fs::read_to_string(path) {
+    match read_config(path) {
         Ok(contents) => parse_skin(&contents, &path.display().to_string()),
         Err(e) if e.kind() == ErrorKind::NotFound => {
             (Palette::default(), Vec::new())

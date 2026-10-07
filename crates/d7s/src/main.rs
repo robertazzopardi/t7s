@@ -86,8 +86,9 @@ async fn main() -> Result<()> {
     let result = run(|terminal| {
         let mut app = App::default().init()?;
         app.keymap = keymap;
-        if !warnings.is_empty() {
-            app.set_status(format!("Config: {}", warnings.join("; ")));
+        if let Some(summary) = k9tui::config_dir::summarize_warnings(&warnings)
+        {
+            app.set_status(summary);
         }
         if let Some(name) = launch_connection {
             app.connect_to_named_connection(&name);
