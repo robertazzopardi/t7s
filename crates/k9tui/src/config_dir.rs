@@ -33,10 +33,7 @@ pub fn read_config(path: &Path) -> Result<String, Error> {
         ));
     }
     let text = std::fs::read_to_string(path)?;
-    Ok(match text.strip_prefix('\u{feff}') {
-        Some(rest) => rest.to_string(),
-        None => text,
-    })
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_string())
 }
 
 /// One status-bar line for any number of warnings (full list goes to stderr
