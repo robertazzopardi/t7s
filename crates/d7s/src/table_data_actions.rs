@@ -825,6 +825,7 @@ const fn allows_hotkey_modifiers(mods: KeyModifiers) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_state::{AppState, DatabaseExplorerState};
 
     #[test]
     fn shift_d_is_a_hotkey_but_ctrl_d_is_not() {
@@ -834,5 +835,58 @@ mod tests {
         assert!(!allows_hotkey_modifiers(
             KeyModifiers::CONTROL | KeyModifiers::SHIFT
         ));
+    }
+
+    fn table_app() -> App<'static> {
+        let mut app = App {
+            state: AppState::DatabaseConnected,
+            ..App::default()
+        };
+        app.database_explorer.state =
+            DatabaseExplorerState::TableData("public".into(), "t".into());
+        app
+    }
+
+    fn key(code: KeyCode, m: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, m)
+    }
+
+    /// With no config, `D`/space are handled, `d`, `x` and Ctrl chords are not.
+    #[tokio::test]
+    async fn default_table_hotkeys_claim_only_the_expected_keys() {
+        let mut app = table_app();
+        let n = KeyModifiers::NONE;
+        for (code, m, want) in [
+            (KeyCode::Char('D'), KeyModifiers::SHIFT, true),
+            (KeyCode::Char(' '), n, true),
+            (KeyCode::Char('d'), n, false),
+            (KeyCode::Char('x'), n, false),
+            (KeyCode::Char('d'), KeyModifiers::CONTROL, false),
+            (KeyCode::Char('D'), KeyModifiers::CONTROL, false),
+        ] {
+            let got =
+                app.handle_table_data_hotkeys(key(code, m)).unwrap_or(false);
+            assert_eq!(got, want, "{code:?} {m:?}");
+        }
+    }
+
+    /// Remapping `delete_row` moves the key: old key is released, new one fires.
+    #[tokio::test]
+    async fn remapped_delete_row_follows_config() {
+        let mut app = table_app();
+        let w = app.keymap.apply_yaml("delete_row: x\n", "t");
+        assert_eq!(w, Vec::<String>::new());
+        let shift = KeyModifiers::SHIFT;
+        let old = app
+            .handle_table_data_hotkeys(key(KeyCode::Char('D'), shift))
+            .unwrap_or(false);
+        assert!(!old);
+        let new = app
+            .handle_table_data_hotkeys(key(
+                KeyCode::Char('x'),
+                KeyModifiers::NONE,
+            ))
+            .unwrap_or(false);
+        assert!(new);
     }
 }

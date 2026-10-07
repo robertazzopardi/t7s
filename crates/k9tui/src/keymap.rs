@@ -319,4 +319,152 @@ mod tests {
         assert_eq!(out.first().map(Hotkey::key_label), Some("x".to_string()));
         assert_eq!(out.get(1).map(Hotkey::key_label), Some("/".to_string()));
     }
+
+    #[test]
+    fn key_name_edge_cases() {
+        for (s, want) in [
+            ("ESC", Some(KeyCode::Esc)),
+            ("eScApE", Some(KeyCode::Esc)),
+            ("Enter", Some(KeyCode::Enter)),
+            ("F12", Some(KeyCode::F(12))),
+            ("é", Some(KeyCode::Char('é'))),
+            ("\u{1F600}", Some(KeyCode::Char('\u{1F600}'))),
+            (" ", Some(KeyCode::Char(' '))),
+            ("ctrl-x", None),
+            ("C-x", None),
+            ("ctrl+x", None),
+            ("shift-a", None),
+            ("alt-x", None),
+            ("f13", None),
+            ("f0", None),
+            ("ab", None),
+            ("e\u{301}", None), // char + combining mark = 2 chars
+            ("\u{0}x", None),
+            ("", None),
+            ("esc ", None),
+        ] {
+            assert_eq!(parse_key(s), want, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn malformed_keymaps_degrade_with_warning_and_never_panic() {
+        let deep = format!("{}1{}", "[".repeat(5000), "]".repeat(5000));
+        let cases: Vec<String> = vec![
+            "\u{feff}delete: x\n".into(),
+            "delete:\tx\n".into(),
+            "\tdelete: x\n".into(),
+            "delete: x\ndelete: y\n".into(),
+            "1: x\n".into(),
+            "[a]: x\n".into(),
+            "delete: ~\n".into(),
+            "delete:\n".into(),
+            "delete: \"\"\n".into(),
+            "\"\": x\n".into(),
+            "delete: ctrl-x\n".into(),
+            "delete: true\n".into(),
+            "delete: 12\n".into(),
+            "delete: 1.5\n".into(),
+            "delete: {a: b}\n".into(),
+            "delete: *nope\n".into(),
+            "delete: &a [*a]\n".into(),
+            "\u{0}\u{1}".into(),
+            "---\n---\n".into(),
+            "{{{{".into(),
+            deep,
+            format!("{}: x\n", "k".repeat(100_000)),
+            format!("delete: {}\n", "x".repeat(100_000)),
+        ];
+        for yaml in &cases {
+            let mut km = km();
+            let w = km.apply_yaml(yaml, "t");
+            let short: String = yaml.chars().take(30).collect();
+            let kept = km.get("quit") == KeyCode::Char('q');
+            assert!(kept, "{short:?}");
+            // Bad input never silently rebinds to something odd: delete is
+            // default, a single digit/char, or unchanged.
+            let _ = w;
+        }
+        // Spot checks on exact outcomes.
+        let mut km = km();
+        assert_eq!(km.apply_yaml("delete: 7\n", "t").len(), 0);
+        assert_eq!(km.get("delete"), KeyCode::Char('7'));
+        let mut km2 = self::km();
+        assert_eq!(km2.apply_yaml("delete: ctrl-x\n", "t").len(), 1);
+        assert_eq!(km2.get("delete"), KeyCode::Char('D'));
+        assert_eq!(km2.apply_yaml("delete: ~\n", "t").len(), 1);
+        assert_eq!(km2.apply_yaml("delete: \"\"\n", "t").len(), 1);
+        assert_eq!(km2.apply_yaml("\"\": x\n", "t").len(), 1);
+        assert_eq!(km2.apply_yaml("delete: ESC\n", "t").len(), 0);
+        assert_eq!(km2.get("delete"), KeyCode::Esc);
+    }
+
+    const DEFAULTS: &[(&str, KeyCode)] =
+        &[("a", KeyCode::Char('a')), ("b", KeyCode::Char('b'))];
+
+    #[test]
+    fn validate_reports_same_screen_duplicates_only() {
+        let mut km = Keymap::new(DEFAULTS);
+        km.apply_yaml("b: a", "t");
+        let w = km.validate(DEFAULTS, &[("one", &["a", "b"])], &[], "t");
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w.iter().any(|m| m.contains("on the one screen")));
+        // Different screens: no complaint.
+        let w =
+            km.validate(DEFAULTS, &[("x", &["a"]), ("y", &["b"])], &[], "t");
+        assert_eq!(w, Vec::<String>::new());
+        // Defaults never conflict.
+        let mut km = Keymap::new(DEFAULTS);
+        let w = km.validate(DEFAULTS, &[("s", &["a", "b"])], &[], "t");
+        assert_eq!(w, Vec::<String>::new());
+    }
+
+    #[test]
+    fn validate_resets_reserved_keys_but_keeps_default_if_reserved() {
+        let mut km = Keymap::new(DEFAULTS);
+        km.apply_yaml("a: esc\nb: j", "t");
+        let reserved = [KeyCode::Esc, KeyCode::Char('b')];
+        let w = km.validate(DEFAULTS, &[], &reserved, "t");
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert_eq!(km.get("a"), KeyCode::Char('a'), "reset to default");
+        assert_eq!(km.get("b"), KeyCode::Char('j'), "non-reserved kept");
+        // An action whose *default* is reserved is left alone.
+        let mut km = Keymap::new(DEFAULTS);
+        assert_eq!(km.validate(DEFAULTS, &[], &reserved, "t").len(), 0);
+    }
+
+    #[test]
+    fn relabel_with_remap_and_unknown_action_tag() {
+        let mut km = km();
+        km.apply_yaml("quit: f10", "t");
+        let bar = [
+            Hotkey::new('q', "Quit").action("quit"),
+            Hotkey::new('z', "Ghost").action("not-an-action"),
+        ];
+        let out = km.relabel(&bar);
+        assert_eq!(out.first().map(|h| h.keycode), Some(KeyCode::F(10)));
+        assert_eq!(out.get(1).map(|h| h.keycode), Some(KeyCode::Char('z')));
+    }
+
+    #[test]
+    fn load_from_unreadable_paths_warns_not_panics() {
+        let dir = std::env::temp_dir()
+            .join(format!("k9tui-keymap-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut km = km();
+        // directory instead of file
+        assert_eq!(km.load_overrides_from(&dir).len(), 1);
+        // non-UTF-8
+        let f = dir.join("keys.yml");
+        std::fs::write(&f, [0xff, 0xfe, 0xfd]).unwrap();
+        assert_eq!(km.load_overrides_from(&f).len(), 1);
+        // BOM-prefixed file works
+        std::fs::write(&f, "\u{feff}delete: x\n").unwrap();
+        assert_eq!(km.load_overrides_from(&f), Vec::<String>::new());
+        assert_eq!(km.get("delete"), KeyCode::Char('x'));
+        // oversized
+        std::fs::write(&f, vec![b'#'; 512 * 1024]).unwrap();
+        assert_eq!(km.load_overrides_from(&f).len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

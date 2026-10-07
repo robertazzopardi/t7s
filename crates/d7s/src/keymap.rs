@@ -130,6 +130,8 @@ pub fn load() -> (Keymap, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::*;
     use crate::ui::widgets::hotkeys::{
         CONNECTION_HOTKEYS, DATABASE_HOTKEYS, TABLE_DATA_VIEW_HOTKEYS,
@@ -199,5 +201,85 @@ mod tests {
             .collect();
         let out = km.relabel(&bar);
         assert!(out.iter().any(|h| h.keycode == KeyCode::F(5) && h.action == Some(action)));
+    }
+
+    const BAR_SETS: [&[k9tui::widgets::hotkey::Hotkey]; 3] = [
+        &CONNECTION_HOTKEYS,
+        &DATABASE_HOTKEYS,
+        &TABLE_DATA_VIEW_HOTKEYS,
+    ];
+
+    #[test]
+    fn defaults_are_self_consistent() {
+        let km = defaults();
+        // No default sits on a reserved key, and no screen has duplicates.
+        for (a, k) in DEFAULTS {
+            assert!(!RESERVED.contains(k), "{a} default is reserved");
+        }
+        let mut km2 = km;
+        assert_eq!(
+            km2.validate(DEFAULTS, SCREENS, RESERVED, "t"),
+            Vec::<String>::new()
+        );
+        // Every screen action exists; every action appears on a screen.
+        for (_, actions) in SCREENS {
+            for a in *actions {
+                assert!(DEFAULTS.iter().any(|(n, _)| n == a), "{a}");
+            }
+        }
+        for (a, _) in DEFAULTS {
+            assert!(SCREENS.iter().any(|(_, s)| s.contains(a)), "{a}");
+        }
+    }
+
+    /// Remapping every action to a distinct char relabels every tagged
+    /// hotkey-bar entry, and nothing else.
+    #[test]
+    fn every_action_relabels_its_bar_entries() {
+        let mut yaml = String::new();
+        for (i, (a, _)) in DEFAULTS.iter().enumerate() {
+            let c = char::from(b'A' + u8::try_from(i).unwrap_or(0));
+            writeln!(yaml, "{a}: {c}").unwrap();
+        }
+        let mut km = defaults();
+        assert_eq!(km.apply_yaml(&yaml, "t"), Vec::<String>::new());
+        let bar: Vec<_> =
+            BAR_SETS.iter().flat_map(|s| s.iter()).cloned().collect();
+        let out = km.relabel(&bar);
+        for (before, after) in bar.iter().zip(&out) {
+            match before.action {
+                Some(a) => assert_eq!(after.keycode, km.get(a), "{a}"),
+                None => assert_eq!(after.keycode, before.keycode),
+            }
+        }
+    }
+
+    #[test]
+    fn remapping_onto_reserved_or_same_screen_key_warns() {
+        let first = SCREENS
+            .first()
+            .and_then(|(_, a)| a.first())
+            .copied()
+            .unwrap();
+        let second = SCREENS
+            .first()
+            .and_then(|(_, a)| a.get(1))
+            .copied()
+            .unwrap();
+        let mut km = defaults();
+        km.apply_yaml(
+            &format!("{first}: esc\n{second}: f9\n{first}: esc\n"),
+            "t",
+        );
+        let w = km.validate(DEFAULTS, SCREENS, RESERVED, "t");
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert_eq!(
+            km.get(first),
+            DEFAULTS.iter().find(|(n, _)| *n == first).unwrap().1
+        );
+        let mut km = defaults();
+        km.apply_yaml(&format!("{first}: f9\n{second}: f9\n"), "t");
+        let w = km.validate(DEFAULTS, SCREENS, RESERVED, "t");
+        assert_eq!(w.len(), 1, "{w:?}");
     }
 }

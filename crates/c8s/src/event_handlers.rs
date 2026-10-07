@@ -836,6 +836,43 @@ mod tests {
         }
     }
 
+    /// No config: the pre-config key set behaves exactly as before.
+    #[tokio::test]
+    async fn default_keys_match_the_hardcoded_set() {
+        let mut t = term();
+        // remove: D (with SHIFT) and Delete open the confirm dialog.
+        for k in [shift_d(), key(KeyCode::Delete)] {
+            let mut app = app();
+            app.on_key_event(k, &mut t).unwrap();
+            assert!(app.confirm_dialog.is_some(), "{k:?}");
+        }
+        // lowercase d must not remove; d and Enter describe (fail: no daemon).
+        for k in [key(KeyCode::Char('d')), key(KeyCode::Enter)] {
+            let mut app = app();
+            app.on_key_event(k, &mut t).unwrap();
+            assert!(app.confirm_dialog.is_none(), "{k:?}");
+            flush_background(&mut app).await;
+            let out = screen(&mut app, &mut t);
+            assert!(out.contains("Inspect failed"), "{k:?}: {out}");
+        }
+        // s and S both act on a container; r/l/e do nothing destructive
+        // outside the Containers view.
+        for c in ['s', 'S'] {
+            let mut app = app();
+            app.on_key_event(key(KeyCode::Char(c)), &mut t).unwrap();
+            assert!(app.confirm_dialog.is_none());
+        }
+        for kind in [ResourceKind::Images, ResourceKind::Volumes] {
+            for c in ['s', 'S', 'r', 'l', 'e'] {
+                let mut app = app();
+                app.switch_view(kind);
+                app.on_key_event(key(KeyCode::Char(c)), &mut t).unwrap();
+                assert_eq!(app.state, AppState::List, "{kind:?} {c}");
+                assert!(app.confirm_dialog.is_none());
+            }
+        }
+    }
+
     #[tokio::test]
     async fn remapped_remove_and_describe_keys_follow_config() {
         let mut app = app();

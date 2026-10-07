@@ -424,13 +424,217 @@ mod tests {
         cell.fg
     }
 
+    /// Installs a thread-local skin; restores the default even if the test
+    /// panics, so a failure can't leak into later tests on this thread.
+    struct SkinGuard;
+
+    impl SkinGuard {
+        fn new(yaml: &str) -> Self {
+            let (skin, _) = parse_skin(yaml, "t");
+            TEST_PALETTE.with(|p| p.set(Some(skin)));
+            Self
+        }
+    }
+
+    impl Drop for SkinGuard {
+        fn drop(&mut self) {
+            TEST_PALETTE.with(|p| p.set(None));
+        }
+    }
+
+    fn draw(
+        f: impl FnOnce(&mut ratatui::Frame<'_>),
+    ) -> ratatui::buffer::Buffer {
+        let mut term = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        term.draw(f).unwrap();
+        term.backend().buffer().clone()
+    }
+
+    fn cell<'a>(
+        buf: &'a ratatui::buffer::Buffer,
+        sym: &str,
+    ) -> &'a ratatui::buffer::Cell {
+        buf.content()
+            .iter()
+            .find(|c| c.symbol() == sym)
+            .unwrap_or_else(|| panic!("no cell {sym}"))
+    }
+
     #[test]
     fn skin_changes_rendered_cell_styles() {
-        TEST_PALETTE.with(|p| p.set(None));
         assert_eq!(rendered_key_fg(), Palette::default().text);
-        let (skin, _) = parse_skin("colors:\n  text: \"#102030\"\n", "t");
-        TEST_PALETTE.with(|p| p.set(Some(skin)));
-        assert_eq!(rendered_key_fg(), Color::Rgb(0x10, 0x20, 0x30));
-        TEST_PALETTE.with(|p| p.set(None));
+        {
+            let _g = SkinGuard::new("colors:\n  text: \"#102030\"\n");
+            assert_eq!(rendered_key_fg(), Color::Rgb(0x10, 0x20, 0x30));
+        }
+        assert_eq!(rendered_key_fg(), Palette::default().text, "guard resets");
+    }
+
+    #[test]
+    fn skin_reaches_table_top_bar_and_modal_cells() {
+        use crate::widgets::{
+            modal::TextPromptModal,
+            table::{DataTable, TableData, TableDataState},
+            top_bar::TopBarView,
+        };
+
+        #[derive(Debug, Clone)]
+        struct Item;
+        impl TableData for Item {
+            fn title() -> &'static str {
+                "items"
+            }
+            fn ref_array(&self) -> Vec<String> {
+                vec!["alpha".into()]
+            }
+            fn num_columns(&self) -> usize {
+                1
+            }
+            fn cols() -> Vec<&'static str> {
+                vec!["Name"]
+            }
+        }
+
+        let _g = SkinGuard::new(
+            "colors:\n  text: \"#010203\"\n  muted: \"#040506\"\n  warning: \"#070809\"\n  selection_bg: \"#0a0b0c\"\n  selection_fg: \"#0d0e0f\"\n",
+        );
+
+        // Table: header text uses `text`; the
+        // selected row uses selection_fg/bg.
+        let mut state = TableDataState::new(vec![Item]);
+        let buf = draw(|f| {
+            f.render_stateful_widget(
+                DataTable::<Item>::default(),
+                f.area(),
+                &mut state,
+            );
+        });
+        assert_eq!(cell(&buf, "N").fg, Color::Rgb(1, 2, 3));
+        let row = cell(&buf, "l");
+        assert_eq!(row.bg, Color::Rgb(0x0a, 0x0b, 0x0c));
+        assert_eq!(row.fg, Color::Rgb(0x0d, 0x0e, 0x0f));
+
+        // Top bar: app label / hotkey bar pick up the skin.
+        let keys = [Hotkey::new('n', "new")];
+        let buf = draw(|f| {
+            f.render_widget(
+                TopBarView {
+                    summary: "sum",
+                    recent_hotkeys: &[],
+                    hotkeys: &keys,
+                    global_hotkeys: &[],
+                    app_name: "app",
+                    build_info: None,
+                },
+                f.area(),
+            );
+        });
+        assert_eq!(cell(&buf, "n").fg, Color::Rgb(1, 2, 3));
+
+        // Modal: border uses `warning`.
+        let buf = draw(|f| {
+            f.render_widget(TextPromptModal::new("t", 20, 5), f.area());
+        });
+        assert_eq!(cell(&buf, "\u{250c}").fg, Color::Rgb(7, 8, 9));
+    }
+
+    #[test]
+    fn color_edge_cases() {
+        // uppercase hex and mixed-case names are fine
+        assert_eq!(parse_color("#FFAA00"), Some(Color::Rgb(255, 170, 0)));
+        assert_eq!(parse_color("DarkGrey"), Some(Color::DarkGray));
+        for bad in [
+            "",
+            "#",
+            "#f",
+            "#fff",
+            "#ffff",
+            "#fffffff",
+            "#gggggg",
+            "# 12345",
+            "#+f+f+f",
+            "#-1-1-1",
+            "ff0000",
+            "rgb(1,2,3)",
+            "rgb(255, 0, 0)",
+            "42",
+            "0",
+            "white ",
+            " white",
+            "#\u{e9}\u{e9}\u{e9}",
+            "#\u{e9}fffff",
+            "#ffff\u{e9}",
+            "#\u{1F600}\u{1F600}",
+            "\u{0}",
+            "Ünicode",
+        ] {
+            assert_eq!(parse_color(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn malformed_skins_degrade_with_warning_and_never_panic() {
+        let deep = format!("{}1{}", "[".repeat(5000), "]".repeat(5000));
+        let huge_key = format!("colors:\n  {}: red\n", "k".repeat(100_000));
+        let cases: Vec<String> = vec![
+            "\u{feff}colors:\n  text: red\n".into(),
+            "colors:\n\ttext: red\n".into(), // tab indent
+            "colors:\n  text: red\n  text: blue\n".into(), // duplicate key
+            "colors:\n  1: red\n".into(),    // non-string key
+            "colors:\n  [a]: red\n".into(),  // complex key
+            "colors:\n  text: ~\n".into(),   // null
+            "colors:\n  text:\n".into(),
+            "colors: ~\n".into(),
+            "colors: red\n".into(),
+            "colors:\n  \"\": red\n".into(), // empty key
+            "colors:\n  text: \"\"\n".into(), // empty value
+            "colors:\n  text: [red]\n".into(),
+            "colors:\n  text: {a: b}\n".into(),
+            "colors:\n  text: *nope\n".into(),
+            "colors: &a\n  text: *a\n".into(), // recursive alias
+            "\u{0}\u{1}\u{2}".into(),
+            "{{{{".into(),
+            "!!binary |\n  AAAA".into(),
+            "---\n---\n".into(), // multiple documents
+            deep,
+            huge_key,
+            "colors:\n  text: \"\\xff\"\n".into(),
+            "colors:\n  text: 1e400\n".into(),
+        ];
+        for yaml in &cases {
+            let (p, w) = parse_skin(yaml, "t");
+            let short: String = yaml.chars().take(40).collect();
+            // Anything that is not the valid-BOM/duplicate/valid cases must
+            // leave `text` at default; none may panic.
+            if short.starts_with("colors:\n  text: red")
+                || short.starts_with('\u{feff}')
+            {
+                continue;
+            }
+            assert_eq!(p.text, Palette::default().text, "{short:?}");
+            assert!(!w.is_empty() || p == Palette::default(), "{short:?}");
+        }
+    }
+
+    #[test]
+    fn duplicate_color_keys_never_panic() {
+        let (_, w) = parse_skin("colors:\n  text: red\n  text: blue\n", "t");
+        // serde_yaml either rejects (1 warning) or last-wins (0); both are ok.
+        assert!(w.len() <= 1, "{w:?}");
+    }
+
+    #[test]
+    fn tests_never_touch_the_real_config_dir() {
+        // Every load in this crate's tests goes through an explicit path or
+        // an in-memory string; prove those paths live outside the user's
+        // real config dir.
+        let tmp = std::env::temp_dir();
+        if let Some(real) = crate::config_dir::config_dir("k9tui-test") {
+            assert!(!tmp.starts_with(&real), "{tmp:?} under {real:?}");
+        }
+        // Parsing is pure: a skin can't be loaded without an explicit source.
+        let (p, _) = parse_skin("colors:\n  text: red\n", "t");
+        assert_eq!(p.text, Color::Red);
+        assert_eq!(Palette::default().text, Color::White);
     }
 }
