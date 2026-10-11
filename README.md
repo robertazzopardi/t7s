@@ -1,4 +1,4 @@
-# d7s
+# t7s
 
 A monorepo of k9s-style terminal UIs, built in Rust with [Ratatui](https://ratatui.rs).
 
@@ -16,7 +16,7 @@ A TUI database client for PostgreSQL and SQLite: connection management, keyring-
 
 ### [c8s](crates/c8s)
 
-A TUI for Docker containers: list, start/stop/restart/remove, live log tail, and exec shell. See its [README](crates/c8s/README.md).
+A TUI for Docker: containers (with CPU/memory), images, volumes and networks, start/stop/restart/remove, live log tail, and exec shell. See its [README](crates/c8s/README.md).
 
 ![c8s — container list, restart, live logs](crates/c8s/demo.gif)
 
@@ -28,9 +28,10 @@ A TUI for Docker containers: list, start/stop/restart/remove, live log tail, and
 
 ```sh
 cargo install d7s --locked
+cargo install c8s --locked
 ```
 
-`c8s` is not yet published to crates.io. Build from source or see each app's README for details.
+See each app's README for details.
 
 ## Contributing
 

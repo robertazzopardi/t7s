@@ -87,7 +87,7 @@
 
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "d7s";
-          version = "0.1.0";
+          version = (builtins.fromTOML (builtins.readFile ./crates/d7s/Cargo.toml)).package.version;
           src = ./.;
 
           cargoLock = {

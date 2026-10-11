@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.5.0] - 2026-10-10
+
+### Breaking
+- Describe and delete keys are split, k9s-style: `d` now **describes** the selected connection, table, column or row, and `D` (Shift) **deletes** a connection or table row (with confirmation). Previously `d` deleted.
+
+### Added
+- Describe view (`d`) with richer metadata from the database: tables show row count, column count, primary key, index names and size (size on PostgreSQL only); columns show whether they are part of a key.
+- k9s-style `:` command bar: `:conn`, `:schemas`, `:tables`, `:columns`, `:sql`, `:log`, `:activity`, `:help`, `:q`, `:123` (jump to row), and `:table <name>` to open a table by name. Unique prefixes work and Tab completes verbs and table names.
+- Watch mode (`w`) re-runs the current SQL results query every 2s until toggled off.
+- PostgreSQL activity view (`A`) showing `pg_stat_activity` (pid, query, state, wait event, start time).
+- Query log (`L`) listing every query d7s ran this session, with origin, duration, rows or error, and the real SQL sent.
+- Connection health check (`p` in the connection list) pings every saved connection concurrently and shows a Status column.
+
+### Fixed
+- Statements that return no rows are executed exactly once instead of twice.
+- Wide hotkey hints in the top bar are no longer clipped, and table row selection is centred instead of hugging the bottom of the viewport.
+
+### Changed
+- Repository is now a Cargo workspace; the shared k9s-style widget kit is the `k9tui` crate, which `d7s` depends on. A second app, `c8s` (Docker), lives alongside it.
+- Declared minimum supported Rust version 1.88.
+- Dependency updates; `tokio-postgres`, `slab`, `tracing-subscriber` and `rand` were bumped to clear RustSec advisories.
+
 ## [0.4.0] - 2026-09-09
 
 ### Added

@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags:
+      # d7s only; c8s-v* and k9tui-v* tags do not match.
       - "v*"
 
 permissions:

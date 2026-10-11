@@ -2,12 +2,15 @@
 name = "k9tui"
 version = "0.1.0"
 description = "Reusable k9s-style ratatui widget kit"
-license = "MIT"
-repository = "https://github.com/robertazzopardi/d7s"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 readme = "README.md"
+include = ["src/**/*", "Cargo.toml", "LICENSE", "README.md"]
 keywords = ["tui", "ratatui", "widgets", "terminal", "k9s"]
 categories = ["command-line-interface", "gui"]
 edition.workspace = true
+rust-version.workspace = true
 
 [lints]
 workspace = true

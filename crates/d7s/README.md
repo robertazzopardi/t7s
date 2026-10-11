@@ -10,9 +10,9 @@ After discovering k9s, I thought it had the perfect format for a database client
 
 This repo is a Cargo workspace with three crates:
 
-- **[`crates/d7s`](.)** — the database TUI client covered by this README (db/auth/app-state logic and the binary).
-- **[`crates/k9tui`](../k9tui)** — a reusable k9s-style ratatui widget kit (theme, tables, modals, top bar, hotkeys) extracted from `d7s`, with no dependency back on it. See its [README](../k9tui/README.md).
-- **[`crates/c8s`](../c8s)** — a k9s-style TUI for Docker containers, the second consumer of k9tui's chrome. See its [README](../c8s/README.md).
+- **[`crates/d7s`](https://github.com/robertazzopardi/t7s/tree/main/crates/d7s)** — the database TUI client covered by this README (db/auth/app-state logic and the binary).
+- **[`crates/k9tui`](https://crates.io/crates/k9tui)** — a reusable k9s-style ratatui widget kit (theme, tables, modals, top bar, hotkeys) extracted from `d7s`, with no dependency back on it. See its [README](https://github.com/robertazzopardi/t7s/blob/main/crates/k9tui/README.md).
+- **[`crates/c8s`](https://crates.io/crates/c8s)** — a k9s-style TUI for Docker containers, the second consumer of k9tui's chrome. See its [README](https://github.com/robertazzopardi/t7s/blob/main/crates/c8s/README.md).
 
 d7s and c8s are the shipped apps; k9tui exists so k9s-style TUI apps in this workspace can reuse its chrome. The rest of this README covers d7s specifically.
 
@@ -31,7 +31,7 @@ d7s and c8s are the shipped apps; k9tui exists so k9s-style TUI apps in this wor
 
 ## Demo
 
-![d7s — connect, browse tables, filter, help, SQL](demo.gif)
+![d7s — connect, browse tables, filter, help, SQL](https://raw.githubusercontent.com/robertazzopardi/t7s/main/crates/d7s/demo.gif)
 
 ```sh
 just demo
@@ -43,7 +43,7 @@ Requires [vhs](https://github.com/charmbracelet/vhs) and `sqlite3`. Uses an isol
 
 ### crates.io
 
-Requires Rust stable (1.91.0 or later).
+Requires Rust stable (1.88 or later).
 
 ```sh
 cargo install d7s --locked
@@ -53,7 +53,7 @@ The `d7s` binary will be placed in `$CARGO_HOME/bin` (usually `~/.cargo/bin`), w
 
 ### Building from source
 
-Requires Rust stable (1.91.0 or later).
+Requires Rust stable (1.88 or later).
 
 ```sh
 cargo build --release --locked
@@ -169,6 +169,10 @@ Paste works in connection/cell/password modals and the search bar (bracketed pas
 | `:123` | Jump to row 123 (table data) |
 
 Unique verb prefixes work (`:sch`); a bare word that is not a verb is an unknown command (tables are only reached via `:table <name>`, so tables named `log`, `act`, etc. are never shadowed). Tab completes verbs, and after `table ` completes the table name. Navigation commands are refused while a draft row is pending.
+
+### Upgrading from 0.4
+
+Keys changed in 0.5: `D` (Shift) now deletes a connection or table row, and `d` describes the selection. In 0.4, `d` deleted.
 
 ### Key semantics vs k9s
 

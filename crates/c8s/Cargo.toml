@@ -2,11 +2,13 @@
 name = "c8s"
 version = "0.1.0"
 description = "A k9s-style TUI for Docker containers"
-authors = ["Rob <robertazzopardi@users.noreply.github.com>"]
-license = "MIT"
-repository = "https://github.com/robertazzopardi/d7s"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 readme = "README.md"
+include = ["src/**/*", "Cargo.toml", "LICENSE", "README.md", "CHANGELOG.md"]
 keywords = [
     "docker",
     "tui",

@@ -1,8 +1,8 @@
 # c8s
 
-A k9s-style TUI for Docker containers, built in Rust with [Ratatui](https://ratatui.rs), reusing [k9tui](../k9tui)'s chrome.
+A k9s-style TUI for Docker containers, built in Rust with [Ratatui](https://ratatui.rs), reusing [k9tui](https://crates.io/crates/k9tui)'s chrome.
 
-![c8s — container list, restart, live logs](demo.gif)
+![c8s — container list, restart, live logs](https://raw.githubusercontent.com/robertazzopardi/t7s/main/crates/c8s/demo.gif)
 
 ```sh
 just c8s-demo
@@ -12,15 +12,16 @@ Requires [vhs](https://github.com/charmbracelet/vhs) and Docker. Starts fake `de
 
 ## Features
 
-- **Container list** — name, image, status, ports, and uptime, polled from the Docker daemon every ~2 seconds.
-- **Container actions** — start/stop (`s`), restart (`r`), remove with confirmation, defaulting to No (`D`/`Delete`).
+- **Container list** — name, image, status, ports, uptime, CPU and memory usage, polled from the Docker daemon every ~2 seconds.
+- **Container actions** — start/stop (`s`), restart (`r`), remove with confirmation, defaulting to No (`D`/`Delete`), and `a` to toggle showing only running containers.
 - **Image list** — repo:tag, id, size, and created-ago, with remove (`D`, confirm).
 - **Volume list** — name, driver, and mountpoint, with remove (`D`, confirm).
 - **Network list** — name, driver, and scope, with remove (`D`, confirm).
 - **View switching** — jump between the container/image/volume/network lists with `1`/`2`/`3`/`4` or the `:` command bar (`:images`, `:v`, ...).
 - **Sorted lists** — all four resource lists sort alphabetically by name (images by repo:tag) so ordering stays stable between polls.
 - **Search** — `/` opens a live substring filter across all columns in the active list view (works for containers, images, volumes, and networks); `Enter` commits, `Esc` clears and closes.
-- **Live log tail** — full-screen streamed logs for the selected container (`l`, `q`/`Esc` to return).
+- **Live log tail** — full-screen streamed logs for the selected container (`l`, `q`/`Esc` to return), with `/` search and `d` to cycle dedup of repeated lines (off, exact, similar).
+- **Process view** — `p` lists the container's processes; `l` shows the selected process's output.
 - **Describe view** — full-screen `docker inspect`-style details (id, image, status, PID, ports, mounts, env, created time) for the selected container, image, volume or network (`d` or `Enter`, `q`/`Esc` to return).
 - **Exec shell** — suspends the TUI and hands the real terminal to `docker exec -it <id> sh` (`e`), resuming the TUI on exit.
 - **Connection error screen** — if the Docker daemon is unreachable at startup, shows an error with a retry action instead of panicking.
@@ -31,6 +32,13 @@ Requires [vhs](https://github.com/charmbracelet/vhs) and Docker. Starts fake `de
 A running Docker daemon reachable at the default `docker.sock`, and the `docker` CLI on `PATH` for the exec-shell action.
 
 ## Usage
+
+```sh
+cargo install c8s --locked
+c8s
+```
+
+Or from a checkout:
 
 ```sh
 cargo run -p c8s
@@ -54,7 +62,9 @@ cargo build --release -p c8s
 | `/` | Open search: live substring filter over the active list view (`Enter` commits, `Esc` clears) |
 | `s` | Start (if stopped) or stop (if running) the selected container (containers view) |
 | `r` | Restart the selected container (containers view) |
-| `l` | Tail logs for the selected container (containers view) |
+| `a` | Toggle running-only filter (containers view) |
+| `p` | Process view for the selected container (containers view; `l` shows the selected process's output, `q`/`Esc` returns) |
+| `l` | Tail logs for the selected container (containers view; in logs: `/` search, `d` cycle dedup off/exact/similar, `q`/`Esc` return) |
 | `e` | Exec an interactive shell in the selected container (containers view) |
 | `D` / `Delete` | Remove the selected item in the active view (confirm) |
 | `d` / `Enter` | Describe the selected container, image, volume or network (`q`/`Esc` to return) |
@@ -74,4 +84,4 @@ cargo build --release -p c8s
 
 ## Scope
 
-v1 covers containers, images, volumes, and networks as separate list views — no compose grouping or stats/CPU graphs.
+v1 covers containers, images, volumes, and networks as separate list views — no compose grouping or graphs.

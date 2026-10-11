@@ -1,6 +1,6 @@
 # k9tui
 
-Reusable [k9s](https://k9scli.io/)-style ratatui widget kit — theme, tables, modals, top bar and hotkey chrome for building keyboard-driven, row-based TUI apps. Extracted from [d7s](https://github.com/robertazzopardi/d7s), which remains its reference consumer.
+Reusable [k9s](https://k9scli.io/)-style ratatui widget kit — theme, tables, modals, top bar and hotkey chrome for building keyboard-driven, row-based TUI apps. Extracted from [d7s](https://github.com/robertazzopardi/t7s), which remains its reference consumer.
 
 ## What's in it
 
@@ -17,15 +17,13 @@ Reusable [k9s](https://k9scli.io/)-style ratatui widget kit — theme, tables, m
 
 ## Using it
 
-Add as a path dependency inside a Cargo workspace:
-
 ```toml
 [dependencies]
-k9tui = { path = "../k9tui" }
+k9tui = "0.1"
 ```
 
 App-specific behavior (domain types, orchestration, key-handling policy) stays in the consuming crate; k9tui only holds chrome and interaction patterns with no dependency back on any app.
 
 ## Status
 
-Pre-1.0, not yet published to crates.io. API has one real consumer (d7s) — expect breaking changes until a second app exercises it. Publishing (crates.io metadata: `repository`, `readme`, `keywords`, `edition.workspace`) is tracked as future work.
+Pre-1.0 and published on crates.io. Two apps use it, [d7s](https://crates.io/crates/d7s) and [c8s](https://crates.io/crates/c8s), both in the same repository; the API may still change between 0.x releases.

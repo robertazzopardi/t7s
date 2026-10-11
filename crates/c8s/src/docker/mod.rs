@@ -619,7 +619,7 @@ fn format_size(bytes: i64) -> String {
     format!("{size:.1}{}", UNITS.get(unit).unwrap_or(&"B"))
 }
 
-/// Render a Unix timestamp as a rough "N <unit> ago" string, docker-CLI style.
+/// Render a Unix timestamp as a rough "N `unit` ago" string, docker-CLI style.
 fn format_timestamp(secs: i64) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -1,11 +1,12 @@
 [package]
 name = "d7s"
-version = "0.4.0"
-description = "Database client"
-authors = ["Rob <robertazzopardi@users.noreply.github.com>"]
-license = "MIT"
-repository = "https://github.com/robertazzopardi/d7s"
+version = "0.5.0"
+description = "A k9s-style TUI database client for PostgreSQL and SQLite"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 readme = "README.md"
 keywords = [
     "database",
