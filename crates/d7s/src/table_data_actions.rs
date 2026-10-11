@@ -383,7 +383,7 @@ impl App<'_> {
                         .collect::<Vec<_>>()
                         .join(" AND ");
                     let tbl = if self.database_explorer.connection.r#type
-                        == ConnectionType::Postgres
+                        != ConnectionType::Sqlite
                     {
                         format!("{schema}.{table}")
                     } else {

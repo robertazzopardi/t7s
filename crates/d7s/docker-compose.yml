@@ -22,6 +22,29 @@ services:
     networks:
       - d7s-network
 
+  # MySQL 8 on 3306, MariaDB on 3307 (root / d7s_password, database d7s_test).
+  mysql:
+    image: mysql:8
+    container_name: d7s-test-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: d7s_password
+      MYSQL_DATABASE: d7s_test
+    ports:
+      - "3306:3306"
+    networks:
+      - d7s-network
+
+  mariadb:
+    image: mariadb:11
+    container_name: d7s-test-mariadb
+    environment:
+      MARIADB_ROOT_PASSWORD: d7s_password
+      MARIADB_DATABASE: d7s_test
+    ports:
+      - "3307:3306"
+    networks:
+      - d7s-network
+
   # SQLite has no server: this container just builds a seeded .sqlite file
   # into ./docker/sqlite/d7s_test.sqlite, then exits. Point the app at that
   # file path directly to test the sqlite backend.

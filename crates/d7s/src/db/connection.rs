@@ -6,7 +6,9 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    db::{Database, TableData, postgres::Postgres, sqlite::Sqlite},
+    db::{
+        Database, TableData, mysql::Mysql, postgres::Postgres, sqlite::Sqlite,
+    },
     ui::theme,
 };
 
@@ -18,6 +20,8 @@ pub enum ConnectionType {
     #[default]
     Postgres,
     Sqlite,
+    /// MySQL and MariaDB (same wire protocol).
+    Mysql,
 }
 
 impl Display for ConnectionType {
@@ -25,6 +29,7 @@ impl Display for ConnectionType {
         match self {
             Self::Postgres => write!(f, "postgres"),
             Self::Sqlite => write!(f, "sqlite"),
+            Self::Mysql => write!(f, "mysql"),
         }
     }
 }
@@ -37,6 +42,7 @@ impl FromStr for ConnectionType {
         Ok(match lower.as_str() {
             "postgres" | "postgresql" => Self::Postgres,
             "sqlite" => Self::Sqlite,
+            "mysql" | "mariadb" => Self::Mysql,
             _ => return Err(()),
         })
     }
@@ -125,9 +131,9 @@ impl ConnectionStatus {
 impl Display for Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self.r#type {
-            ConnectionType::Postgres => {
+            ConnectionType::Postgres | ConnectionType::Mysql => {
                 let (host, port, user, database_from_url) =
-                    parse_postgres_url(&self.url);
+                    parse_server_url(self.r#type, &self.url);
                 let database = self
                     .selected_database
                     .as_deref()
@@ -266,6 +272,41 @@ mod tests {
     }
 
     #[test]
+    fn mysql_urls_parse_with_mysql_defaults() {
+        use super::{
+            ConnectionType, build_server_url, parse_connection_string,
+            parse_server_url,
+        };
+        let parsed =
+            parse_connection_string("mariadb://bob@db.example:3307/shop")
+                .unwrap();
+        assert_eq!(parsed.connection_type, ConnectionType::Mysql);
+        assert_eq!(
+            parse_server_url(ConnectionType::Mysql, &parsed.url),
+            (
+                "db.example".into(),
+                "3307".into(),
+                "bob".into(),
+                "shop".into()
+            )
+        );
+        // No port / database: MySQL defaults (3306, no database selected).
+        assert_eq!(
+            parse_server_url(ConnectionType::Mysql, "mysql://bob@localhost"),
+            (
+                "localhost".into(),
+                "3306".into(),
+                "bob".into(),
+                String::new()
+            )
+        );
+        assert_eq!(
+            build_server_url(ConnectionType::Mysql, "h", "3306", "u", ""),
+            "mysql://u@h:3306/"
+        );
+    }
+
+    #[test]
     fn status_labels_and_column() {
         assert_eq!(ConnectionStatus::Unknown.label(), "");
         assert_eq!(ConnectionStatus::Up.label(), "● up");
@@ -315,6 +356,32 @@ impl Connection {
     }
 
     #[must_use]
+    pub fn to_mysql(&self) -> Box<dyn Database> {
+        let (host, port, user, database_from_url) =
+            parse_server_url(ConnectionType::Mysql, &self.url);
+        let database =
+            self.selected_database.clone().unwrap_or(database_from_url);
+        Box::new(Mysql {
+            name: self.name.clone(),
+            host: Some(host),
+            port: Some(port),
+            user,
+            database,
+            password: self.password.clone().unwrap_or_default(),
+        })
+    }
+
+    /// Backend for this connection's type.
+    #[must_use]
+    pub fn to_database(&self) -> Box<dyn Database> {
+        match self.r#type {
+            ConnectionType::Postgres => self.to_postgres(),
+            ConnectionType::Sqlite => self.to_sqlite(),
+            ConnectionType::Mysql => self.to_mysql(),
+        }
+    }
+
+    #[must_use]
     pub fn to_sqlite(&self) -> Box<dyn Database> {
         Box::new(Sqlite {
             name: self.name.clone(),
@@ -355,7 +422,7 @@ impl Connection {
     /// User part of the connection (for prompts). Parsed from URL for postgres.
     #[must_use]
     pub fn user_display(&self) -> String {
-        if self.r#type == ConnectionType::Postgres
+        if self.r#type != ConnectionType::Sqlite
             && let Ok(u) = url::Url::parse(&self.url)
         {
             return u.username().to_string();
@@ -368,9 +435,9 @@ impl Connection {
     pub fn summary_stack(&self) -> String {
         let mut lines = vec![format!("Connection: {}", self.name)];
         match self.r#type {
-            ConnectionType::Postgres => {
+            ConnectionType::Postgres | ConnectionType::Mysql => {
                 let (host, _, user, database_from_url) =
-                    parse_postgres_url(&self.url);
+                    parse_server_url(self.r#type, &self.url);
                 let database = self
                     .selected_database
                     .as_deref()
@@ -423,6 +490,8 @@ pub fn parse_connection_string(s: &str) -> Option<ParsedConnection> {
         || lower.starts_with("postgres://")
     {
         ConnectionType::Postgres
+    } else if lower.starts_with("mysql://") || lower.starts_with("mariadb://") {
+        ConnectionType::Mysql
     } else {
         ConnectionType::Sqlite
     };
@@ -435,7 +504,8 @@ pub fn parse_connection_string(s: &str) -> Option<ParsedConnection> {
 /// Build a Postgres URL from host, port, user, and database.
 /// Password is intentionally excluded — it is stored only in the keyring.
 #[must_use]
-pub fn build_postgres_url(
+pub fn build_server_url(
+    connection_type: ConnectionType,
     host: &str,
     port: &str,
     user: &str,
@@ -446,15 +516,41 @@ pub fn build_postgres_url(
     } else {
         format!("{user}@")
     };
-    format!("postgres://{auth}{host}:{port}/{database}")
+    format!("{connection_type}://{auth}{host}:{port}/{database}")
+}
+
+/// Default TCP port for a server-based connection type.
+#[must_use]
+pub const fn default_port(connection_type: ConnectionType) -> &'static str {
+    match connection_type {
+        ConnectionType::Mysql => "3306",
+        ConnectionType::Postgres | ConnectionType::Sqlite => "5432",
+    }
+}
+
+/// Default database for a new connection form (MySQL: none selected).
+#[must_use]
+pub const fn default_database(connection_type: ConnectionType) -> &'static str {
+    match connection_type {
+        ConnectionType::Mysql => "",
+        ConnectionType::Postgres | ConnectionType::Sqlite => "postgres",
+    }
 }
 
 /// Parse a postgres/postgresql URL into (host, port, user, database).
 pub fn parse_postgres_url(url_str: &str) -> (String, String, String, String) {
+    parse_server_url(ConnectionType::Postgres, url_str)
+}
+
+/// Parse a postgres/mysql URL into (host, port, user, database), using the type's defaults.
+pub fn parse_server_url(
+    connection_type: ConnectionType,
+    url_str: &str,
+) -> (String, String, String, String) {
     let default_host = "localhost".to_string();
-    let default_port = "5432".to_string();
+    let default_port = default_port(connection_type).to_string();
     let default_user = String::new();
-    let default_db = "postgres".to_string();
+    let default_db = default_database(connection_type).to_string();
 
     let Ok(url) = url::Url::parse(url_str) else {
         return (default_host, default_port, default_user, default_db);
@@ -468,7 +564,6 @@ pub fn parse_postgres_url(url_str: &str) -> (String, String, String, String) {
     let database = url
         .path()
         .strip_prefix('/')
-        .unwrap_or("postgres")
-        .to_string();
+        .map_or(default_db, ToString::to_string);
     (host, port, user, database)
 }

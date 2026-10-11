@@ -79,6 +79,7 @@ color-eyre = "0.6.3"
 directories = "6.0.0"
 ratatui-textarea = "0.9.1"
 sqlparser = "0.63.0"
+mysql_async = { version = "0.37.1", default-features = false, features = ["minimal"] }
 
 [lints]
 workspace = true

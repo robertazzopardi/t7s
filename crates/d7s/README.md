@@ -1,6 +1,6 @@
 # d7s
 
-A TUI database client for PostgreSQL and SQLite, built in Rust with [Ratatui](https://ratatui.rs) and inspired by [k9s](https://k9scli.io/).
+A TUI database client for PostgreSQL, MySQL/MariaDB and SQLite, built in Rust with [Ratatui](https://ratatui.rs) and inspired by [k9s](https://k9scli.io/).
 
 ## Why
 
@@ -18,7 +18,7 @@ d7s and c8s are the shipped apps; k9tui exists so k9s-style TUI apps in this wor
 
 ## Features
 
-- **Multi-db Support** — currently supports PostgreSQL and SQLite, with more to come!
+- **Multi-db Support** — currently supports PostgreSQL, MySQL/MariaDB and SQLite, with more to come! (MySQL connections have no TLS yet; tables without a primary key are read-only.)
 - **Connection management** — save, edit, and delete named connections.
 - **Credential storage** — passwords are stored in the platform keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service), or never saved and prompted everytime.
 - **Database traversal** — navigate databases, schemas, tables, columns, and row data with keyboard-driven menus, supports vim.

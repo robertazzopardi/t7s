@@ -28,8 +28,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::db::{
     DbRowId,
     connection::{
-        Connection, ConnectionType, build_postgres_url,
-        parse_connection_string, parse_postgres_url,
+        Connection, ConnectionType, build_server_url, default_database,
+        default_port, parse_connection_string, parse_server_url,
     },
 };
 
@@ -92,7 +92,16 @@ pub enum ConnectionModalStep {
 }
 
 /// Database types shown in step 1 list (order matches `step1_type_index`).
-const STEP1_DB_TYPES: [&str; 2] = ["postgres", "sqlite"];
+const STEP1_DB_TYPES: [&str; 3] = ["postgres", "sqlite", "mysql"];
+
+/// Connection type for a step 1 list entry (unknown index falls back to Postgres).
+fn step1_connection_type(index: usize) -> ConnectionType {
+    match STEP1_DB_TYPES.get(index) {
+        Some(&"sqlite") => ConnectionType::Sqlite,
+        Some(&"mysql") => ConnectionType::Mysql,
+        _ => ConnectionType::Postgres,
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct PasswordStorageTypeError;
@@ -249,19 +258,11 @@ impl Modal {
             .cloned()
             .unwrap_or_default();
         let (connection_type, prefilled) = if url_text.trim().is_empty() {
-            let t = match STEP1_DB_TYPES.get(self.step1_type_index) {
-                Some(&"sqlite") => ConnectionType::Sqlite,
-                _ => ConnectionType::Postgres,
-            };
-            (t, None)
+            (step1_connection_type(self.step1_type_index), None)
         } else if let Some(parsed) = parse_connection_string(&url_text) {
             (parsed.connection_type, Some(parsed.url))
         } else {
-            let t = match STEP1_DB_TYPES.get(self.step1_type_index) {
-                Some(&"sqlite") => ConnectionType::Sqlite,
-                _ => ConnectionType::Postgres,
-            };
-            (t, None)
+            (step1_connection_type(self.step1_type_index), None)
         };
 
         self.connection_type = Some(connection_type);
@@ -272,19 +273,11 @@ impl Modal {
         self.menu_state = None;
 
         match connection_type {
-            ConnectionType::Postgres => {
-                let (host, port, user, database) =
-                    prefilled.as_deref().map_or_else(
-                        || {
-                            (
-                                "localhost".to_string(),
-                                "5432".to_string(),
-                                String::new(),
-                                "postgres".to_string(),
-                            )
-                        },
-                        parse_postgres_url,
-                    );
+            ConnectionType::Postgres | ConnectionType::Mysql => {
+                let (host, port, user, database) = parse_server_url(
+                    connection_type,
+                    prefilled.as_deref().unwrap_or_default(),
+                );
                 let name = ModalField::new("Name");
                 let mut host_f = ModalField::new("Host");
                 host_f.set_value(host);
@@ -374,9 +367,9 @@ impl Modal {
             .unwrap_or_default();
 
         match connection.r#type {
-            ConnectionType::Postgres => {
+            ConnectionType::Postgres | ConnectionType::Mysql => {
                 let (host, port, user, database) =
-                    parse_postgres_url(&connection.url);
+                    parse_server_url(connection.r#type, &connection.url);
                 let mut name = ModalField::new("Name");
                 name.set_value(connection.name.clone());
                 let mut host_f = ModalField::new("Host");
@@ -563,27 +556,18 @@ impl Modal {
     pub fn get_connection(&self) -> Option<Connection> {
         let connection_type = self.connection_type?;
 
-        // Check if all required fields are filled (password is optional when "ask every time" is selected)
-        let password_field_index = self.password_field_index();
-        let required_fields: Vec<&ModalField> =
-            if self.is_password_field_hidden() {
-                self.fields.iter().take(password_field_index).collect()
-            } else {
-                self.fields.iter().collect()
-            };
-
-        if required_fields.iter().any(|f| f.value().trim().is_empty()) {
+        if !self.is_valid() {
             return None;
         }
 
         let password = if self.is_password_field_hidden() {
             None
         } else {
-            Some(self.fields[password_field_index].value().to_string())
+            Some(self.fields[self.password_field_index()].value().to_string())
         };
 
         let (environment_index, metadata_index) = match connection_type {
-            ConnectionType::Postgres => (5, 6),
+            ConnectionType::Postgres | ConnectionType::Mysql => (5, 6),
             ConnectionType::Sqlite => (2, 3),
         };
         let environment = self
@@ -611,13 +595,13 @@ impl Modal {
         };
 
         let url = match connection_type {
-            ConnectionType::Postgres => {
+            ConnectionType::Postgres | ConnectionType::Mysql => {
                 let host = self.fields.get(1).map_or_else(
                     || "localhost".to_string(),
                     |f| f.value().to_string(),
                 );
                 let port = self.fields.get(2).map_or_else(
-                    || "5432".to_string(),
+                    || default_port(connection_type).to_string(),
                     |f| f.value().to_string(),
                 );
                 let user = self
@@ -625,10 +609,16 @@ impl Modal {
                     .get(3)
                     .map_or(String::new(), |f| f.value().to_string());
                 let database = self.fields.get(4).map_or_else(
-                    || "postgres".to_string(),
+                    || default_database(connection_type).to_string(),
                     |f| f.value().to_string(),
                 );
-                build_postgres_url(&host, &port, &user, &database)
+                build_server_url(
+                    connection_type,
+                    &host,
+                    &port,
+                    &user,
+                    &database,
+                )
             }
             ConnectionType::Sqlite => self
                 .fields
@@ -654,18 +644,21 @@ impl Modal {
 
     #[must_use]
     pub fn is_valid(&self) -> bool {
-        // Password field is optional when "ask every time" is selected
-        let password_field_index = self.password_field_index();
-        let required_fields: Vec<&ModalField> =
-            if self.is_password_field_hidden() {
-                // Exclude password field from validation when hidden
-                self.fields.iter().take(password_field_index).collect()
-            } else {
-                // Include all fields when password is visible
-                self.fields.iter().collect()
-            };
-
-        !required_fields.iter().any(|f| f.value().trim().is_empty())
+        // Password field is optional when "ask every time" is selected;
+        // the Database field (index 4) is optional for MySQL.
+        let end = if self.is_password_field_hidden() {
+            self.password_field_index()
+        } else {
+            self.fields.len()
+        };
+        let optional_db =
+            (self.connection_type == Some(ConnectionType::Mysql)).then_some(4);
+        !self
+            .fields
+            .iter()
+            .take(end)
+            .enumerate()
+            .any(|(i, f)| Some(i) != optional_db && f.value().trim().is_empty())
     }
 
     /// Handle key events for UI navigation only
@@ -916,7 +909,7 @@ impl Modal {
 
         let (modal_width, field_height, modal_height) =
             if self.step == ConnectionModalStep::ChooseType {
-                let h = 6; // section labels + list + separator + URL label + URL input
+                let h = 7; // section labels + list + separator + URL label + URL input
                 (STEP1_MODAL_WIDTH, h, 1 + h + 1 + 2)
             } else {
                 let fh = self.fields_section_height();
@@ -981,6 +974,7 @@ impl Modal {
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Length(1),
+                Constraint::Length(1),
             ])
             .split(area);
 
@@ -1008,20 +1002,24 @@ impl Modal {
         }
 
         // Separator so list and URL box are clearly separate
-        let sep_row = layout[3];
+        let sep_row = layout[1 + STEP1_DB_TYPES.len()];
         Paragraph::new("────────────────────────")
             .style(Style::default().fg(Color::DarkGray))
             .alignment(Alignment::Left)
             .render(sep_row, buf);
 
         // Section 2: Or import from URL (optional — paste URL to prefill next step)
-        let url_label_row = layout[4];
+        let url_label_row = layout[2 + STEP1_DB_TYPES.len()];
         Paragraph::new("Or import from URL:")
             .style(Style::default().fg(Color::Cyan))
             .alignment(Alignment::Left)
             .render(url_label_row, buf);
 
-        Widget::render(&self.step1_import_url, layout[5], buf);
+        Widget::render(
+            &self.step1_import_url,
+            layout[3 + STEP1_DB_TYPES.len()],
+            buf,
+        );
     }
 
     /// Fixed height for fields section; dropdown is drawn as overlay and does not expand layout.

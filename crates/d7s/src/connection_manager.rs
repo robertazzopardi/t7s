@@ -94,18 +94,19 @@ impl App<'_> {
         let mut connection_with_password = connection.clone();
         connection_with_password.password = Some(password);
 
-        // For PostgreSQL, connect to a default database first to list databases
-        let default_db = "postgres".to_string();
+        // For PostgreSQL, connect to a default database first to list databases.
+        // MySQL can connect without a database, so the URL's database is used as-is.
+        let default_db = (connection.r#type == ConnectionType::Postgres)
+            .then(|| "postgres".to_string());
 
         // Create a temporary connection to the default database
         let mut temp_connection = connection_with_password.clone();
-        temp_connection.selected_database = Some(default_db.clone());
-        let postgres = temp_connection.to_postgres();
-        let postgres = self.query_log.wrap(postgres);
+        temp_connection.selected_database.clone_from(&default_db);
+        let postgres = self.query_log.wrap(temp_connection.to_database());
 
         if postgres.test().await {
             // Connection successful; keep selected_database so explorer is on "postgres"
-            connection_with_password.selected_database = Some(default_db);
+            connection_with_password.selected_database = default_db;
             let connection_name = connection.name.clone();
             let connection_env = connection.environment;
             self.database_explorer =
