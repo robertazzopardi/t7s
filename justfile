@@ -107,8 +107,8 @@ docker-logs:
 
 # Publish order (d7s and c8s depend on k9tui, so k9tui goes first):
 #   just release k9tui 0.1.0   (tag k9tui-v0.1.0, no workflow)
-#   just release d7s 0.5.0     (tag v0.5.0, triggers the d7s binary release workflow)
-#   just release c8s 0.1.0     (tag c8s-v0.1.0, no workflow)
+#   just release d7s 0.5.0     (tag v0.5.0, triggers the release workflow: d7s archives)
+#   just release c8s 0.1.0     (tag c8s-v0.1.0, triggers the release workflow: c8s archives)
 # Release one crate whose version is already bumped on main: publish, then tag and push.
 release CRATE VERSION:
     #!/usr/bin/env bash

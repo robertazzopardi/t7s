@@ -31,6 +31,16 @@ include = [
 [package.metadata.bundle]
 identifier = "com.robertazzopardi.d7s"
 
+# cargo-binstall: archives are published by .github/workflows/release.yml
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/d7s-v{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "d7s-v{ version }-{ target }/{ bin }{ binary-ext }"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/d7s-v{ version }-{ target }.zip"
+pkg-fmt = "zip"
+
 [dependencies]
 # Internal
 k9tui = { path = "../k9tui", version = "0.1.0" }
