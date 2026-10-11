@@ -1,10 +1,39 @@
+# Release workflow: builds binary archives for one crate and publishes a GitHub release.
+#
+# Triggers
+#   - push tag `v*`       -> d7s   (e.g. v0.5.0)
+#   - push tag `c8s-v*`   -> c8s   (e.g. c8s-v0.1.0)
+#   - workflow_dispatch with `tag` -> rebuild an EXISTING tag's assets and update its
+#     release in place (checks out that tag; same-named assets are replaced), e.g.
+#       gh workflow run release.yml -f tag=v0.5.0
+#   k9tui is a library and has no binary release (k9tui-v* tags do not match).
+#
+# Assets (per release; <ver> is the tag without the crate prefix, e.g. v0.5.0)
+#   <crate>-<ver>-<target>.tar.gz   unix   (binary + LICENSE + README.md in a folder)
+#   <crate>-<ver>-<target>.zip      windows
+#   SHA256SUMS                      checksums of every archive
+#
+# Release notes pattern
+#   Body = first `## [` section of crates/<crate>/CHANGELOG.md + a generated Install footer.
+#   Write CHANGELOG sections with these headings, in this order, omitting empty ones:
+#     optional intro / highlights / `### New crates`, `### Breaking`, `### Added`,
+#     `### Changed`, `### Fixed`
+#   The footer (Install table: cargo install, per-platform download links, and a
+#   `sha256sum -c SHA256SUMS` hint) is generated below; do not write it in the CHANGELOG.
+
 name: Release
 
 on:
   push:
     tags:
-      # d7s only; c8s-v* and k9tui-v* tags do not match.
       - "v*"
+      - "c8s-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to rebuild assets for (e.g. v0.5.0 or c8s-v0.1.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,8 +42,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  prepare:
+    name: Resolve crate and version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      crate: ${{ steps.meta.outputs.crate }}
+      name: ${{ steps.meta.outputs.name }}
+    steps:
+      - name: Derive crate from tag
+        id: meta
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          case "$TAG" in
+            c8s-v*) crate=c8s; ver="${TAG#c8s-}" ;;
+            v*)     crate=d7s; ver="$TAG" ;;
+            *) echo "Unsupported tag: $TAG"; exit 1 ;;
+          esac
+          if ! [[ "$ver" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Bad version in tag: $TAG"; exit 1
+          fi
+          {
+            echo "tag=$TAG"
+            echo "crate=$crate"
+            echo "name=$crate-$ver"
+          } >> "$GITHUB_OUTPUT"
+
   build:
-    name: Build ${{ matrix.label }}
+    name: Build ${{ needs.prepare.outputs.crate }} ${{ matrix.label }}
+    needs: prepare
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -23,23 +80,28 @@ jobs:
           - label: linux-x86_64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            binary: d7s
+          - label: linux-aarch64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
           - label: macos-x86_64
             os: macos-latest
             target: x86_64-apple-darwin
-            binary: d7s
           - label: macos-arm64
             os: macos-latest
             target: aarch64-apple-darwin
-            binary: d7s
           - label: windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
-            binary: d7s.exe
+
+    env:
+      CRATE: ${{ needs.prepare.outputs.crate }}
+      NAME: ${{ needs.prepare.outputs.name }}-${{ matrix.target }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.prepare.outputs.tag }}
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
@@ -51,51 +113,96 @@ jobs:
         with:
           target-prefix: ${{ matrix.target }}
 
-      # Linux only: dbus dev headers required by libdbus-sys (used by keyring).
+      # d7s on Linux only: dbus dev headers required by libdbus-sys (used by keyring).
       # SQLite does not need system headers because rusqlite uses the "bundled" feature.
-      - name: Install system dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      # c8s has no keyring dependency, so it needs nothing here.
+      - name: Install system dependencies (d7s on Linux)
+        if: env.CRATE == 'd7s' && startsWith(matrix.os, 'ubuntu')
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
 
       - name: Build release binary
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }} -p ${{ env.CRATE }}
 
-      - name: Upload binary artifact
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p "dist/$NAME"
+          cp "target/${{ matrix.target }}/release/$CRATE" "crates/$CRATE/LICENSE" "crates/$CRATE/README.md" "dist/$NAME/"
+          tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "dist/$env:NAME" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/$env:CRATE.exe", "crates/$env:CRATE/LICENSE", "crates/$env:CRATE/README.md" "dist/$env:NAME/"
+          Compress-Archive -Path "dist/$env:NAME" -DestinationPath "dist/$env:NAME.zip"
+
+      - name: Upload archive
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: d7s-${{ github.ref_name }}-${{ matrix.label }}
-          path: target/${{ matrix.target }}/release/${{ matrix.binary }}
+          name: archive-${{ matrix.label }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
           if-no-files-found: error
 
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [prepare, build]
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      CRATE: ${{ needs.prepare.outputs.crate }}
+      NAME: ${{ needs.prepare.outputs.name }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.prepare.outputs.tag }}
 
-      - name: Extract release notes
-        id: release_notes
-        run: |
-          awk '/^## \[/{if(found) exit; found=1; next} found' crates/d7s/CHANGELOG.md > release_notes.md
-
-      - name: Download all artifacts
+      - name: Download archives
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          path: artifacts
+          pattern: archive-*
+          merge-multiple: true
+          path: dist
 
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- *.tar.gz *.zip > SHA256SUMS
+
+      - name: Build release notes
+        run: |
+          awk '/^## \[/{if(found) exit; found=1; next} found' "crates/$CRATE/CHANGELOG.md" > release_notes.md
+          base="https://github.com/${{ github.repository }}/releases/download/$TAG"
+          {
+            echo
+            echo "## Install"
+            echo
+            echo "| Platform | Download |"
+            echo "| --- | --- |"
+            echo "| Any (from source) | \`cargo install $CRATE --locked\` |"
+            echo "| Linux x86_64 | [$NAME-x86_64-unknown-linux-gnu.tar.gz]($base/$NAME-x86_64-unknown-linux-gnu.tar.gz) |"
+            echo "| Linux aarch64 | [$NAME-aarch64-unknown-linux-gnu.tar.gz]($base/$NAME-aarch64-unknown-linux-gnu.tar.gz) |"
+            echo "| macOS x86_64 | [$NAME-x86_64-apple-darwin.tar.gz]($base/$NAME-x86_64-apple-darwin.tar.gz) |"
+            echo "| macOS arm64 | [$NAME-aarch64-apple-darwin.tar.gz]($base/$NAME-aarch64-apple-darwin.tar.gz) |"
+            echo "| Windows x86_64 | [$NAME-x86_64-pc-windows-msvc.zip]($base/$NAME-x86_64-pc-windows-msvc.zip) |"
+            echo
+            echo "Verify a download: put it next to [SHA256SUMS]($base/SHA256SUMS) and run \`sha256sum -c SHA256SUMS --ignore-missing\`."
+          } >> release_notes.md
+
+      # Re-uploading an existing tag (workflow_dispatch) replaces same-named assets and the body.
       - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ needs.prepare.outputs.tag }}
           body_path: release_notes.md
           files: |
-            artifacts/d7s-${{ github.ref_name }}-linux-x86_64/d7s
-            artifacts/d7s-${{ github.ref_name }}-macos-x86_64/d7s
-            artifacts/d7s-${{ github.ref_name }}-macos-arm64/d7s
-            artifacts/d7s-${{ github.ref_name }}-windows-x86_64/d7s.exe
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
