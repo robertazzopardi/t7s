@@ -36,7 +36,7 @@ fmt-check *ARGS: (fmt "--check" ARGS)
 
 # Clippy: same flags as CI. CI uses the latest stable (no rust-toolchain file), so run `rustup update stable` often or new lints will be missed locally.
 clippy *ARGS:
-    cargo clippy --workspace --all-features --all-targets {{ARGS}} -- -D warnings -W clippy::all -W clippy::pedantic -W clippy::nursery
+    cargo clippy --workspace --all-features --all-targets {{ARGS}} -- -D warnings -W clippy::all -W clippy::pedantic -W clippy::nursery -W clippy::cargo -A clippy::multiple_crate_versions
 
 # Clippy and apply fixes where possible
 clippy-fix: (clippy "--fix" "--allow-dirty")
