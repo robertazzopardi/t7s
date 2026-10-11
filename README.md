@@ -31,8 +31,17 @@ cargo install d7s --locked
 cargo install c8s --locked
 ```
 
+Prebuilt binaries (Linux x86_64/aarch64, macOS x86_64/arm64, Windows x86_64) are attached to each [GitHub release](https://github.com/robertazzopardi/t7s/releases), or use `cargo binstall d7s` / `cargo binstall c8s`.
+
 See each app's README for details.
 
 ## Contributing
 
 PRs welcome. `just check` runs fmt, clippy (pedantic/nursery), and tests before you push — see `just --list` for other recipes.
+
+## Releasing
+
+1. Bump the crate version and add a `## [x.y.z]` section to `crates/<crate>/CHANGELOG.md`, using these headings in order (omit empty ones): optional highlights / `### New crates`, `### Breaking`, `### Added`, `### Changed`, `### Fixed`.
+2. Merge to `main`, then `just release <k9tui|d7s|c8s> <version>` (publishes to crates.io, then tags `vX.Y.Z` for d7s or `c8s-vX.Y.Z` for c8s).
+3. The tag triggers `.github/workflows/release.yml`: it builds archives (`<crate>-v<version>-<target>.tar.gz`/`.zip`) plus `SHA256SUMS`, and publishes a release whose body is the CHANGELOG section plus a generated Install table. k9tui tags build nothing.
+4. To rebuild assets for an existing tag: `gh workflow run release.yml -f tag=v0.5.0`.
