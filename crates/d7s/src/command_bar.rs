@@ -72,7 +72,12 @@ impl App<'_> {
     pub(crate) fn command_suggestion(&self) -> Option<String> {
         let names = self.command_table_names();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        suggest(&self.command_text(), &refs)
+        suggest(&self.command_text(), &refs).filter(|s| {
+            // `activity` is Postgres-only: don't advertise it elsewhere.
+            s != "activity"
+                || self.database_explorer.connection.r#type
+                    == ConnectionType::Postgres
+        })
     }
 
     pub(crate) async fn handle_command_key(

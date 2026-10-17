@@ -6,7 +6,7 @@ use crate::{
     database_explorer_state::DatabaseExplorer,
     db::connection::{Connection, ConnectionStatus, ConnectionType},
     services::{ConnectionService, PreferencesService},
-    ui::widgets::hotkeys::{CONNECTION_HOTKEYS, DATABASE_HOTKEYS},
+    ui::widgets::hotkeys::{CONNECTION_HOTKEYS, database_hotkeys},
 };
 
 impl App<'_> {
@@ -70,10 +70,10 @@ impl App<'_> {
 
         let connection_name = connection.name.clone();
         let connection_env = connection.environment;
+        self.hotkeys = database_hotkeys(connection.r#type);
         self.database_explorer =
             DatabaseExplorer::new(connection, Some(sqlite));
         self.state = AppState::DatabaseConnected;
-        self.hotkeys = DATABASE_HOTKEYS.to_vec();
         let _ = PreferencesService::set_last_connection(&connection_name);
         let msg = self.connect_status_message(&connection_name, connection_env);
         self.set_status(msg);
@@ -114,7 +114,7 @@ impl App<'_> {
             self.state = AppState::DatabaseConnected;
 
             // Update hotkeys for database mode
-            self.hotkeys = DATABASE_HOTKEYS.to_vec();
+            self.hotkeys = database_hotkeys(connection.r#type);
             let _ = PreferencesService::set_last_connection(&connection_name);
             let msg =
                 self.connect_status_message(&connection_name, connection_env);

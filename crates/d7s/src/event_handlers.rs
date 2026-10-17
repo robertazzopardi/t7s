@@ -377,7 +377,9 @@ impl App<'_> {
                 Ok(true)
             }
             (_, KeyCode::Char('A'))
-                if self.state == AppState::DatabaseConnected =>
+                if self.state == AppState::DatabaseConnected
+                    && self.database_explorer.connection.r#type
+                        == ConnectionType::Postgres =>
             {
                 self.open_activity_view().await;
                 Ok(true)

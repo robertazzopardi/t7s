@@ -1,4 +1,7 @@
+use crossterm::event::KeyCode;
 use k9tui::widgets::hotkey::Hotkey;
+
+use crate::db::connection::ConnectionType;
 
 pub const CONNECTION_HOTKEYS: [Hotkey; 8] = [
     Hotkey::new('n', "New Connection"),
@@ -22,6 +25,19 @@ pub const DATABASE_HOTKEYS: [Hotkey; 9] = [
     Hotkey::new('A', "Activity (Postgres)"),
     Hotkey::new('L', "Query log"),
 ];
+
+/// [`DATABASE_HOTKEYS`] for a backend: the activity view (`A`) is Postgres-only.
+#[must_use]
+pub fn database_hotkeys(connection_type: ConnectionType) -> Vec<Hotkey> {
+    DATABASE_HOTKEYS
+        .iter()
+        .filter(|h| {
+            h.keycode != KeyCode::Char('A')
+                || connection_type == ConnectionType::Postgres
+        })
+        .cloned()
+        .collect()
+}
 
 /// Shown in addition to [`DATABASE_HOTKEYS`] while viewing table row data.
 pub const TABLE_DATA_VIEW_HOTKEYS: [Hotkey; 5] = [
