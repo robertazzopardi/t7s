@@ -4,7 +4,9 @@ use crate::{
     app::App,
     app_state::{AppState, DatabaseExplorerState},
     database_explorer_state::DatabaseExplorer,
-    db::connection::{Connection, ConnectionStatus, ConnectionType},
+    db::connection::{
+        Connection, ConnectionStatus, ConnectionType, parse_server_url,
+    },
     services::{ConnectionService, PreferencesService},
     ui::widgets::hotkeys::{CONNECTION_HOTKEYS, database_hotkeys},
 };
@@ -95,22 +97,26 @@ impl App<'_> {
         connection_with_password.password = Some(password);
 
         // For PostgreSQL, connect to a default database first to list databases.
-        // MySQL can connect without a database, so the URL's database is used as-is.
-        let default_db = (connection.r#type == ConnectionType::Postgres)
-            .then(|| "postgres".to_string());
+        // MySQL can connect without a database: use the URL's, if it has one.
+        let default_db = if connection.r#type == ConnectionType::Postgres {
+            Some("postgres".to_string())
+        } else {
+            Some(parse_server_url(connection.r#type, &connection.url).3)
+                .filter(|d| !d.is_empty())
+        };
 
         // Create a temporary connection to the default database
         let mut temp_connection = connection_with_password.clone();
         temp_connection.selected_database.clone_from(&default_db);
-        let postgres = self.query_log.wrap(temp_connection.to_database());
+        let db = self.query_log.wrap(temp_connection.to_database());
 
-        if postgres.test().await {
-            // Connection successful; keep selected_database so explorer is on "postgres"
+        if db.test().await {
+            // Connection successful; keep selected_database so the explorer shows it
             connection_with_password.selected_database = default_db;
             let connection_name = connection.name.clone();
             let connection_env = connection.environment;
             self.database_explorer =
-                DatabaseExplorer::new(connection_with_password, Some(postgres));
+                DatabaseExplorer::new(connection_with_password, Some(db));
             self.state = AppState::DatabaseConnected;
 
             // Update hotkeys for database mode

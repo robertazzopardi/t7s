@@ -22,7 +22,8 @@ services:
     networks:
       - d7s-network
 
-  # MySQL 8 on 3306, MariaDB on 3307 (root / d7s_password, database d7s_test).
+  # MySQL 8 on 13306 (not 3306, which a local MySQL usually owns), MariaDB on 3307
+  # (root / d7s_password, database d7s_test).
   mysql:
     image: mysql:8
     container_name: d7s-test-mysql
@@ -30,7 +31,7 @@ services:
       MYSQL_ROOT_PASSWORD: d7s_password
       MYSQL_DATABASE: d7s_test
     ports:
-      - "3306:3306"
+      - "13306:3306"
     volumes:
       - ./docker/seed-mysql.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
     networks:

@@ -343,9 +343,21 @@ impl Database for Mysql {
             qualified(schema_name, table_name),
             my_quote_ident(set_column),
         );
-        let params: Vec<Value> = std::iter::once(Value::from(new_value))
-            .chain(pk_params)
-            .collect();
+        // Like insert: blank / "null" clears a nullable column instead of coercing ('' -> 0).
+        let nullable = Self::columns_on(&mut conn, schema_name, table_name)
+            .await?
+            .iter()
+            .any(|c| c.name == set_column && c.is_nullable);
+        let new_value = if nullable
+            && (new_value.trim().is_empty()
+                || new_value.eq_ignore_ascii_case("null"))
+        {
+            Value::NULL
+        } else {
+            Value::from(new_value)
+        };
+        let params: Vec<Value> =
+            std::iter::once(new_value).chain(pk_params).collect();
         let res = conn.exec_iter(sql, params).await?;
         Ok(res.affected_rows())
     }
@@ -481,7 +493,7 @@ mod tests {
             host: Some("localhost".into()),
             port: Some(
                 std::env::var("D7S_MYSQL_PORT")
-                    .unwrap_or_else(|_| "3306".into()),
+                    .unwrap_or_else(|_| "13306".into()),
             ),
             user: "root".into(),
             database: database.into(),
@@ -500,7 +512,7 @@ mod tests {
         assert_eq!(format_bytes(16 * 1024), "16.0 KB");
     }
 
-    /// Needs a MySQL/MariaDB server: `just docker-up` (mysql on 3306, mariadb on 3307),
+    /// Needs a MySQL/MariaDB server: `just docker-up` (mysql on 13306, mariadb on 3307),
     /// or set `D7S_MYSQL_PORT`.
     #[tokio::test]
     #[ignore = "requires docker test database"]
@@ -590,6 +602,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rows[0].values[0], "carol");
+
+        // blank on a nullable column becomes NULL; on a NOT NULL column it stays ''
+        my.update_table_cell("d7s_test", &t, "note", "hi", &pk, None)
+            .await
+            .unwrap();
+        my.update_table_cell("d7s_test", &t, "note", "", &pk, None)
+            .await
+            .unwrap();
+        my.update_table_cell("d7s_test", &t, "name", "", &pk, None)
+            .await
+            .unwrap();
+        let rows = my
+            .execute_sql(&format!(
+                "SELECT note IS NULL, name = '' FROM `{t}` WHERE id = 1"
+            ))
+            .await
+            .unwrap();
+        assert_eq!(rows[0].values, vec!["1", "1"]);
 
         assert!(
             my.get_table_index_names("d7s_test", &t)
