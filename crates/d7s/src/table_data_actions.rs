@@ -383,11 +383,11 @@ impl App<'_> {
                         .collect::<Vec<_>>()
                         .join(" AND ");
                     let tbl = if self.database_explorer.connection.r#type
-                        != ConnectionType::Sqlite
+                        == ConnectionType::Sqlite
                     {
-                        format!("{schema}.{table}")
-                    } else {
                         table.clone()
+                    } else {
+                        format!("{schema}.{table}")
                     };
                     preview = Some(format!("DELETE FROM {tbl} WHERE {w}"));
                 }

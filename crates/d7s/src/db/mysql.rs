@@ -481,7 +481,7 @@ mod tests {
     /// or set `D7S_MYSQL_PORT`.
     #[tokio::test]
     #[ignore = "requires docker test database"]
-    #[allow(clippy::indexing_slicing)]
+    #[allow(clippy::indexing_slicing, clippy::too_many_lines)]
     async fn crud_round_trip() {
         let my = Mysql {
             name: "test".into(),
@@ -534,7 +534,7 @@ mod tests {
             .insert_table_row(
                 "d7s_test",
                 &t,
-                &["".into(), "alice".into(), "".into(), "".into()],
+                &[String::new(), "alice".into(), String::new(), String::new()],
             )
             .await
             .unwrap();
@@ -543,7 +543,7 @@ mod tests {
             my.insert_table_row(
                 "d7s_test",
                 &t,
-                &["".into(), "".into(), "".into(), "".into()],
+                &[String::new(), String::new(), String::new(), String::new(),],
             )
             .await
             .is_err(),
