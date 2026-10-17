@@ -1,7 +1,10 @@
 //! TLS settings for server connections, read from the connection URL query:
 //! `sslmode=` (Postgres) / `ssl-mode=` (MySQL) and `sslrootcert=` (CA bundle path).
 
-use std::{io, sync::Arc};
+use std::{
+    io,
+    sync::{Arc, OnceLock},
+};
 
 use rustls::{
     ClientConfig, DigitallySignedStruct, Error as TlsError, RootCertStore,
@@ -12,6 +15,8 @@ use rustls::{
     crypto::{CryptoProvider, aws_lc_rs},
     pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject},
 };
+// Loaded once: reading the OS store on every query-time connect is slow.
+static NATIVE: OnceLock<Vec<CertificateDer<'static>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TlsMode {
@@ -95,7 +100,9 @@ impl TlsConfig {
         }
         let mut roots = RootCertStore::empty();
         roots.add_parsable_certificates(
-            rustls_native_certs::load_native_certs().certs,
+            NATIVE
+                .get_or_init(|| rustls_native_certs::load_native_certs().certs)
+                .clone(),
         );
         if let Some(path) = &self.ca_path {
             for cert in

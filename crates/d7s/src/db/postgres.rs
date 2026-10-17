@@ -9,7 +9,7 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use rust_decimal::Decimal;
 use serde_json::Value;
 use tokio_postgres::{
-    NoTls, Row,
+    Row,
     config::SslMode,
     types::{FromSql, ToSql, Type},
 };
@@ -29,20 +29,11 @@ async fn connect_pg(
     tls: &TlsConfig,
 ) -> Result<tokio_postgres::Client, Box<dyn std::error::Error>> {
     let mut config: tokio_postgres::Config = config.parse()?;
-    if tls.mode == TlsMode::Disable {
-        config.ssl_mode(SslMode::Disable);
-        let (client, conn) = config.connect(NoTls).await?;
-        tokio::spawn(async move {
-            if let Err(e) = conn.await {
-                eprintln!("Database connection error: {e}");
-            }
-        });
-        return Ok(client);
-    }
-    config.ssl_mode(if tls.mode == TlsMode::Prefer {
-        SslMode::Prefer
-    } else {
-        SslMode::Require
+    // With `SslMode::Disable` the connector is never used.
+    config.ssl_mode(match tls.mode {
+        TlsMode::Disable => SslMode::Disable,
+        TlsMode::Prefer => SslMode::Prefer,
+        TlsMode::Require | TlsMode::VerifyFull => SslMode::Require,
     });
     let connector =
         tokio_postgres_rustls::MakeRustlsConnect::new(tls.client_config()?);

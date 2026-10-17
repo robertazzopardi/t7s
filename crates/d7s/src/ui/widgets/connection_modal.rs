@@ -107,6 +107,7 @@ fn step1_connection_type(index: usize) -> ConnectionType {
 /// Index of the Database field in the Postgres/MySQL forms.
 const DATABASE_FIELD: usize = 4;
 /// TLS mode dropdown and optional CA certificate path, right after Database.
+const TLS_FIELD: usize = 5;
 const CA_FIELD: usize = 6;
 const TLS_MODES: [&str; 4] = ["disable", "prefer", "require", "verify-full"];
 
@@ -646,7 +647,7 @@ impl Modal {
                 with_tls_query(
                     connection_type,
                     &url,
-                    tls(DATABASE_FIELD + 1),
+                    tls(TLS_FIELD),
                     tls(CA_FIELD),
                 )
             }
