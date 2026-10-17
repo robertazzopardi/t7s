@@ -10,15 +10,50 @@ use rust_decimal::Decimal;
 use serde_json::Value;
 use tokio_postgres::{
     NoTls, Row,
+    config::SslMode,
     types::{FromSql, ToSql, Type},
 };
 use uuid::Uuid;
 
 use crate::db::{
     Column, Database, DatabaseInfo, DbRowId, Schema, Table, TableData,
-    TableDataPage, TableRow, query_log::report_sql,
+    TableDataPage, TableRow,
+    query_log::report_sql,
     should_omit_for_insert_default,
+    tls::{TlsConfig, TlsMode},
 };
+
+/// Connect (plain or TLS per `tls`) and spawn the connection driver task.
+async fn connect_pg(
+    config: &str,
+    tls: &TlsConfig,
+) -> Result<tokio_postgres::Client, Box<dyn std::error::Error>> {
+    let mut config: tokio_postgres::Config = config.parse()?;
+    if tls.mode == TlsMode::Disable {
+        config.ssl_mode(SslMode::Disable);
+        let (client, conn) = config.connect(NoTls).await?;
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                eprintln!("Database connection error: {e}");
+            }
+        });
+        return Ok(client);
+    }
+    config.ssl_mode(if tls.mode == TlsMode::Prefer {
+        SslMode::Prefer
+    } else {
+        SslMode::Require
+    });
+    let connector =
+        tokio_postgres_rustls::MakeRustlsConnect::new(tls.client_config()?);
+    let (client, conn) = config.connect(connector).await?;
+    tokio::spawn(async move {
+        if let Err(e) = conn.await {
+            eprintln!("Database connection error: {e}");
+        }
+    });
+    Ok(client)
+}
 
 // Thin wrappers that report the SQL text (as sent, `$n` placeholders, no
 // bound values) to the session query log before running it.
@@ -351,6 +386,7 @@ pub struct Postgres {
     pub user: String,
     pub database: String,
     pub password: String,
+    pub tls: TlsConfig,
 }
 
 impl TableData for Postgres {
@@ -389,7 +425,7 @@ impl Database for Postgres {
             self.database
         );
 
-        tokio_postgres::connect(&config, NoTls).await.is_ok()
+        connect_pg(&config, &self.tls).await.is_ok()
     }
 
     async fn execute_sql(
@@ -926,7 +962,7 @@ impl Postgres {
 
     async fn get_connection(
         &self,
-    ) -> Result<tokio_postgres::Client, tokio_postgres::Error> {
+    ) -> Result<tokio_postgres::Client, Box<dyn std::error::Error>> {
         let config = format!(
             "host={} port={} user={} password={} dbname={}",
             self.host.clone().unwrap_or_else(|| "localhost".to_string()),
@@ -935,17 +971,7 @@ impl Postgres {
             self.password,
             self.database
         );
-
-        let (client, connection) =
-            tokio_postgres::connect(&config, NoTls).await?;
-
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("Database connection error: {e}");
-            }
-        });
-
-        Ok(client)
+        connect_pg(&config, &self.tls).await
     }
 
     /// Retrieves sample data from a table.
@@ -959,7 +985,7 @@ impl Postgres {
         schema_name: &str,
         table_name: &str,
         limit: i64,
-    ) -> Result<Vec<Vec<String>>, tokio_postgres::Error> {
+    ) -> Result<Vec<Vec<String>>, Box<dyn std::error::Error>> {
         let client = self.get_connection().await?;
 
         let query =
@@ -1354,6 +1380,7 @@ mod tests {
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
+            tls: Default::default(),
         };
         let t = format!("d7s_once_{}", std::process::id());
         pg.execute_sql(&format!("CREATE TABLE {t} (id int)"))
@@ -1382,6 +1409,7 @@ mod tests {
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
+            tls: Default::default(),
         };
         let pid = std::process::id();
         let odd = format!("Odd'Tbl_{pid}");

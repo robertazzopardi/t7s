@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     db::{
         Database, TableData, mysql::Mysql, postgres::Postgres, sqlite::Sqlite,
+        tls::TlsConfig,
     },
     ui::theme,
 };
@@ -149,11 +150,12 @@ impl Display for Connection {
 
                 write!(
                     f,
-                    " Name: {}\n Host: {}\n Port: {}\n User: {}\n Database: {}\n Schema: {}\n Table: {}",
+                    " Name: {}\n Host: {}\n Port: {}\n User: {}\n TLS: {}\n Database: {}\n Schema: {}\n Table: {}",
                     self.name,
                     host,
                     port,
                     user,
+                    TlsConfig::from_url(&self.url).mode.label(),
                     database,
                     self.schema.clone().unwrap_or_default(),
                     self.table.clone().unwrap_or_default(),
@@ -358,6 +360,7 @@ impl Connection {
             user,
             database,
             password: self.password.clone().unwrap_or_default(),
+            tls: TlsConfig::from_url(&self.url),
         })
     }
 
@@ -384,6 +387,7 @@ impl Connection {
             user,
             database,
             password: self.password.clone().unwrap_or_default(),
+            tls: TlsConfig::from_url(&self.url),
         })
     }
 

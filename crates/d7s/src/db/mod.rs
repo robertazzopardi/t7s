@@ -5,6 +5,7 @@ pub mod mysql;
 pub mod postgres;
 pub mod query_log;
 pub mod sqlite;
+pub mod tls;
 
 use std::path::PathBuf;
 

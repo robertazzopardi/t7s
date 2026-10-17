@@ -1666,6 +1666,7 @@ mod tests {
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
+            tls: Default::default(),
         };
         let mut app = App::default();
         app.database_explorer = DatabaseExplorer::new(

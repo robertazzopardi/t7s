@@ -79,7 +79,10 @@ color-eyre = "0.6.3"
 directories = "6.0.0"
 ratatui-textarea = "0.9.1"
 sqlparser = "0.63.0"
-mysql_async = { version = "0.37.1", default-features = false, features = ["minimal"] }
+mysql_async = { version = "0.37.1", default-features = false, features = ["minimal", "rustls-tls"] }
+tokio-postgres-rustls = "0.14.0"
+rustls = "0.23.46"
+rustls-native-certs = "0.8.5"
 
 [lints]
 workspace = true
