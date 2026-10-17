@@ -69,7 +69,7 @@ fn cell_to_string(value: &Value, col: &mysql_async::Column) -> String {
     match value {
         Value::NULL => "NULL".to_string(),
         Value::Bytes(b) if is_binary_column(col) => {
-            format!("<binary {} bytes>", b.len())
+            format!("<{} bytes>", b.len())
         }
         Value::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
         other @ (Value::Int(_)
@@ -558,7 +558,7 @@ mod tests {
         let page = my.get_table_data_page("d7s_test", &t, 0, 10).await.unwrap();
         assert_eq!(page.column_names, vec!["id", "name", "note", "blob_col"]);
         assert_eq!(page.rows[0], vec!["1", "alice", "NULL", "NULL"]);
-        assert_eq!(page.rows[1][3], "<binary 4 bytes>");
+        assert_eq!(page.rows[1][3], "<4 bytes>");
         assert_eq!(my.get_table_row_count("d7s_test", &t).await.unwrap(), 2);
 
         let pk = vec![("id".to_string(), "1".to_string())];
@@ -641,9 +641,9 @@ mod tests {
             page.column_names.iter().position(|c| c == name).unwrap()
         };
         assert_eq!(page.rows[0][col("c_bigint")], "9223372036854775807");
-        assert_eq!(page.rows[0][col("c_blob")], "<binary 4 bytes>");
-        assert_eq!(page.rows[0][col("c_varbinary")], "<binary 4 bytes>");
-        assert_eq!(page.rows[0][col("c_bit")], "<binary 1 bytes>");
+        assert_eq!(page.rows[0][col("c_blob")], "<4 bytes>");
+        assert_eq!(page.rows[0][col("c_varbinary")], "<4 bytes>");
+        assert_eq!(page.rows[0][col("c_bit")], "<1 bytes>");
         assert_eq!(page.rows[0][col("c_enum")], "green");
         assert_eq!(page.rows[0][col("c_date")], "2025-06-15");
         assert!(page.rows[0][col("c_json")].contains("\"d7s\""));
