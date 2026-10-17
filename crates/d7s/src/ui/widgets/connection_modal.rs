@@ -96,12 +96,14 @@ const STEP1_DB_TYPES: [&str; 3] = ["postgres", "sqlite", "mysql"];
 
 /// Connection type for a step 1 list entry (unknown index falls back to Postgres).
 fn step1_connection_type(index: usize) -> ConnectionType {
-    match STEP1_DB_TYPES.get(index) {
-        Some(&"sqlite") => ConnectionType::Sqlite,
-        Some(&"mysql") => ConnectionType::Mysql,
-        _ => ConnectionType::Postgres,
-    }
+    STEP1_DB_TYPES
+        .get(index)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_default()
 }
+
+/// Index of the Database field in the Postgres/MySQL forms.
+const DATABASE_FIELD: usize = 4;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct PasswordStorageTypeError;
@@ -608,7 +610,7 @@ impl Modal {
                     .fields
                     .get(3)
                     .map_or(String::new(), |f| f.value().to_string());
-                let database = self.fields.get(4).map_or_else(
+                let database = self.fields.get(DATABASE_FIELD).map_or_else(
                     || default_database(connection_type).to_string(),
                     |f| f.value().to_string(),
                 );
@@ -645,14 +647,14 @@ impl Modal {
     #[must_use]
     pub fn is_valid(&self) -> bool {
         // Password field is optional when "ask every time" is selected;
-        // the Database field (index 4) is optional for MySQL.
+        // the Database field is optional for MySQL.
         let end = if self.is_password_field_hidden() {
             self.password_field_index()
         } else {
             self.fields.len()
         };
-        let optional_db =
-            (self.connection_type == Some(ConnectionType::Mysql)).then_some(4);
+        let optional_db = (self.connection_type == Some(ConnectionType::Mysql))
+            .then_some(DATABASE_FIELD);
         !self
             .fields
             .iter()

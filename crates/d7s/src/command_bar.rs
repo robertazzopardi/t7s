@@ -75,8 +75,7 @@ impl App<'_> {
         suggest(&self.command_text(), &refs).filter(|s| {
             // `activity` is Postgres-only: don't advertise it elsewhere.
             s != "activity"
-                || self.database_explorer.connection.r#type
-                    == ConnectionType::Postgres
+                || self.database_explorer.connection.r#type.has_activity_view()
         })
     }
 

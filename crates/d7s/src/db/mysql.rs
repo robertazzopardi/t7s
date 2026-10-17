@@ -13,6 +13,10 @@ use crate::db::{
 const SYSTEM_DATABASES: &str =
     "'information_schema', 'mysql', 'performance_schema', 'sys'";
 
+/// Data + index size of a table, as an unsigned integer (bytes).
+const TABLE_BYTES: &str =
+    "CAST(COALESCE(data_length, 0) + COALESCE(index_length, 0) AS UNSIGNED)";
+
 type DbResult<T> = Result<T, Box<dyn std::error::Error>>;
 
 /// Backtick-quote an identifier, doubling embedded backticks.
@@ -159,14 +163,46 @@ impl Mysql {
         (clause, params)
     }
 
-    async fn data_plus_index_bytes(
+    /// Columns of a table on an already-open connection.
+    async fn columns_on(
         conn: &mut Conn,
         schema_name: &str,
         table_name: &str,
-    ) -> DbResult<Option<u64>> {
-        let q = "SELECT CAST(COALESCE(data_length, 0) + COALESCE(index_length, 0) AS UNSIGNED) \
-                 FROM information_schema.tables WHERE table_schema = ? AND table_name = ?";
-        Ok(conn.exec_first(q, (schema_name, table_name)).await?)
+    ) -> DbResult<Vec<Column>> {
+        let q = "SELECT column_name, column_type, is_nullable, column_default, extra, column_comment \
+                 FROM information_schema.columns \
+                 WHERE table_schema = ? AND table_name = ? \
+                 ORDER BY ordinal_position";
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+        )> = conn.exec(q, (schema_name, table_name)).await?;
+        Ok(rows
+            .into_iter()
+            .map(|(name, data_type, nullable, default, extra, comment)| {
+                // MariaDB reports "no default" as the string 'NULL'.
+                let default =
+                    default.filter(|d| !d.eq_ignore_ascii_case("null"));
+                // Surface auto-increment as the default so blank inserts omit the column.
+                let default = default.or_else(|| {
+                    extra
+                        .to_lowercase()
+                        .contains("auto_increment")
+                        .then(|| "auto_increment".to_string())
+                });
+                Column {
+                    name,
+                    data_type,
+                    is_nullable: nullable == "YES",
+                    default_value: default,
+                    description: (!comment.is_empty()).then_some(comment),
+                }
+            })
+            .collect())
     }
 }
 
@@ -215,11 +251,12 @@ impl Database for Mysql {
 
     async fn get_tables(&self, schema_name: &str) -> DbResult<Vec<Table>> {
         let mut conn = self.get_connection().await?;
-        let q = "SELECT table_name, table_schema, \
-                 CAST(COALESCE(data_length, 0) + COALESCE(index_length, 0) AS UNSIGNED) \
-                 FROM information_schema.tables \
-                 WHERE table_schema = ? AND table_type = 'BASE TABLE' \
-                 ORDER BY table_name";
+        let q = format!(
+            "SELECT table_name, table_schema, {TABLE_BYTES} \
+             FROM information_schema.tables \
+             WHERE table_schema = ? AND table_type = 'BASE TABLE' \
+             ORDER BY table_name"
+        );
         let rows: Vec<(String, String, u64)> =
             conn.exec(q, (schema_name,)).await?;
         Ok(rows
@@ -238,40 +275,7 @@ impl Database for Mysql {
         table_name: &str,
     ) -> DbResult<Vec<Column>> {
         let mut conn = self.get_connection().await?;
-        let q = "SELECT column_name, column_type, is_nullable, column_default, extra, column_comment \
-                 FROM information_schema.columns \
-                 WHERE table_schema = ? AND table_name = ? \
-                 ORDER BY ordinal_position";
-        let rows: Vec<(
-            String,
-            String,
-            String,
-            Option<String>,
-            String,
-            String,
-        )> = conn.exec(q, (schema_name, table_name)).await?;
-        Ok(rows
-            .into_iter()
-            .map(|(name, data_type, nullable, default, extra, comment)| {
-                // MariaDB reports "no default" as the string 'NULL'.
-                let default =
-                    default.filter(|d| !d.eq_ignore_ascii_case("null"));
-                // Surface auto-increment as the default so blank inserts omit the column.
-                let default = default.or_else(|| {
-                    extra
-                        .to_lowercase()
-                        .contains("auto_increment")
-                        .then(|| "auto_increment".to_string())
-                });
-                Column {
-                    name,
-                    data_type,
-                    is_nullable: nullable == "YES",
-                    default_value: default,
-                    description: (!comment.is_empty()).then_some(comment),
-                }
-            })
-            .collect())
+        Self::columns_on(&mut conn, schema_name, table_name).await
     }
 
     async fn get_table_data_page(
@@ -333,14 +337,15 @@ impl Database for Mysql {
             );
         }
         let mut conn = self.get_connection().await?;
-        let (clause, mut pk_params) = Self::pk_where(primary_key);
+        let (clause, pk_params) = Self::pk_where(primary_key);
         let sql = format!(
             "UPDATE {} SET {} = ? WHERE {clause}",
             qualified(schema_name, table_name),
             my_quote_ident(set_column),
         );
-        let mut params = vec![Value::from(new_value)];
-        params.append(&mut pk_params);
+        let params: Vec<Value> = std::iter::once(Value::from(new_value))
+            .chain(pk_params)
+            .collect();
         let res = conn.exec_iter(sql, params).await?;
         Ok(res.affected_rows())
     }
@@ -351,7 +356,9 @@ impl Database for Mysql {
         table_name: &str,
         values: &[String],
     ) -> DbResult<u64> {
-        let columns = self.get_columns(schema_name, table_name).await?;
+        let mut conn = self.get_connection().await?;
+        let columns =
+            Self::columns_on(&mut conn, schema_name, table_name).await?;
         if values.len() != columns.len() {
             return Err("INSERT column count does not match table.".into());
         }
@@ -383,7 +390,6 @@ impl Database for Mysql {
             col_list.join(", "),
             placeholders.join(", ")
         );
-        let mut conn = self.get_connection().await?;
         let res = conn.exec_iter(sql, params).await?;
         Ok(res.affected_rows())
     }
@@ -441,11 +447,13 @@ impl Database for Mysql {
         table_name: &str,
     ) -> DbResult<Option<String>> {
         let mut conn = self.get_connection().await?;
-        Ok(
-            Self::data_plus_index_bytes(&mut conn, schema_name, table_name)
-                .await?
-                .map(format_bytes),
-        )
+        let q = format!(
+            "SELECT {TABLE_BYTES} FROM information_schema.tables \
+             WHERE table_schema = ? AND table_name = ?"
+        );
+        let bytes: Option<u64> =
+            conn.exec_first(q, (schema_name, table_name)).await?;
+        Ok(bytes.map(format_bytes))
     }
 
     async fn get_databases(&self) -> DbResult<Vec<DatabaseInfo>> {
@@ -466,6 +474,21 @@ impl Database for Mysql {
 mod tests {
     use super::*;
 
+    /// Docker test server (`just docker-up`); `D7S_MYSQL_PORT` selects MariaDB (3307).
+    fn test_db(database: &str) -> Mysql {
+        Mysql {
+            name: "test".into(),
+            host: Some("localhost".into()),
+            port: Some(
+                std::env::var("D7S_MYSQL_PORT")
+                    .unwrap_or_else(|_| "3306".into()),
+            ),
+            user: "root".into(),
+            database: database.into(),
+            password: "d7s_password".into(),
+        }
+    }
+
     #[test]
     fn quote_ident_escapes_backticks() {
         assert_eq!(my_quote_ident("a`b"), "`a``b`");
@@ -483,17 +506,7 @@ mod tests {
     #[ignore = "requires docker test database"]
     #[allow(clippy::indexing_slicing, clippy::too_many_lines)]
     async fn crud_round_trip() {
-        let my = Mysql {
-            name: "test".into(),
-            host: Some("localhost".into()),
-            port: Some(
-                std::env::var("D7S_MYSQL_PORT")
-                    .unwrap_or_else(|_| "3306".into()),
-            ),
-            user: "root".into(),
-            database: "d7s_test".into(),
-            password: "d7s_password".into(),
-        };
+        let my = test_db("d7s_test");
         let t = format!("d7s_crud_{}", std::process::id());
         my.execute_sql(&format!(
             "CREATE TABLE `{t}` (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(20) NOT NULL, \
@@ -599,17 +612,7 @@ mod tests {
     #[ignore = "requires docker test database"]
     #[allow(clippy::indexing_slicing)]
     async fn seed_data_renders() {
-        let my = Mysql {
-            name: "test".into(),
-            host: Some("localhost".into()),
-            port: Some(
-                std::env::var("D7S_MYSQL_PORT")
-                    .unwrap_or_else(|_| "3306".into()),
-            ),
-            user: "root".into(),
-            database: String::new(),
-            password: "d7s_password".into(),
-        };
+        let my = test_db("");
         let dbs: Vec<String> = my
             .get_databases()
             .await

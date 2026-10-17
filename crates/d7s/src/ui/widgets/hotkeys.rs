@@ -33,7 +33,7 @@ pub fn database_hotkeys(connection_type: ConnectionType) -> Vec<Hotkey> {
         .iter()
         .filter(|h| {
             h.keycode != KeyCode::Char('A')
-                || connection_type == ConnectionType::Postgres
+                || connection_type.has_activity_view()
         })
         .cloned()
         .collect()

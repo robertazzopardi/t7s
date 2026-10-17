@@ -24,6 +24,14 @@ pub enum ConnectionType {
     Mysql,
 }
 
+impl ConnectionType {
+    /// `pg_stat_activity` has no equivalent elsewhere, so the activity view is Postgres-only.
+    #[must_use]
+    pub const fn has_activity_view(self) -> bool {
+        matches!(self, Self::Postgres)
+    }
+}
+
 impl Display for ConnectionType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -341,10 +349,8 @@ impl Connection {
     /// Uses `selected_database` if set (when connected to a specific database), otherwise parses from URL.
     #[must_use]
     pub fn to_postgres(&self) -> Box<dyn Database> {
-        let (host, port, user, database_from_url) =
-            parse_postgres_url(&self.url);
-        let database =
-            self.selected_database.clone().unwrap_or(database_from_url);
+        let (host, port, user, database) =
+            self.server_parts(ConnectionType::Postgres);
         Box::new(Postgres {
             name: self.name.clone(),
             host: Some(host),
@@ -355,12 +361,22 @@ impl Connection {
         })
     }
 
-    #[must_use]
-    pub fn to_mysql(&self) -> Box<dyn Database> {
+    /// (host, port, user, database) from the URL; `selected_database` wins over the URL's.
+    fn server_parts(
+        &self,
+        connection_type: ConnectionType,
+    ) -> (String, String, String, String) {
         let (host, port, user, database_from_url) =
-            parse_server_url(ConnectionType::Mysql, &self.url);
+            parse_server_url(connection_type, &self.url);
         let database =
             self.selected_database.clone().unwrap_or(database_from_url);
+        (host, port, user, database)
+    }
+
+    #[must_use]
+    pub fn to_mysql(&self) -> Box<dyn Database> {
+        let (host, port, user, database) =
+            self.server_parts(ConnectionType::Mysql);
         Box::new(Mysql {
             name: self.name.clone(),
             host: Some(host),
@@ -535,11 +551,6 @@ pub const fn default_database(connection_type: ConnectionType) -> &'static str {
         ConnectionType::Mysql => "",
         ConnectionType::Postgres | ConnectionType::Sqlite => "postgres",
     }
-}
-
-/// Parse a postgres/postgresql URL into (host, port, user, database).
-pub fn parse_postgres_url(url_str: &str) -> (String, String, String, String) {
-    parse_server_url(ConnectionType::Postgres, url_str)
 }
 
 /// Parse a postgres/mysql URL into (host, port, user, database), using the type's defaults.
