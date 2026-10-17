@@ -1380,7 +1380,7 @@ mod tests {
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
-            tls: Default::default(),
+            tls: TlsConfig::default(),
         };
         let t = format!("d7s_once_{}", std::process::id());
         pg.execute_sql(&format!("CREATE TABLE {t} (id int)"))
@@ -1409,7 +1409,7 @@ mod tests {
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
-            tls: Default::default(),
+            tls: TlsConfig::default(),
         };
         let pid = std::process::id();
         let odd = format!("Odd'Tbl_{pid}");

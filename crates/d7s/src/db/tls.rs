@@ -162,10 +162,7 @@ impl ServerCertVerifier for NoVerify {
 #[cfg(test)]
 mod tests {
     use super::{TlsConfig, TlsMode};
-    use crate::db::{
-        Database,
-        connection::{Connection, ConnectionType, with_tls_query},
-    };
+    use crate::db::connection::{Connection, ConnectionType, with_tls_query};
 
     fn ca() -> String {
         format!("{}/docker/certs/ca.crt", env!("CARGO_MANIFEST_DIR"))
