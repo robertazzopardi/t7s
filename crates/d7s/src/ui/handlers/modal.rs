@@ -98,14 +98,7 @@ pub fn handle_save_connection(
 /// Tests a database connection (Postgres or Sqlite)
 #[allow(dead_code)]
 pub async fn test_connection(connection: &Connection) -> TestResult {
-    let result = match connection.r#type {
-        crate::db::connection::ConnectionType::Postgres => {
-            connection.to_postgres().test().await
-        }
-        crate::db::connection::ConnectionType::Sqlite => {
-            connection.to_sqlite().test().await
-        }
-    };
+    let result = connection.to_database().test().await;
 
     if result {
         TestResult::Success

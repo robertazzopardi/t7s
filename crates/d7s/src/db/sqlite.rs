@@ -559,8 +559,15 @@ pub fn init_db() -> Result<()> {
     let db_path = get_db_path()?;
     let mut conn = SqliteConnection::open(db_path)?;
 
+    migrations().to_latest(&mut conn)?;
+
+    Ok(())
+}
+
+/// Append-only: never edit an applied migration, add a new one at the end.
+fn migrations() -> Migrations<'static> {
     // Base schema: Name, Type, Url, Environment, Metadata (JSONB as TEXT).
-    let migrations = Migrations::new(vec![
+    Migrations::new(vec![
         M::up(
             "CREATE TABLE IF NOT EXISTS connections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -579,11 +586,34 @@ pub fn init_db() -> Result<()> {
             );",
         )
         .down("DROP TABLE preferences"),
-    ]);
-
-    migrations.to_latest(&mut conn)?;
-
-    Ok(())
+        // Allow type 'mysql': SQLite can't alter a CHECK, so rebuild the table (ids kept).
+        M::up(
+            "CREATE TABLE connections_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                type TEXT NOT NULL CHECK( type IN ('postgres','sqlite','mysql') ),
+                url TEXT NOT NULL,
+                environment TEXT NOT NULL CHECK( environment IN ('local', 'dev','staging','prod') ),
+                metadata TEXT
+            );
+            INSERT INTO connections_new SELECT id, name, type, url, environment, metadata FROM connections;
+            DROP TABLE connections;
+            ALTER TABLE connections_new RENAME TO connections;",
+        )
+        .down(
+            "CREATE TABLE connections_old (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                type TEXT NOT NULL CHECK( type IN ('postgres','sqlite') ),
+                url TEXT NOT NULL,
+                environment TEXT NOT NULL CHECK( environment IN ('local', 'dev','staging','prod') ),
+                metadata TEXT
+            );
+            INSERT INTO connections_old SELECT id, name, type, url, environment, metadata FROM connections WHERE type != 'mysql';
+            DROP TABLE connections;
+            ALTER TABLE connections_old RENAME TO connections;",
+        ),
+    ])
 }
 
 /// Build metadata JSON for storage (includes `password_storage` if set).
@@ -795,6 +825,41 @@ mod pragma_tests {
 #[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migration_allows_mysql_and_keeps_existing_rows() {
+        let mut conn = SqliteConnection::open_in_memory().unwrap();
+        // Existing install: schema as of the previous release (2 migrations).
+        migrations().to_version(&mut conn, 2).unwrap();
+        conn.execute(
+            "INSERT INTO connections (name, type, url, environment, metadata) VALUES ('pg', 'postgres', 'postgres://u@h/db', 'dev', '{}')",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO connections (name, type, url, environment) VALUES ('my', 'mysql', 'mysql://u@h/db', 'dev')",
+                [],
+            )
+            .is_err(),
+            "old schema rejects mysql"
+        );
+
+        migrations().to_latest(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO connections (name, type, url, environment) VALUES ('my', 'mysql', 'mysql://u@h/db', 'dev')",
+            [],
+        )
+        .unwrap();
+        let rows: Vec<(i64, String)> = conn
+            .prepare("SELECT id, name FROM connections ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows, vec![(1, "pg".to_string()), (2, "my".to_string())]);
+    }
 
     fn db() -> ((), Sqlite) {
         static N: std::sync::atomic::AtomicUsize =

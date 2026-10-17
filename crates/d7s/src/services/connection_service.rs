@@ -51,10 +51,7 @@ impl ConnectionService {
 
     /// Test a connection by attempting to connect (postgres or sqlite)
     pub async fn test(connection: &Connection) -> bool {
-        match connection.r#type {
-            ConnectionType::Postgres => connection.to_postgres().test().await,
-            ConnectionType::Sqlite => connection.to_sqlite().test().await,
-        }
+        connection.to_database().test().await
     }
 
     /// Credential-free reachability probe for the connection-list health
@@ -63,9 +60,12 @@ impl ConnectionService {
     /// server log). `SQLite`: the database file exists (opening would create it).
     pub async fn ping(connection: &Connection) -> bool {
         match connection.r#type {
-            ConnectionType::Postgres => {
+            ConnectionType::Postgres | ConnectionType::Mysql => {
                 let (host, port, _, _) =
-                    crate::db::connection::parse_postgres_url(&connection.url);
+                    crate::db::connection::parse_server_url(
+                        connection.r#type,
+                        &connection.url,
+                    );
                 let Ok(port) = port.parse::<u16>() else {
                     return false;
                 };

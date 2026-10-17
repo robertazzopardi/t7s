@@ -693,9 +693,7 @@ impl App<'_> {
     /// SQLite is an embedded/file engine with no server process to inspect,
     /// so there's nothing equivalent to show there.
     pub(crate) async fn open_activity_view(&mut self) {
-        if self.database_explorer.connection.r#type
-            != crate::db::connection::ConnectionType::Postgres
-        {
+        if !self.database_explorer.connection.r#type.has_activity_view() {
             self.set_status(
                 "Activity view is Postgres-only (pg_stat_activity has no equivalent here).",
             );
@@ -877,7 +875,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn activity_is_refused_on_sqlite() {
+    async fn activity_key_is_ignored_on_sqlite() {
+        use crate::{
+            db::connection::ConnectionType,
+            ui::widgets::hotkeys::database_hotkeys,
+        };
         let mut app = sqlite_app("noact");
         app.on_key_event(key('A')).await.unwrap();
         assert!(app.query_log.snapshot().is_empty(), "nothing may run");
@@ -885,7 +887,16 @@ mod tests {
             app.database_explorer.state,
             DatabaseExplorerState::Tables(_)
         ));
-        assert!(render_text(&mut app).contains("Postgres-only"));
+        assert!(!render_text(&mut app).contains("Postgres-only"));
+
+        let has_activity = |t| {
+            database_hotkeys(t)
+                .iter()
+                .any(|h| h.keycode == crossterm::event::KeyCode::Char('A'))
+        };
+        assert!(has_activity(ConnectionType::Postgres));
+        assert!(!has_activity(ConnectionType::Sqlite));
+        assert!(!has_activity(ConnectionType::Mysql));
     }
 
     #[test]

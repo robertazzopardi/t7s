@@ -112,10 +112,7 @@ impl App<'_> {
             explorer.connection.selected_database =
                 Some(database_name.to_string());
 
-            let db: Box<dyn Database> = match explorer.connection.r#type {
-                ConnectionType::Postgres => explorer.connection.to_postgres(),
-                ConnectionType::Sqlite => explorer.connection.to_sqlite(),
-            };
+            let db: Box<dyn Database> = explorer.connection.to_database();
 
             if db.test().await {
                 explorer.database = Some(log.wrap(db));

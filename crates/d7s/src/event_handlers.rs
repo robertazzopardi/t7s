@@ -377,7 +377,12 @@ impl App<'_> {
                 Ok(true)
             }
             (_, KeyCode::Char('A'))
-                if self.state == AppState::DatabaseConnected =>
+                if self.state == AppState::DatabaseConnected
+                    && self
+                        .database_explorer
+                        .connection
+                        .r#type
+                        .has_activity_view() =>
             {
                 self.open_activity_view().await;
                 Ok(true)
@@ -663,8 +668,8 @@ impl App<'_> {
             self.modal_manager.was_confirmation_modal_confirmed()
             && matches!(key.code, KeyCode::Enter)
         {
-            // Delete from keyring only for Postgres (SQLite has no passwords)
-            if connection.r#type == ConnectionType::Postgres
+            // Delete from keyring only for server DBs (SQLite has no passwords)
+            if connection.r#type != ConnectionType::Sqlite
                 && !connection.should_ask_every_time()
             {
                 let _ = PasswordService::delete_from_keyring(&connection.name);
