@@ -50,6 +50,71 @@ services:
     networks:
       - d7s-network
 
+  # TLS-enabled servers for testing the connection form's TLS / CA Cert fields.
+  # Run ./docker/gen-tls-certs.sh first (or `just docker-tls-up`), then
+  # `docker compose --profile tls up -d`. CA: docker/certs/ca.crt.
+  # Postgres on 15432, MariaDB on 3308 (same credentials as above).
+  postgres-tls:
+    image: postgres:18-alpine
+    profiles: ["tls"]
+    container_name: d7s-test-db-tls
+    environment:
+      POSTGRES_DB: d7s_test
+      POSTGRES_USER: d7s_user
+      POSTGRES_PASSWORD: d7s_password
+    ports:
+      - "15432:5432"
+    volumes:
+      - ./docker/certs:/certs:ro
+      - ./docker/pg-tls-only.sh:/docker-entrypoint-initdb.d/01-tls-only.sh:ro
+    # Postgres insists the key is owned by it and mode 0600.
+    entrypoint:
+      - sh
+      - -c
+      - >
+        cp /certs/server.key /certs/server.crt /var/lib/postgresql/ &&
+        chown postgres:postgres /var/lib/postgresql/server.* &&
+        chmod 600 /var/lib/postgresql/server.key &&
+        exec docker-entrypoint.sh postgres -c ssl=on
+        -c ssl_cert_file=/var/lib/postgresql/server.crt
+        -c ssl_key_file=/var/lib/postgresql/server.key
+    networks:
+      - d7s-network
+
+  mariadb-tls:
+    image: mariadb:11
+    profiles: ["tls"]
+    container_name: d7s-test-mariadb-tls
+    environment:
+      MARIADB_ROOT_PASSWORD: d7s_password
+      MARIADB_DATABASE: d7s_test
+    command:
+      - --ssl-ca=/certs/ca.crt
+      - --ssl-cert=/certs/server.crt
+      - --ssl-key=/certs/server.key
+      - --require-secure-transport=ON
+    ports:
+      - "3308:3306"
+    volumes:
+      - ./docker/certs:/certs:ro
+      - ./docker/seed-mysql.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
+    networks:
+      - d7s-network
+
+  # MariaDB 11 enables TLS by default; this one has it off, for `require` / `prefer` fallback tests.
+  mariadb-plain:
+    image: mariadb:11
+    profiles: ["tls"]
+    container_name: d7s-test-mariadb-plain
+    environment:
+      MARIADB_ROOT_PASSWORD: d7s_password
+      MARIADB_DATABASE: d7s_test
+    command: ["--skip-ssl"]
+    ports:
+      - "3310:3306"
+    networks:
+      - d7s-network
+
   # SQLite has no server: this container just builds a seeded .sqlite file
   # into ./docker/sqlite/d7s_test.sqlite, then exits. Point the app at that
   # file path directly to test the sqlite backend.
