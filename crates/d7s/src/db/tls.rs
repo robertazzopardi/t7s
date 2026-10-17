@@ -35,7 +35,7 @@ impl TlsMode {
     fn parse(s: &str) -> Option<Self> {
         Some(match s.to_lowercase().replace('_', "-").as_str() {
             "disable" | "disabled" => Self::Disable,
-            "prefer" | "preferred" | "allow" => Self::Prefer,
+            "prefer" | "preferred" => Self::Prefer,
             "require" | "required" => Self::Require,
             // rustls always checks the host name, so verify-ca is as strict as verify-full.
             "verify-ca" | "verify-full" | "verify-identity" => Self::VerifyFull,

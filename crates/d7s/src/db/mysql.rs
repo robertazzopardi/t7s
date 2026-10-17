@@ -164,8 +164,10 @@ impl Mysql {
                 .with_danger_skip_domain_validation(true);
         }
         match Conn::new(base.clone().ssl_opts(ssl)).await {
-            // `prefer`: server without TLS support -> retry in plain.
-            Err(_) if mode == TlsMode::Prefer => Ok(Conn::new(base).await?),
+            // `prefer`: retry in plain only when the server lacks TLS, never on auth/network errors.
+            Err(mysql_async::Error::Driver(
+                mysql_async::DriverError::NoClientSslFlagFromServer,
+            )) if mode == TlsMode::Prefer => Ok(Conn::new(base).await?),
             r => Ok(r?),
         }
     }
