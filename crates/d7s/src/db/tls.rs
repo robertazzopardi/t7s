@@ -162,6 +162,66 @@ impl ServerCertVerifier for NoVerify {
 #[cfg(test)]
 mod tests {
     use super::{TlsConfig, TlsMode};
+    use crate::db::{
+        Database,
+        connection::{Connection, ConnectionType, with_tls_query},
+    };
+
+    fn ca() -> String {
+        format!("{}/docker/certs/ca.crt", env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// Needs `just docker-tls-up`.
+    async fn check(
+        t: ConnectionType,
+        port: &str,
+        user: &str,
+        db: &str,
+        mode: &str,
+        ca: &str,
+    ) -> bool {
+        let base = format!("{t}://{user}@localhost:{port}/{db}");
+        Connection {
+            r#type: t,
+            url: with_tls_query(t, &base, mode, ca),
+            password: Some("d7s_password".into()),
+            ..Connection::default()
+        }
+        .to_database()
+        .test()
+        .await
+    }
+
+    #[tokio::test]
+    #[ignore = "needs `just docker-tls-up`"]
+    async fn live_tls_handshakes() {
+        use ConnectionType::{Mysql, Postgres};
+        let ca = ca();
+        for (t, port, user, db) in [
+            (Postgres, "15432", "d7s_user", "d7s_test"),
+            (Mysql, "3308", "root", "d7s_test"),
+        ] {
+            assert!(
+                check(t, port, user, db, "require", "").await,
+                "{t} require"
+            );
+            assert!(check(t, port, user, db, "prefer", "").await, "{t} prefer");
+            assert!(
+                check(t, port, user, db, "verify-full", &ca).await,
+                "{t} verify-full + CA"
+            );
+            // Private CA is not in the system roots -> must fail without it.
+            assert!(
+                !check(t, port, user, db, "verify-full", "").await,
+                "{t} verify-full w/o CA"
+            );
+        }
+        // Server allows plain connections too.
+        assert!(
+            check(Postgres, "15432", "d7s_user", "d7s_test", "disable", "")
+                .await
+        );
+    }
 
     #[test]
     fn parses_mode_and_ca_from_url() {

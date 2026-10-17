@@ -539,6 +539,30 @@ pub fn build_server_url(
     format!("{connection_type}://{auth}{host}:{port}/{database}")
 }
 
+/// Append `sslmode=` (Postgres) / `ssl-mode=` (MySQL) and `sslrootcert=` when TLS is enabled.
+#[must_use]
+pub fn with_tls_query(
+    connection_type: ConnectionType,
+    url: &str,
+    mode: &str,
+    ca_path: &str,
+) -> String {
+    if mode.is_empty() || mode == "disable" {
+        return url.to_string();
+    }
+    let key = if connection_type == ConnectionType::Mysql {
+        "ssl-mode"
+    } else {
+        "sslmode"
+    };
+    let mut q = url::form_urlencoded::Serializer::new(String::new());
+    q.append_pair(key, mode);
+    if !ca_path.is_empty() {
+        q.append_pair("sslrootcert", ca_path);
+    }
+    format!("{url}?{}", q.finish())
+}
+
 /// Default TCP port for a server-based connection type.
 #[must_use]
 pub const fn default_port(connection_type: ConnectionType) -> &'static str {

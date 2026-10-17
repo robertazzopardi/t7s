@@ -96,6 +96,11 @@ c8s-demo-teardown:
 docker-up:
     cd crates/d7s && docker compose up -d
 
+# Docker: start TLS-enabled Postgres (15432) and MariaDB (3308); CA at crates/d7s/docker/certs/ca.crt
+docker-tls-up:
+    crates/d7s/docker/gen-tls-certs.sh
+    cd crates/d7s && docker compose --profile tls up -d postgres-tls mariadb-tls
+
 # Docker: stop services
 docker-down:
     cd crates/d7s && docker compose down

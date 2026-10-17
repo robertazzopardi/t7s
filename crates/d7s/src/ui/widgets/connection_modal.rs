@@ -30,7 +30,9 @@ use crate::db::{
     connection::{
         Connection, ConnectionType, build_server_url, default_database,
         default_port, parse_connection_string, parse_server_url,
+        with_tls_query,
     },
+    tls::TlsConfig,
 };
 
 // Modal dimension constants
@@ -104,6 +106,9 @@ fn step1_connection_type(index: usize) -> ConnectionType {
 
 /// Index of the Database field in the Postgres/MySQL forms.
 const DATABASE_FIELD: usize = 4;
+/// TLS mode dropdown and optional CA certificate path, right after Database.
+const CA_FIELD: usize = 6;
+const TLS_MODES: [&str; 4] = ["disable", "prefer", "require", "verify-full"];
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct PasswordStorageTypeError;
@@ -289,6 +294,14 @@ impl Modal {
                 user_f.set_value(user);
                 let mut database_f = ModalField::new("Database");
                 database_f.set_value(database);
+                let tls = TlsConfig::from_url(
+                    prefilled.as_deref().unwrap_or_default(),
+                );
+                let mut tls_f = ModalField::new("TLS");
+                tls_f.set_options(TLS_MODES.to_vec());
+                tls_f.set_value(tls.mode.label());
+                let mut ca_f = ModalField::new("CA Cert");
+                ca_f.set_value(tls.ca_path.unwrap_or_default());
                 let mut env = ModalField::new("Environment");
                 env.set_options(vec!["dev", "staging", "prod"]);
                 env.set_value("dev");
@@ -297,8 +310,8 @@ impl Modal {
                 let mut password = ModalField::new("Password");
                 password.set_masked();
                 self.fields = vec![
-                    name, host_f, port_f, user_f, database_f, env, metadata,
-                    password,
+                    name, host_f, port_f, user_f, database_f, tls_f, ca_f, env,
+                    metadata, password,
                 ];
             }
             ConnectionType::Sqlite => {
@@ -382,6 +395,12 @@ impl Modal {
                 user_f.set_value(user);
                 let mut database_f = ModalField::new("Database");
                 database_f.set_value(database);
+                let tls = TlsConfig::from_url(&connection.url);
+                let mut tls_f = ModalField::new("TLS");
+                tls_f.set_options(TLS_MODES.to_vec());
+                tls_f.set_value(tls.mode.label());
+                let mut ca_f = ModalField::new("CA Cert");
+                ca_f.set_value(tls.ca_path.unwrap_or_default());
                 let mut env = ModalField::new("Environment");
                 env.set_options(vec!["dev", "staging", "prod"]);
                 env.set_value(connection.environment.to_string());
@@ -392,8 +411,8 @@ impl Modal {
                 password
                     .set_value(connection.password.clone().unwrap_or_default());
                 self.fields = vec![
-                    name, host_f, port_f, user_f, database_f, env, metadata,
-                    password,
+                    name, host_f, port_f, user_f, database_f, tls_f, ca_f, env,
+                    metadata, password,
                 ];
             }
             ConnectionType::Sqlite => {
@@ -569,7 +588,7 @@ impl Modal {
         };
 
         let (environment_index, metadata_index) = match connection_type {
-            ConnectionType::Postgres | ConnectionType::Mysql => (5, 6),
+            ConnectionType::Postgres | ConnectionType::Mysql => (7, 8),
             ConnectionType::Sqlite => (2, 3),
         };
         let environment = self
@@ -614,12 +633,21 @@ impl Modal {
                     || default_database(connection_type).to_string(),
                     |f| f.value().to_string(),
                 );
-                build_server_url(
+                let url = build_server_url(
                     connection_type,
                     &host,
                     &port,
                     &user,
                     &database,
+                );
+                let tls = |i: usize| {
+                    self.fields.get(i).map_or("", |f| f.value().trim())
+                };
+                with_tls_query(
+                    connection_type,
+                    &url,
+                    tls(DATABASE_FIELD + 1),
+                    tls(CA_FIELD),
                 )
             }
             ConnectionType::Sqlite => self
@@ -653,14 +681,15 @@ impl Modal {
         } else {
             self.fields.len()
         };
+        let is_server = self.connection_type != Some(ConnectionType::Sqlite);
         let optional_db = (self.connection_type == Some(ConnectionType::Mysql))
             .then_some(DATABASE_FIELD);
-        !self
-            .fields
-            .iter()
-            .take(end)
-            .enumerate()
-            .any(|(i, f)| Some(i) != optional_db && f.value().trim().is_empty())
+        let optional_ca = is_server.then_some(CA_FIELD);
+        !self.fields.iter().take(end).enumerate().any(|(i, f)| {
+            Some(i) != optional_db
+                && Some(i) != optional_ca
+                && f.value().trim().is_empty()
+        })
     }
 
     /// Handle key events for UI navigation only
