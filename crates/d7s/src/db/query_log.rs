@@ -784,7 +784,7 @@ pub mod tests {
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
-            tls: Default::default(),
+            tls: crate::db::tls::TlsConfig::default(),
         };
         let t = format!("d7s_qlog_{}", std::process::id());
         pg.execute_sql(&format!(
@@ -835,7 +835,7 @@ pub mod tests {
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
-            tls: Default::default(),
+            tls: crate::db::tls::TlsConfig::default(),
         }));
         log.set_origin(QueryOrigin::Activity);
         let rows = db.execute_sql(crate::app::ACTIVITY_QUERY).await.unwrap();
