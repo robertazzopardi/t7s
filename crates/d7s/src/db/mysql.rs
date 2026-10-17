@@ -594,6 +594,77 @@ mod tests {
         my.execute_sql(&format!("DROP TABLE `{t}`")).await.unwrap();
     }
 
+    /// Needs the seeded containers from `just docker-up` (see `docker/seed-mysql.sql`).
+    #[tokio::test]
+    #[ignore = "requires docker test database"]
+    #[allow(clippy::indexing_slicing)]
+    async fn seed_data_renders() {
+        let my = Mysql {
+            name: "test".into(),
+            host: Some("localhost".into()),
+            port: Some(
+                std::env::var("D7S_MYSQL_PORT")
+                    .unwrap_or_else(|_| "3306".into()),
+            ),
+            user: "root".into(),
+            database: String::new(),
+            password: "d7s_password".into(),
+        };
+        let dbs: Vec<String> = my
+            .get_databases()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        for expected in ["d7s_test", "shop", "edge_cases"] {
+            assert!(dbs.contains(&expected.to_string()), "missing {expected}");
+        }
+        assert_eq!(
+            my.get_table_row_count("d7s_test", "big_seed")
+                .await
+                .unwrap(),
+            10_000
+        );
+        assert_eq!(
+            my.get_primary_key_columns("shop", "order_items")
+                .await
+                .unwrap(),
+            vec!["order_id", "line_no"]
+        );
+
+        let page = my
+            .get_table_data_page("edge_cases", "full_types", 0, 10)
+            .await
+            .unwrap();
+        let col = |name: &str| {
+            page.column_names.iter().position(|c| c == name).unwrap()
+        };
+        assert_eq!(page.rows[0][col("c_bigint")], "9223372036854775807");
+        assert_eq!(page.rows[0][col("c_blob")], "<binary 4 bytes>");
+        assert_eq!(page.rows[0][col("c_varbinary")], "<binary 4 bytes>");
+        assert_eq!(page.rows[0][col("c_bit")], "<binary 1 bytes>");
+        assert_eq!(page.rows[0][col("c_enum")], "green");
+        assert_eq!(page.rows[0][col("c_date")], "2025-06-15");
+        assert!(page.rows[0][col("c_json")].contains("\"d7s\""));
+        assert!(page.rows[1].iter().skip(1).all(|v| v == "NULL"));
+
+        let chars = my
+            .get_table_data_page("edge_cases", "special_chars", 0, 20)
+            .await
+            .unwrap();
+        assert!(chars.rows.iter().any(|r| r[1].contains("日本語 🚀")));
+        // Tables needing identifier quoting still load.
+        assert_eq!(
+            my.get_table_data_page("edge_cases", "weird name", 0, 10)
+                .await
+                .unwrap()
+                .rows
+                .len(),
+            2
+        );
+    }
+
     #[test]
     fn pk_where_builds_clause_and_params() {
         let pk = vec![("id".to_string(), "1".to_string())];

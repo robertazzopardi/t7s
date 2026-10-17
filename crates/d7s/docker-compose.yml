@@ -31,6 +31,8 @@ services:
       MYSQL_DATABASE: d7s_test
     ports:
       - "3306:3306"
+    volumes:
+      - ./docker/seed-mysql.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
     networks:
       - d7s-network
 
@@ -42,6 +44,8 @@ services:
       MARIADB_DATABASE: d7s_test
     ports:
       - "3307:3306"
+    volumes:
+      - ./docker/seed-mysql.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
     networks:
       - d7s-network
 
