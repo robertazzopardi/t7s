@@ -2177,3 +2177,57 @@ impl ModalManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tls_form_tests {
+    use super::Modal;
+    use crate::db::{
+        connection::{Connection, ConnectionType},
+        tls::TlsConfig,
+    };
+
+    #[test]
+    fn tls_fields_round_trip_through_url() {
+        for (t, key) in [
+            (ConnectionType::Postgres, "sslmode"),
+            (ConnectionType::Mysql, "ssl-mode"),
+        ] {
+            let ca = "/tmp/my certs/a&b=c.pem";
+            let conn = Connection {
+                name: "n".into(),
+                r#type: t,
+                url: super::with_tls_query(
+                    t,
+                    &format!("{t}://u@h:1/db"),
+                    "verify-full",
+                    ca,
+                ),
+                password: Some("p".into()),
+                ..Connection::default()
+            };
+            assert!(conn.url.contains(&format!("{key}=verify-full")));
+
+            let mut modal = Modal::default();
+            modal.open_for_edit(&conn);
+            let saved = modal.get_connection().expect("valid form");
+            let tls = TlsConfig::from_url(&saved.url);
+            assert_eq!(tls.mode.label(), "verify-full");
+            assert_eq!(tls.ca_path.as_deref(), Some(ca));
+            // Same host/port/user/db survive the trip.
+            assert!(saved.url.starts_with(&format!("{t}://u@h:1/db?")));
+        }
+    }
+
+    #[test]
+    fn disable_and_empty_ca_add_no_query() {
+        let mut modal = Modal::default();
+        modal.open_for_edit(&Connection {
+            name: "n".into(),
+            url: "postgres://u@h:1/db".into(),
+            password: Some("p".into()),
+            ..Connection::default()
+        });
+        let saved = modal.get_connection().expect("valid form");
+        assert_eq!(saved.url, "postgres://u@h:1/db");
+    }
+}

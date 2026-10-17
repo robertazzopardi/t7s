@@ -757,7 +757,6 @@ mod tests {
     use crate::db::{
         connection::{Connection, ConnectionStatus, ConnectionType},
         query_log::{QueryLogEntry, QueryOrigin, tests::temp_sqlite},
-        tls::TlsConfig,
     };
 
     fn key(c: char) -> KeyEvent {
@@ -1667,7 +1666,7 @@ mod tests {
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
-            tls: TlsConfig::default(),
+            tls: Default::default(),
         };
         let mut app = App::default();
         app.database_explorer = DatabaseExplorer::new(

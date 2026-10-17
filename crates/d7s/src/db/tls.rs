@@ -162,63 +162,10 @@ impl ServerCertVerifier for NoVerify {
 #[cfg(test)]
 mod tests {
     use super::{TlsConfig, TlsMode};
-    use crate::db::connection::{Connection, ConnectionType, with_tls_query};
-
-    fn ca() -> String {
-        format!("{}/docker/certs/ca.crt", env!("CARGO_MANIFEST_DIR"))
-    }
-
-    /// Needs `just docker-tls-up`.
-    async fn check(
-        t: ConnectionType,
-        port: &str,
-        user: &str,
-        db: &str,
-        mode: &str,
-        ca: &str,
-    ) -> bool {
-        let base = format!("{t}://{user}@localhost:{port}/{db}");
-        Connection {
-            r#type: t,
-            url: with_tls_query(t, &base, mode, ca),
-            password: Some("d7s_password".into()),
-            ..Connection::default()
-        }
-        .to_database()
-        .test()
-        .await
-    }
-
-    #[tokio::test]
-    #[ignore = "needs `just docker-tls-up`"]
-    async fn live_tls_handshakes() {
-        use ConnectionType::{Mysql, Postgres};
-        let ca = ca();
-        for (t, port, user, db) in [
-            (Postgres, "15432", "d7s_user", "d7s_test"),
-            (Mysql, "3308", "root", "d7s_test"),
-        ] {
-            assert!(
-                check(t, port, user, db, "require", "").await,
-                "{t} require"
-            );
-            assert!(check(t, port, user, db, "prefer", "").await, "{t} prefer");
-            assert!(
-                check(t, port, user, db, "verify-full", &ca).await,
-                "{t} verify-full + CA"
-            );
-            // Private CA is not in the system roots -> must fail without it.
-            assert!(
-                !check(t, port, user, db, "verify-full", "").await,
-                "{t} verify-full w/o CA"
-            );
-        }
-        // Server allows plain connections too.
-        assert!(
-            check(Postgres, "15432", "d7s_user", "d7s_test", "disable", "")
-                .await
-        );
-    }
+    use crate::db::{
+        Database,
+        connection::{Connection, ConnectionType, with_tls_query},
+    };
 
     #[test]
     fn parses_mode_and_ca_from_url() {
@@ -235,5 +182,159 @@ mod tests {
             TlsConfig::from_url("postgres://u@h/db").mode,
             TlsMode::Disable
         );
+    }
+
+    #[test]
+    fn missing_ca_file_is_an_error() {
+        let c = TlsConfig {
+            mode: TlsMode::VerifyFull,
+            ca_path: Some("/nonexistent/ca.pem".into()),
+        };
+        assert!(c.client_config().is_err());
+    }
+
+    // ---- live tests: need `just docker-tls-up` and `docker compose up -d postgres` ----
+
+    use ConnectionType::{Mysql, Postgres};
+
+    /// (type, host port, user, db) of the TLS-only servers.
+    const TLS_ONLY: [(ConnectionType, &str, &str, &str); 2] = [
+        (Postgres, "15432", "d7s_user", "d7s_test"),
+        (Mysql, "3308", "root", "d7s_test"),
+    ];
+    /// Same engines without TLS configured.
+    const PLAIN: [(ConnectionType, &str, &str, &str); 2] = [
+        (Postgres, "5432", "d7s_user", "d7s_test"),
+        (Mysql, "3310", "root", "d7s_test"),
+    ];
+
+    fn cert(name: &str) -> String {
+        format!("{}/docker/certs/{name}", env!("CARGO_MANIFEST_DIR"))
+    }
+
+    fn db(
+        t: ConnectionType,
+        host: &str,
+        port: &str,
+        user: &str,
+        dbname: &str,
+        mode: &str,
+        ca: &str,
+    ) -> Box<dyn Database> {
+        let base = format!("{t}://{user}@{host}:{port}/{dbname}");
+        Connection {
+            r#type: t,
+            url: with_tls_query(t, &base, mode, ca),
+            password: Some("d7s_password".into()),
+            ..Connection::default()
+        }
+        .to_database()
+    }
+
+    async fn ok(
+        (t, port, user, dbname): (ConnectionType, &str, &str, &str),
+        mode: &str,
+        ca: &str,
+    ) -> bool {
+        db(t, "localhost", port, user, dbname, mode, ca)
+            .test()
+            .await
+    }
+
+    /// Ask the server itself whether this session is encrypted.
+    async fn server_says_encrypted(
+        (t, port, user, dbname): (ConnectionType, &str, &str, &str),
+        mode: &str,
+        ca: &str,
+    ) -> bool {
+        let sql = if t == Postgres {
+            "SELECT CASE WHEN ssl THEN 'yes' ELSE 'no' END \
+             FROM pg_stat_ssl WHERE pid = pg_backend_pid()"
+        } else {
+            "SELECT CASE WHEN VARIABLE_VALUE <> '' THEN 'yes' ELSE 'no' END \
+             FROM information_schema.SESSION_STATUS \
+             WHERE VARIABLE_NAME = 'SSL_CIPHER'"
+        };
+        let rows = db(t, "localhost", port, user, dbname, mode, ca)
+            .execute_sql(sql)
+            .await
+            .unwrap_or_else(|e| panic!("{t} {mode}: {e}"));
+        rows.first()
+            .and_then(|r| r.values.first())
+            .is_some_and(|v| v == "yes")
+    }
+
+    #[tokio::test]
+    #[ignore = "needs docker TLS services"]
+    async fn live_server_confirms_session_is_encrypted() {
+        let ca = cert("ca.crt");
+        for s in TLS_ONLY {
+            for (mode, ca) in [
+                ("require", ""),
+                ("prefer", ""),
+                ("verify-full", ca.as_str()),
+            ] {
+                assert!(
+                    server_says_encrypted(s, mode, ca).await,
+                    "{} {mode} not encrypted",
+                    s.0
+                );
+            }
+        }
+        // `prefer` against a plain server must stay plain, and say so.
+        for s in PLAIN {
+            assert!(
+                !server_says_encrypted(s, "prefer", "").await,
+                "{} prefer",
+                s.0
+            );
+            assert!(!server_says_encrypted(s, "disable", "").await);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs docker TLS services"]
+    async fn live_tls_only_servers_reject_plain_text() {
+        let ca = cert("ca.crt");
+        for s in TLS_ONLY {
+            assert!(!ok(s, "disable", "").await, "{} disable", s.0);
+            assert!(ok(s, "require", "").await, "{} require", s.0);
+            assert!(ok(s, "prefer", "").await, "{} prefer", s.0);
+            assert!(ok(s, "verify-full", &ca).await, "{} verify ok", s.0);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs docker TLS services"]
+    async fn live_require_fails_but_prefer_falls_back_on_plain_servers() {
+        for s in PLAIN {
+            assert!(ok(s, "disable", "").await, "{} disable", s.0);
+            assert!(ok(s, "prefer", "").await, "{} prefer", s.0);
+            assert!(!ok(s, "require", "").await, "{} require", s.0);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs docker TLS services"]
+    async fn live_verify_full_rejects_bad_trust() {
+        let (good, other) = (cert("ca.crt"), cert("other-ca.crt"));
+        for s in TLS_ONLY {
+            // No CA given: private CA is not in the system roots.
+            assert!(!ok(s, "verify-full", "").await, "{} no CA", s.0);
+            assert!(!ok(s, "verify-full", &other).await, "{} wrong CA", s.0);
+            assert!(
+                !ok(s, "verify-full", "/nonexistent/ca.pem").await,
+                "{} bad path",
+                s.0
+            );
+            // Right CA, but cert only names `localhost`, not 127.0.0.1.
+            let (t, port, user, dbname) = s;
+            let wrong_host =
+                db(t, "127.0.0.1", port, user, dbname, "verify-full", &good);
+            assert!(!wrong_host.test().await, "{t} host mismatch");
+            // ...while require (no verification) accepts the same address.
+            let r = db(t, "127.0.0.1", port, user, dbname, "require", "");
+            assert!(r.test().await, "{t} require via IP");
+        }
     }
 }

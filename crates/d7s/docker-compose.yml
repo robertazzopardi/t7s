@@ -66,6 +66,7 @@ services:
       - "15432:5432"
     volumes:
       - ./docker/certs:/certs:ro
+      - ./docker/pg-tls-only.sh:/docker-entrypoint-initdb.d/01-tls-only.sh:ro
     # Postgres insists the key is owned by it and mode 0600.
     entrypoint:
       - sh
@@ -91,11 +92,26 @@ services:
       - --ssl-ca=/certs/ca.crt
       - --ssl-cert=/certs/server.crt
       - --ssl-key=/certs/server.key
+      - --require-secure-transport=ON
     ports:
       - "3308:3306"
     volumes:
       - ./docker/certs:/certs:ro
       - ./docker/seed-mysql.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
+    networks:
+      - d7s-network
+
+  # MariaDB 11 enables TLS by default; this one has it off, for `require` / `prefer` fallback tests.
+  mariadb-plain:
+    image: mariadb:11
+    profiles: ["tls"]
+    container_name: d7s-test-mariadb-plain
+    environment:
+      MARIADB_ROOT_PASSWORD: d7s_password
+      MARIADB_DATABASE: d7s_test
+    command: ["--skip-ssl"]
+    ports:
+      - "3310:3306"
     networks:
       - d7s-network
 

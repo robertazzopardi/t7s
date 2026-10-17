@@ -519,7 +519,7 @@ mod tests {
             user: "root".into(),
             database: database.into(),
             password: "d7s_password".into(),
-            tls: TlsConfig::default(),
+            tls: Default::default(),
         }
     }
 
