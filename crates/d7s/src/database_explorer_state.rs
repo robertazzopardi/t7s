@@ -34,6 +34,9 @@ pub struct DatabaseExplorer {
     pub tables: Option<FilteredData<Table>>,
     /// Cached column data for current table
     pub columns: Option<FilteredData<Column>>,
+    /// Column metadata for the open table data view (insert / editability).
+    pub table_columns: Option<Vec<Column>>,
+    pub table_pk_names: Option<Vec<String>>,
     /// Cached table row data
     pub table_data: Option<FilteredData<RawTableRow>>,
     /// Paging metadata when browsing table rows (`None` when not viewing table data).
@@ -60,6 +63,8 @@ impl DatabaseExplorer {
             schemas: None,
             tables: None,
             columns: None,
+            table_columns: None,
+            table_pk_names: None,
             table_data: None,
             table_data_virtual: None,
             sql_executor: SqlExecutorState::new(),

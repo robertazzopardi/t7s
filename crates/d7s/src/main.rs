@@ -22,6 +22,7 @@ mod filtering;
 mod rendering;
 mod services;
 mod sql;
+mod cell_edit;
 mod table_data_actions;
 mod ui;
 mod virtual_table;

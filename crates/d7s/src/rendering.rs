@@ -27,7 +27,8 @@ use crate::{
         widgets::{
             connection_modal::ConnectionModalWidget,
             describe_content::DescribeRow, global_hotkeys::global_hotkeys,
-            help_content::HelpRow, hotkeys::TABLE_DATA_VIEW_HOTKEYS,
+            help_content::HelpRow,
+            hotkeys::{CELL_EDIT_HOTKEYS, TABLE_DATA_VIEW_HOTKEYS},
             idle_hint::default_idle_hint,
         },
     },
@@ -40,7 +41,8 @@ const FILTER_BAR_HEIGHT: u16 = 3;
 impl App<'_> {
     #[allow(clippy::too_many_lines)]
     pub fn render(&mut self, frame: &mut Frame) {
-        let idle_hint = default_idle_hint(self.state);
+        let idle_hint =
+            default_idle_hint(self.state, &self.database_explorer.state);
         self.status_line.set_idle_hint(if self.watch_active {
             format!("● WATCHING · {idle_hint}")
         } else {
@@ -86,9 +88,14 @@ impl App<'_> {
             self.database_explorer.state,
             DatabaseExplorerState::TableData(_, _)
         ) {
+            let table_hotkeys: &[Hotkey] = if self.cell_edit.is_some() {
+                &CELL_EDIT_HOTKEYS
+            } else {
+                &TABLE_DATA_VIEW_HOTKEYS
+            };
             self.hotkeys
                 .iter()
-                .chain(TABLE_DATA_VIEW_HOTKEYS.iter())
+                .chain(table_hotkeys)
                 .cloned()
                 .collect()
         } else {

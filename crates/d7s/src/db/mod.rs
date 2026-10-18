@@ -205,6 +205,61 @@ pub struct Column {
     pub description: Option<String>,
 }
 
+/// `SQLite` sole `INTEGER PRIMARY KEY` column (rowid alias) omitted on INSERT when empty.
+#[must_use]
+pub fn sqlite_rowid_pk_omit(col: &Column, pk_first: Option<&str>) -> bool {
+    pk_first.is_some_and(|first_pk| {
+        col.name == first_pk || col.name.eq_ignore_ascii_case(first_pk)
+    }) && col.data_type.to_lowercase().contains("int")
+}
+
+/// Generated / identity / rowid PK columns are not edited in the grid.
+#[must_use]
+pub fn column_is_editable(
+    col: &Column,
+    engine_sqlite: bool,
+    sqlite_rowid_pk: bool,
+) -> bool {
+    if engine_sqlite && sqlite_rowid_pk {
+        return false;
+    }
+    let u = col.data_type.to_lowercase();
+    if u.contains("serial") || u.contains("identity") {
+        return false;
+    }
+    if col
+        .default_value
+        .as_deref()
+        .is_some_and(|d| d.contains("nextval"))
+    {
+        return false;
+    }
+    true
+}
+
+/// Columns that will be omitted from INSERT when left empty (defaults / generated).
+#[must_use]
+pub fn count_insert_default_omit_columns(
+    columns: &[Column],
+    pk_names: &[String],
+    engine_sqlite: bool,
+) -> usize {
+    let pk_first = pk_names.first().map(String::as_str);
+    columns
+        .iter()
+        .filter(|col| {
+            let sqlite_rowid_pk =
+                engine_sqlite && sqlite_rowid_pk_omit(col, pk_first);
+            should_omit_for_insert_default(
+                col,
+                "",
+                engine_sqlite,
+                sqlite_rowid_pk,
+            )
+        })
+        .count()
+}
+
 /// Table row data
 #[derive(Debug, Clone)]
 pub struct TableRow {

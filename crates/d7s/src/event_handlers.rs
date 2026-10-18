@@ -415,7 +415,9 @@ impl App<'_> {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                if self.modal_manager.is_any_modal_open() {
+                if self.is_cell_editing() {
+                    self.cancel_cell_edit();
+                } else if self.modal_manager.is_any_modal_open() {
                     self.modal_manager.close_active_modal();
                 } else if self
                     .database_explorer
@@ -603,7 +605,9 @@ impl App<'_> {
             ModalAction::Save => {
                 if let Some(apply) = self.modal_manager.take_cell_value_apply()
                 {
-                    self.apply_cell_value_edit(apply).await?;
+                    if self.apply_cell_value_edit(apply).await? {
+                        self.cell_edit = None;
+                    }
                     self.modal_manager.cleanup_closed_modals();
                     return Ok(());
                 }

@@ -221,10 +221,20 @@ impl App<'_> {
             .await
         {
             Ok(page) => {
+                let col_meta = database
+                    .get_columns(schema_name, table_name)
+                    .await
+                    .ok();
+                let pk_meta = database
+                    .get_primary_key_columns(schema_name, table_name)
+                    .await
+                    .ok();
                 self.replace_explorer_table_page(
                     page, 0, page_size, total_rows,
                 );
                 let explorer = &mut self.database_explorer;
+                explorer.table_columns = col_meta;
+                explorer.table_pk_names = pk_meta;
                 explorer.state = DatabaseExplorerState::TableData(
                     schema_name.to_string(),
                     table_name.to_string(),
@@ -509,55 +519,8 @@ impl App<'_> {
                 self.load_table_data(&schema_name, &table_name).await?;
                 self.set_status(format!("Opened {schema_name}.{table_name}"));
             }
-            DatabaseExplorerState::TableData(schema_name, table_name) => {
-                if let Some((column_name, cell_value, row_idx, col_idx, snap)) =
-                    self.get_selected_cell_for_modal()
-                {
-                    let schema = schema_name.clone();
-                    let table = table_name.clone();
-                    let db_row_id = self.get_selected_row_db_id();
-                    let is_draft = self.table_data_selected_is_draft();
-                    let Some(database) =
-                        self.database_explorer.database.as_ref()
-                    else {
-                        return Ok(());
-                    };
-                    let pk_names = if is_draft {
-                        Vec::new()
-                    } else {
-                        database
-                            .get_primary_key_columns(&schema, &table)
-                            .await
-                            .unwrap_or_default()
-                    };
-                    let col_names: &[String] = self
-                        .database_explorer
-                        .table_data
-                        .as_ref()
-                        .and_then(|t| {
-                            t.table.model.dynamic_column_names.as_ref()
-                        })
-                        .map_or(&[][..], |names| names.as_slice());
-                    let primary_key: Vec<(String, String)> = pk_names
-                        .into_iter()
-                        .filter_map(|pk| {
-                            let idx = column_index_for_name(col_names, &pk)?;
-                            let val = snap.get(idx)?.clone();
-                            Some((pk, val))
-                        })
-                        .collect();
-                    self.modal_manager.open_cell_value_modal(
-                        column_name,
-                        &cell_value,
-                        row_idx,
-                        col_idx,
-                        snap,
-                        schema,
-                        table,
-                        primary_key,
-                        db_row_id,
-                    );
-                }
+            DatabaseExplorerState::TableData(_, _) => {
+                self.begin_cell_edit(None);
             }
             DatabaseExplorerState::SqlResults(_) => {
                 // Enter should not re-run SQL in results mode.
@@ -579,7 +542,7 @@ impl App<'_> {
     }
 
     /// Selected cell plus row index, column index, and full row snapshot (for syncing filtered data).
-    fn get_selected_cell_for_modal(
+    pub(crate) fn get_selected_cell_for_modal(
         &self,
     ) -> Option<(String, String, usize, usize, Vec<String>)> {
         let explorer = &self.database_explorer;
@@ -611,11 +574,12 @@ impl App<'_> {
         row.db_row_id.clone()
     }
 
-    /// Persist a cell edit from the modal, then refresh the grid.
+    /// Persist a cell edit from the modal or inline editor.
+    /// Returns `true` when the edit was applied (clear inline session).
     pub async fn apply_cell_value_edit(
         &mut self,
         apply: CellValueApply,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let is_draft = self
             .database_explorer
             .table_data
@@ -625,11 +589,11 @@ impl App<'_> {
         if is_draft {
             self.apply_cell_value_edit_in_memory(&apply);
             self.set_status("Draft cell updated — commit with s when ready.");
-            return Ok(());
+            return Ok(true);
         }
         let Some(database) = self.database_explorer.database.as_ref() else {
             self.set_status(STATUS_DB_NOT_CONNECTED);
-            return Ok(());
+            return Ok(false);
         };
         match database
             .update_table_cell(
@@ -646,12 +610,88 @@ impl App<'_> {
                 self.set_status(
                     "No row was updated (it may have changed in the database).",
                 );
+                Ok(false)
             }
             Ok(_) => {
                 self.apply_cell_value_edit_in_memory(&apply);
-                self.set_status("Cell updated.");
+                self.set_status(format!("UPDATED {}", apply.set_column));
+                Ok(true)
             }
-            Err(e) => self.status_action_failed("Update", e),
+            Err(e) => {
+                self.status_action_failed("Update", e);
+                Ok(false)
+            }
+        }
+    }
+
+    pub async fn finish_cell_edit(&mut self) -> Result<()> {
+        let DatabaseExplorerState::TableData(schema, table) =
+            self.database_explorer.state.clone()
+        else {
+            return Ok(());
+        };
+        let Some(session) = self.cell_edit.as_ref() else {
+            return Ok(());
+        };
+        let col_names: Vec<String> = self
+            .database_explorer
+            .table_data
+            .as_ref()
+            .and_then(|fd| fd.table.model.dynamic_column_names.as_ref())
+            .map(|names| names.to_vec())
+            .unwrap_or_default();
+        let Some(set_column) = col_names.get(session.col_index).cloned() else {
+            return Ok(());
+        };
+        let row_snapshot = session.row_snapshot.clone();
+        let is_draft = self
+            .database_explorer
+            .table_data
+            .as_ref()
+            .and_then(|fd| fd.table.model.items.get(session.row_index))
+            .is_some_and(|r| r.is_draft);
+        let db_row_id = self
+            .database_explorer
+            .table_data
+            .as_ref()
+            .and_then(|fd| fd.table.model.items.get(session.row_index))
+            .and_then(|r| r.db_row_id.clone());
+        let pk_names = if is_draft {
+            Vec::new()
+        } else {
+            let Some(database) = self.database_explorer.database.as_ref() else {
+                self.set_status(STATUS_DB_NOT_CONNECTED);
+                return Ok(());
+            };
+            database
+                .get_primary_key_columns(&schema, &table)
+                .await
+                .unwrap_or_default()
+        };
+        let primary_key: Vec<(String, String)> = pk_names
+            .into_iter()
+            .filter_map(|pk| {
+                let idx = column_index_for_name(&col_names, &pk)?;
+                let val = row_snapshot.get(idx)?.clone();
+                Some((pk, val))
+            })
+            .collect();
+        let apply = CellValueApply {
+            schema_name: schema,
+            table_name: table,
+            set_column,
+            row_snapshot,
+            row_index: session.row_index,
+            col_index: session.col_index,
+            new_value: session.buffer.clone(),
+            primary_key,
+            db_row_id,
+        };
+        self.sync_cell_edit_buffer_to_grid();
+        if self.apply_cell_value_edit(apply).await? {
+            self.cell_edit = None;
+        } else {
+            self.sync_cell_edit_buffer_to_grid();
         }
         Ok(())
     }
