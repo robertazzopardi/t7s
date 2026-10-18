@@ -84,10 +84,10 @@ impl App<'_> {
 
     pub(crate) fn handle_paste_text(&mut self, text: &str) {
         self.clear_status();
+        if let Some(session) = self.cell_edit.as_mut() {
+            session.buffer.push_str(text);
+        }
         if self.cell_edit.is_some() {
-            if let Some(session) = self.cell_edit.as_mut() {
-                session.buffer.push_str(text);
-            }
             self.sync_cell_edit_buffer_to_grid();
         } else if !self.modal_manager.handle_paste(text)
             && let Some(textarea) = &mut self.search_filter
@@ -422,9 +422,9 @@ impl App<'_> {
                 Ok(true)
             }
             (_, KeyCode::Esc) => {
-                if self.is_cell_editing() {
-                    self.cancel_cell_edit();
-                } else if self.modal_manager.is_any_modal_open() {
+                // Cell-edit Esc is handled in `handle_cell_edit_key` (table data
+                // path returns before this global hotkey table).
+                if self.modal_manager.is_any_modal_open() {
                     self.modal_manager.close_active_modal();
                 } else if matches!(
                     self.database_explorer.state,

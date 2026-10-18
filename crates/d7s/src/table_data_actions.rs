@@ -14,10 +14,8 @@ use crate::{
         is_table_data_browse_binding, next_editable_column,
         prev_editable_column,
     },
-    db::{
-        DbRowId, RowDeleteSpec, connection::ConnectionType,
-        count_insert_default_omit_columns,
-    },
+    database_explorer::{column_index_for_name, pk_value_pairs},
+    db::{DbRowId, RowDeleteSpec, connection::ConnectionType},
     ui::widgets::raw_table::{RawTableRow, RawTableStateExt},
 };
 
@@ -147,6 +145,8 @@ impl App<'_> {
         self.cell_edit.is_some()
     }
 
+    // ponytail: buffer mirrored into the grid every keystroke; render from
+    // session (sync once on commit/cancel) if large-cell paste allocs show up.
     pub(crate) fn sync_cell_edit_buffer_to_grid(&mut self) {
         let Some(session) = self.cell_edit.as_ref() else {
             return;
@@ -171,13 +171,7 @@ impl App<'_> {
             return;
         };
         // Generated columns are refused on drafts only; saved rows stay editable.
-        let is_draft = self
-            .database_explorer
-            .table_data
-            .as_ref()
-            .and_then(|fd| fd.table.model.items.get(row_idx))
-            .is_some_and(|r| r.is_draft);
-        if is_draft
+        if self.row_is_draft_at(row_idx)
             && self
                 .editable_columns_for_current_table()
                 .iter()
@@ -223,6 +217,8 @@ impl App<'_> {
         }
     }
 
+    // ponytail: Tab awaits a full cell UPDATE on the UI path; dirty-grid or
+    // background write if remote Postgres Tab latency becomes sticky.
     async fn finish_cell_edit_and_move_editable_column(
         &mut self,
         forward: bool,
@@ -258,64 +254,26 @@ impl App<'_> {
         else {
             return Ok(());
         };
-        let Some(session) = self.cell_edit.as_ref() else {
-            return Ok(());
-        };
-        let col_names: Vec<String> = self
-            .database_explorer
-            .table_data
-            .as_ref()
-            .and_then(|fd| fd.table.model.dynamic_column_names.as_ref())
-            .map(|names| names.to_vec())
-            .unwrap_or_default();
-        let Some(column_name) = col_names.get(session.col_index).cloned()
+        let Some(new_value) =
+            self.cell_edit.as_ref().map(|s| s.buffer.clone())
         else {
             return Ok(());
         };
-        let row_snapshot = session.row_snapshot.clone();
-        let is_draft = self
-            .database_explorer
-            .table_data
-            .as_ref()
-            .and_then(|fd| fd.table.model.items.get(session.row_index))
-            .is_some_and(|r| r.is_draft);
-        let db_row_id = self
-            .database_explorer
-            .table_data
-            .as_ref()
-            .and_then(|fd| fd.table.model.items.get(session.row_index))
-            .and_then(|r| r.db_row_id.clone());
-        let pk_names = if is_draft {
-            Vec::new()
-        } else {
-            let Some(database) = self.database_explorer.database.as_ref()
-            else {
-                self.set_status("Database not connected");
-                return Ok(());
-            };
-            database
-                .get_primary_key_columns(&schema, &table)
-                .await
-                .unwrap_or_default()
+        let Some(apply) =
+            self.cell_value_apply_from_session(schema, table, &new_value)
+        else {
+            return Ok(());
         };
-        let primary_key: Vec<(String, String)> = pk_names
-            .into_iter()
-            .filter_map(|pk| {
-                let idx = col_names.iter().position(|n| n == &pk)?;
-                let val = row_snapshot.get(idx)?.clone();
-                Some((pk, val))
-            })
-            .collect();
         self.modal_manager.open_cell_value_modal(
-            column_name,
-            &session.buffer,
-            session.row_index,
-            session.col_index,
-            row_snapshot,
-            schema,
-            table,
-            primary_key,
-            db_row_id,
+            apply.set_column,
+            &apply.new_value,
+            apply.row_index,
+            apply.col_index,
+            apply.row_snapshot,
+            apply.schema_name,
+            apply.table_name,
+            apply.primary_key,
+            apply.db_row_id,
         );
         Ok(())
     }
@@ -439,16 +397,6 @@ impl App<'_> {
             .table_columns
             .clone()
             .ok_or_else(|| color_eyre::eyre::eyre!("no columns"))?;
-        let pk = self
-            .database_explorer
-            .table_pk_names
-            .clone()
-            .unwrap_or_default();
-        let omit_n = count_insert_default_omit_columns(
-            &columns,
-            &pk,
-            self.engine_sqlite(),
-        );
         let names: Vec<String> =
             columns.iter().map(|c| c.name.clone()).collect();
         let n = names.len();
@@ -460,7 +408,7 @@ impl App<'_> {
             is_draft: true,
         };
         self.insert_draft_row_below_cursor(row);
-        self.set_status(format!("Draft with defaults ({omit_n} cols)"));
+        self.set_status("Draft with defaults");
         Ok(true)
     }
 
@@ -485,11 +433,12 @@ impl App<'_> {
             self.set_status("Clear filter before duplicating a row.");
             return Ok(false);
         }
-        let DatabaseExplorerState::TableData(schema, table) =
-            &self.database_explorer.state
-        else {
+        if !matches!(
+            self.database_explorer.state,
+            DatabaseExplorerState::TableData(_, _)
+        ) {
             return Ok(false);
-        };
+        }
         let sel = fd
             .table
             .view
@@ -507,12 +456,10 @@ impl App<'_> {
             self.set_status("Pick a saved row to duplicate, not a draft.");
             return Ok(false);
         }
-        let Some(db) = self.database_explorer.database.as_ref() else {
-            return Ok(false);
-        };
-        let pk_names = db
-            .get_primary_key_columns(schema, table)
-            .await
+        let pk_names = self
+            .database_explorer
+            .table_pk_names
+            .clone()
             .unwrap_or_default();
         let col_names: Vec<String> = fd
             .table
@@ -524,10 +471,7 @@ impl App<'_> {
         let source_key = (base.db_row_id.clone(), base.values.clone());
         let mut values = base.values.clone();
         for pk in &pk_names {
-            if let Some(ix) =
-                col_names.iter().position(|c| c == pk).or_else(|| {
-                    col_names.iter().position(|c| c.eq_ignore_ascii_case(pk))
-                })
+            if let Some(ix) = column_index_for_name(&col_names, pk)
                 && let Some(v) = values.get_mut(ix)
             {
                 v.clear();
@@ -638,9 +582,6 @@ impl App<'_> {
         else {
             return Ok(());
         };
-        let Some(db) = self.database_explorer.database.as_ref() else {
-            return Ok(());
-        };
         let Some(fd) = self.database_explorer.table_data.as_ref() else {
             return Ok(());
         };
@@ -664,9 +605,10 @@ impl App<'_> {
             .as_deref()
             .cloned()
             .unwrap_or_default();
-        let pk_col_names = db
-            .get_primary_key_columns(schema, table)
-            .await
+        let pk_col_names = self
+            .database_explorer
+            .table_pk_names
+            .clone()
             .unwrap_or_default();
         let mut draft_indices: Vec<usize> = Vec::new();
         let mut db_specs: Vec<RowDeleteSpec> = Vec::new();
@@ -679,20 +621,8 @@ impl App<'_> {
                 draft_indices.push(i);
                 continue;
             }
-            let primary_key: Vec<(String, String)> = pk_col_names
-                .iter()
-                .filter_map(|pk| {
-                    let idx = col_names.iter().position(|c| c == pk).or_else(
-                        || {
-                            col_names
-                                .iter()
-                                .position(|c| c.eq_ignore_ascii_case(pk))
-                        },
-                    )?;
-                    let val = row.values.get(idx)?.clone();
-                    Some((pk.clone(), val))
-                })
-                .collect();
+            let primary_key =
+                pk_value_pairs(&col_names, &row.values, &pk_col_names);
             if !primary_key.is_empty() {
                 if preview.is_none() {
                     let w = primary_key

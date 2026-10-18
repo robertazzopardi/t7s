@@ -12,7 +12,7 @@ use crate::db::{
     connection::{Connection, ConnectionStatus, ConnectionType, Environment},
     get_db_path,
     query_log::report_sql,
-    should_omit_for_insert_default,
+    should_omit_for_insert_default, sole_pk, sqlite_rowid_pk_omit,
 };
 
 /// `prepare` that reports the SQL text (placeholders only) to the query log.
@@ -411,16 +411,8 @@ impl Database for Sqlite {
         let mut refs: Vec<types::Value> = Vec::new();
         for (i, c) in columns.iter().enumerate() {
             let raw = values.get(i).map_or("", String::as_str);
-            let sqlite_rowid_pk_omit =
-                pk.first().is_some_and(|first_pk| {
-                    c.name == *first_pk || c.name.eq_ignore_ascii_case(first_pk)
-                }) && c.data_type.to_lowercase().contains("int");
-            if should_omit_for_insert_default(
-                c,
-                raw,
-                true,
-                sqlite_rowid_pk_omit,
-            ) {
+            let sqlite_rowid_pk = sqlite_rowid_pk_omit(c, sole_pk(&pk));
+            if should_omit_for_insert_default(c, raw, true, sqlite_rowid_pk) {
                 continue;
             }
             if raw.trim().is_empty() || raw.eq_ignore_ascii_case("null") {

@@ -230,12 +230,8 @@ fn is_generated_default(d: &str) -> bool {
 
 /// Generated / identity / rowid PK columns are not edited in the grid.
 #[must_use]
-pub fn column_is_editable(
-    col: &Column,
-    engine_sqlite: bool,
-    sqlite_rowid_pk: bool,
-) -> bool {
-    if engine_sqlite && sqlite_rowid_pk {
+pub fn column_is_editable(col: &Column, is_sqlite_rowid_pk: bool) -> bool {
+    if is_sqlite_rowid_pk {
         return false;
     }
     let u = col.data_type.to_lowercase();
@@ -245,29 +241,6 @@ pub fn column_is_editable(
     !col.default_value
         .as_deref()
         .is_some_and(is_generated_default)
-}
-
-/// Columns that will be omitted from INSERT when left empty (defaults / generated).
-#[must_use]
-pub fn count_insert_default_omit_columns(
-    columns: &[Column],
-    pk_names: &[String],
-    engine_sqlite: bool,
-) -> usize {
-    let pk_first = sole_pk(pk_names);
-    columns
-        .iter()
-        .filter(|col| {
-            let sqlite_rowid_pk =
-                engine_sqlite && sqlite_rowid_pk_omit(col, pk_first);
-            should_omit_for_insert_default(
-                col,
-                "",
-                engine_sqlite,
-                sqlite_rowid_pk,
-            )
-        })
-        .count()
 }
 
 /// Table row data

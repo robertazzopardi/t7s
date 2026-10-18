@@ -65,25 +65,6 @@ pub const fn is_table_data_browse_binding(c: char) -> bool {
     )
 }
 
-pub fn next_editable_column(
-    cols: &[EditableCol],
-    from: usize,
-) -> Option<usize> {
-    let editable: Vec<usize> = cols
-        .iter()
-        .filter(|c| c.editable)
-        .map(|c| c.index)
-        .collect();
-    if editable.is_empty() {
-        return None;
-    }
-    editable
-        .iter()
-        .find(|&&i| i > from)
-        .copied()
-        .or_else(|| editable.first().copied())
-}
-
 /// Fallback when column metadata is not loaded yet.
 pub fn all_editable_columns(num_columns: usize) -> Vec<EditableCol> {
     (0..num_columns)
@@ -109,19 +90,16 @@ pub fn editable_columns_from_meta(
                 engine_sqlite && sqlite_rowid_pk_omit(col, pk_first);
             EditableCol {
                 index,
-                editable: column_is_editable(
-                    col,
-                    engine_sqlite,
-                    sqlite_rowid_pk,
-                ),
+                editable: column_is_editable(col, sqlite_rowid_pk),
             }
         })
         .collect()
 }
 
-pub fn prev_editable_column(
+pub fn step_editable_column(
     cols: &[EditableCol],
     from: usize,
+    forward: bool,
 ) -> Option<usize> {
     let editable: Vec<usize> = cols
         .iter()
@@ -131,12 +109,34 @@ pub fn prev_editable_column(
     if editable.is_empty() {
         return None;
     }
-    editable
-        .iter()
-        .rev()
-        .find(|&&i| i < from)
-        .copied()
-        .or_else(|| editable.last().copied())
+    if forward {
+        editable
+            .iter()
+            .find(|&&i| i > from)
+            .copied()
+            .or_else(|| editable.first().copied())
+    } else {
+        editable
+            .iter()
+            .rev()
+            .find(|&&i| i < from)
+            .copied()
+            .or_else(|| editable.last().copied())
+    }
+}
+
+pub fn next_editable_column(
+    cols: &[EditableCol],
+    from: usize,
+) -> Option<usize> {
+    step_editable_column(cols, from, true)
+}
+
+pub fn prev_editable_column(
+    cols: &[EditableCol],
+    from: usize,
+) -> Option<usize> {
+    step_editable_column(cols, from, false)
 }
 
 #[cfg(test)]

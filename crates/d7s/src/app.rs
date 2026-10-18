@@ -1327,10 +1327,6 @@ mod tests {
         assert!(!app.running);
     }
 
-    fn table_data_selected_cell_value(app: &App<'_>) -> String {
-        table_data_cell_value(app, None)
-    }
-
     fn table_data_cell_value(app: &App<'_>, col: Option<usize>) -> String {
         let fd = app.database_explorer.table_data.as_ref().unwrap();
         let row = fd.table.view.state.selected().unwrap();
@@ -1455,7 +1451,7 @@ mod tests {
         app.on_key_event(enter()).await.unwrap();
         assert!(!app.is_cell_editing());
         assert!(app.has_table_draft_rows());
-        assert_eq!(table_data_selected_cell_value(&app), "z");
+        assert_eq!(table_data_cell_value(&app, None), "z");
     }
 
     async fn cell_update_table_app(tag: &str) -> App<'static> {
@@ -1488,7 +1484,7 @@ mod tests {
             "z",
             "type-to-overwrite seeds edit buffer"
         );
-        assert_eq!(table_data_selected_cell_value(&app), "z");
+        assert_eq!(table_data_cell_value(&app, None), "z");
     }
 
     #[tokio::test]
@@ -1528,7 +1524,7 @@ mod tests {
         app.on_key_event(enter()).await.unwrap();
         app.handle_paste_text(" pasted");
         assert!(app.cell_edit.as_ref().unwrap().buffer.ends_with(" pasted"));
-        assert!(table_data_selected_cell_value(&app).ends_with(" pasted"));
+        assert!(table_data_cell_value(&app, None).ends_with(" pasted"));
     }
 
     #[tokio::test]
@@ -1573,11 +1569,11 @@ mod tests {
         let mut app = cell_update_table_app("browse_backspace").await;
         run_cmd(&mut app, "table cell_edit_row").await;
         select_table_column(&mut app, 1);
-        assert_eq!(table_data_selected_cell_value(&app), "old");
+        assert_eq!(table_data_cell_value(&app, None), "old");
         app.on_key_event(backspace()).await.unwrap();
         assert!(app.is_cell_editing());
         assert_eq!(app.cell_edit.as_ref().unwrap().buffer, "");
-        assert_eq!(table_data_selected_cell_value(&app), "");
+        assert_eq!(table_data_cell_value(&app, None), "");
     }
 
     #[tokio::test]
@@ -1755,10 +1751,10 @@ mod tests {
         assert!(app.has_table_draft_rows());
         assert!(app.is_cell_editing());
         app.on_key_event(key('x')).await.unwrap();
-        assert_eq!(table_data_selected_cell_value(&app), "x");
+        assert_eq!(table_data_cell_value(&app, None), "x");
         app.on_key_event(esc()).await.unwrap();
         assert!(!app.is_cell_editing());
-        assert_eq!(table_data_selected_cell_value(&app), "");
+        assert_eq!(table_data_cell_value(&app, None), "");
         assert!(app.has_table_draft_rows());
     }
 

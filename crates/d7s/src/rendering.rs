@@ -89,7 +89,7 @@ impl App<'_> {
             self.database_explorer.state,
             DatabaseExplorerState::TableData(_, _)
         ) {
-            let table_hotkeys: &[Hotkey] = if self.cell_edit.is_some() {
+            let table_hotkeys: &[Hotkey] = if self.is_cell_editing() {
                 &CELL_EDIT_HOTKEYS
             } else {
                 &TABLE_DATA_VIEW_HOTKEYS
