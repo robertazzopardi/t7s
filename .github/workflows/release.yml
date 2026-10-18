@@ -221,7 +221,8 @@ jobs:
           tag_name: ${{ needs.prepare.outputs.tag }}
           name: ${{ needs.prepare.outputs.tag }}
           body_path: release_notes.md
-          make_latest: ${{ needs.prepare.outputs.crate == 'd7s' }}
+          # softprops only accepts the strings true|false|legacy (not a bare boolean).
+          make_latest: ${{ needs.prepare.outputs.crate == 'd7s' && 'true' || 'false' }}
           files: |
             dist/*.tar.gz
             dist/*.zip
