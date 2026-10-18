@@ -18,6 +18,7 @@ pub enum Verb {
 const NAMES: &[(&str, Verb)] = &[
     ("connections", Verb::Connections),
     ("conn", Verb::Connections),
+    ("schema", Verb::Schemas), // bare `:schema` == `:schemas`; `:schema <name>` opens one
     ("schemas", Verb::Schemas),
     ("table", Verb::Tables), // bare `:table` == `:tables`; `:table <name>` opens one
     ("tables", Verb::Tables),
@@ -45,6 +46,10 @@ pub enum Command {
     Table(Vec<String>),
     /// `:table <name>` matched nothing.
     NoTable(String),
+    /// `:schema <name>`: best match first, then the other same-tier candidates.
+    Schema(Vec<String>),
+    /// `:schema <name>` matched nothing.
+    NoSchema(String),
     /// Prefix matches several verbs (canonical names listed).
     Ambiguous(Vec<&'static str>),
     Unknown(String),
@@ -52,7 +57,7 @@ pub enum Command {
 
 /// All names matching the query in the best non-empty tier: exact, then
 /// prefix, then substring (case-insensitive); list order within a tier.
-pub fn match_table_candidates<'a>(
+pub fn match_name_candidates<'a>(
     names: &[&'a str],
     query: &str,
 ) -> Vec<&'a str> {
@@ -77,9 +82,24 @@ pub fn match_table_candidates<'a>(
     Vec::new()
 }
 
-/// Resolve typed command text. `tables` are the current schema's table names,
-/// used only for the argument of `table <name>` (no bare-table shortcut).
-pub fn resolve(input: &str, tables: &[&str]) -> Command {
+fn resolve_named_arg(
+    arg: &str,
+    names: &[&str],
+    hit: fn(Vec<String>) -> Command,
+    miss: fn(String) -> Command,
+) -> Command {
+    let arg = arg.trim();
+    let hits = match_name_candidates(names, arg);
+    if hits.is_empty() {
+        miss(arg.into())
+    } else {
+        hit(hits.into_iter().map(String::from).collect())
+    }
+}
+
+/// Resolve typed command text. `tables` / `schemas` are used only for the
+/// argument of `table <name>` / `schema <name>` (no bare-name shortcuts).
+pub fn resolve(input: &str, tables: &[&str], schemas: &[&str]) -> Command {
     let raw = input.trim();
     let lower = raw.to_ascii_lowercase();
     if lower.is_empty() {
@@ -90,16 +110,23 @@ pub fn resolve(input: &str, tables: &[&str]) -> Command {
             .parse()
             .map_or_else(|_| Command::Unknown(raw.into()), Command::Row);
     }
-    if let Some((word, arg)) = raw.split_once(char::is_whitespace)
-        && word.eq_ignore_ascii_case("table")
-    {
-        let arg = arg.trim();
-        let hits = match_table_candidates(tables, arg);
-        return if hits.is_empty() {
-            Command::NoTable(arg.into())
-        } else {
-            Command::Table(hits.into_iter().map(String::from).collect())
-        };
+    if let Some((word, arg)) = raw.split_once(char::is_whitespace) {
+        if word.eq_ignore_ascii_case("table") {
+            return resolve_named_arg(
+                arg,
+                tables,
+                Command::Table,
+                Command::NoTable,
+            );
+        }
+        if word.eq_ignore_ascii_case("schema") {
+            return resolve_named_arg(
+                arg,
+                schemas,
+                Command::Schema,
+                Command::NoSchema,
+            );
+        }
     }
     if let Some((_, verb)) = NAMES.iter().find(|(n, _)| *n == lower) {
         return Command::Verb(*verb);
@@ -118,38 +145,47 @@ pub fn resolve(input: &str, tables: &[&str]) -> Command {
     }
 }
 
-/// Full-text completion for the typed input: verbs before the first space,
-/// then (after `table `) the best table-name prefix match.
-pub fn suggest(input: &str, tables: &[&str]) -> Option<String> {
+/// Full-text completion: verbs before the first space, then (after `table `
+/// / `schema `) the best name prefix match.
+pub fn suggest(
+    input: &str,
+    tables: &[&str],
+    schemas: &[&str],
+) -> Option<String> {
     if input.is_empty() || input.starts_with(char::is_whitespace) {
         return None;
     }
     let lower = input.to_ascii_lowercase();
     if let Some((word, arg)) = input.split_once(char::is_whitespace) {
-        if !word.eq_ignore_ascii_case("table") {
+        let names = if word.eq_ignore_ascii_case("table") {
+            tables
+        } else if word.eq_ignore_ascii_case("schema") {
+            schemas
+        } else {
             return None;
-        }
+        };
         let arg = arg.trim_start();
         let arg_lower = arg.to_ascii_lowercase();
         let head_len = input.len().saturating_sub(arg.len());
-        return tables
+        return names
             .iter()
-            .find(|t| {
-                t.len() > arg.len()
-                    && t.to_ascii_lowercase().starts_with(&arg_lower)
+            .find(|n| {
+                n.len() > arg.len()
+                    && n.to_ascii_lowercase().starts_with(&arg_lower)
             })
-            .map(|t| format!("{}{t}", input.get(..head_len).unwrap_or("")));
+            .map(|n| format!("{}{n}", input.get(..head_len).unwrap_or("")));
     }
-    if lower == "table" {
-        return Some("table ".into()); // jump straight to the argument
+    // Jump straight to the argument for arg-taking verbs.
+    if lower == "table" || lower == "schema" {
+        return Some(format!("{lower} "));
     }
     NAMES
         .iter()
         .map(|(n, _)| *n)
         .find(|n| n.len() > lower.len() && n.starts_with(&lower))
         .map(|n| {
-            if n == "table" {
-                "table ".into()
+            if n == "table" || n == "schema" {
+                format!("{n} ")
             } else {
                 n.into()
             }
@@ -161,26 +197,42 @@ mod tests {
     use super::*;
 
     const T: [&str; 4] = ["accounts", "order_items", "orders", "users"];
+    const S: [&str; 3] = ["information_schema", "pg_catalog", "public"];
+
+    fn resolve(input: &str, tables: &[&str]) -> Command {
+        super::resolve(input, tables, &[])
+    }
+
+    fn resolve_s(input: &str, schemas: &[&str]) -> Command {
+        super::resolve(input, &[], schemas)
+    }
+
+    fn suggest(input: &str, tables: &[&str]) -> Option<String> {
+        super::suggest(input, tables, &[])
+    }
+
+    fn suggest_s(input: &str, schemas: &[&str]) -> Option<String> {
+        super::suggest(input, &[], schemas)
+    }
 
     #[test]
-    fn table_match_tiers() {
-        let find = |q| match_table_candidates(&T, q).first().copied();
+    fn name_match_tiers() {
+        let find = |q| match_name_candidates(&T, q).first().copied();
         assert_eq!(find("orders"), Some("orders"));
         assert_eq!(find("ord"), Some("order_items"), "first prefix hit");
         assert_eq!(find("tems"), Some("order_items"));
         assert_eq!(find("USERS"), Some("users"));
         assert_eq!(find("nope"), None);
         assert_eq!(find("usr"), None, "no hardcoded aliases");
-        assert_eq!(
-            match_table_candidates(&T, "ord"),
-            ["order_items", "orders"]
-        );
+        assert_eq!(match_name_candidates(&T, "ord"), ["order_items", "orders"]);
     }
 
     #[test]
     fn verbs_and_aliases() {
         for (q, v) in [
             ("tables", Verb::Tables),
+            ("schema", Verb::Schemas),
+            ("schemas", Verb::Schemas),
             ("conn", Verb::Connections),
             ("EDITOR", Verb::Sql),
             ("sql", Verb::Sql),
@@ -208,6 +260,10 @@ mod tests {
         Command::Table(names.iter().map(|n| (*n).into()).collect())
     }
 
+    fn sch(names: &[&str]) -> Command {
+        Command::Schema(names.iter().map(|n| (*n).into()).collect())
+    }
+
     #[test]
     fn table_verb_takes_an_argument() {
         assert_eq!(resolve("table ord", &T), tbl(&["order_items", "orders"]));
@@ -226,6 +282,27 @@ mod tests {
         assert_eq!(
             resolve("tab users", &T),
             Command::Unknown("tab users".into())
+        );
+    }
+
+    #[test]
+    fn schema_verb_takes_an_argument() {
+        assert_eq!(resolve_s("schema pub", &S), sch(&["public"]));
+        assert_eq!(resolve_s("schema info", &S), sch(&["information_schema"]));
+        assert_eq!(resolve_s("SCHEMA  PUBLIC ", &S), sch(&["public"]));
+        assert_eq!(
+            resolve_s("schema zzz", &S),
+            Command::NoSchema("zzz".into())
+        );
+        assert_eq!(resolve_s("schema   ", &S), Command::Verb(Verb::Schemas));
+        assert_eq!(resolve_s("schema", &S), Command::Verb(Verb::Schemas));
+        assert_eq!(
+            resolve_s("schemas public", &S),
+            Command::Unknown("schemas public".into())
+        );
+        assert_eq!(
+            resolve_s("sch public", &S),
+            Command::Unknown("sch public".into())
         );
     }
 
@@ -281,7 +358,8 @@ mod tests {
         assert_eq!(suggest("us", &T), None, "tables only after `table `");
         assert_eq!(suggest("tables", &T), None, "already complete");
         assert_eq!(suggest("zz", &T), None);
-        assert_eq!(suggest("sc", &T).as_deref(), Some("schemas"));
+        assert_eq!(suggest("sc", &T).as_deref(), Some("schema "));
+        assert_eq!(suggest_s("schema", &S).as_deref(), Some("schema "));
     }
 
     #[test]
@@ -298,6 +376,15 @@ mod tests {
         assert_eq!(suggest("table tems", &T), None, "prefix only");
         assert_eq!(suggest("tables us", &T), None, "only `table` takes args");
         assert_eq!(suggest("table us", &[]), None);
+        assert_eq!(
+            suggest_s("schema pu", &S).as_deref(),
+            Some("schema public")
+        );
+        assert_eq!(
+            suggest_s("schema ", &S).as_deref(),
+            Some("schema information_schema")
+        );
+        assert_eq!(suggest_s("schemas pu", &S), None);
     }
 
     #[test]
@@ -335,7 +422,7 @@ mod tests {
                 let _ = resolve(&input, &tables);
                 let _ = suggest(&input, &tables);
             }
-            let _ = match_table_candidates(&tables, q);
+            let _ = match_name_candidates(&tables, q);
         }
         assert_eq!(resolve("table 表", &tables), tbl(&["表格"]));
         assert_eq!(resolve("table 📦", &tables), tbl(&["📦boxes"]));

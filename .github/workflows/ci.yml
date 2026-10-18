@@ -75,6 +75,19 @@ jobs:
         run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: --cfg docsrs
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: "1.89"
+          install-linux-dbus: "true"
+      - name: cargo check (MSRV)
+        run: cargo check --workspace --locked
   test:
     runs-on: ${{ matrix.os }}
     name: test ${{ matrix.os }} (${{ matrix.profile }})
