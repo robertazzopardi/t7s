@@ -248,21 +248,20 @@ impl App<'_> {
         Ok(())
     }
 
-    async fn open_cell_value_modal_from_cell_edit(&mut self) -> Result<()> {
+    fn open_cell_value_modal_from_cell_edit(&mut self) {
         let DatabaseExplorerState::TableData(schema, table) =
             self.database_explorer.state.clone()
         else {
-            return Ok(());
+            return;
         };
-        let Some(new_value) =
-            self.cell_edit.as_ref().map(|s| s.buffer.clone())
+        let Some(new_value) = self.cell_edit.as_ref().map(|s| s.buffer.clone())
         else {
-            return Ok(());
+            return;
         };
         let Some(apply) =
             self.cell_value_apply_from_session(schema, table, &new_value)
         else {
-            return Ok(());
+            return;
         };
         self.modal_manager.open_cell_value_modal(
             apply.set_column,
@@ -275,7 +274,6 @@ impl App<'_> {
             apply.primary_key,
             apply.db_row_id,
         );
-        Ok(())
     }
 
     // Swallow remaining keys while editing so Browse bindings cannot fire mid-edit.
@@ -423,9 +421,7 @@ impl App<'_> {
         self.begin_cell_edit(None);
     }
 
-    pub(crate) async fn table_data_duplicate_as_draft(
-        &mut self,
-    ) -> Result<bool> {
+    pub(crate) fn table_data_duplicate_as_draft(&mut self) -> Result<bool> {
         let Some(fd) = self.database_explorer.table_data.as_ref() else {
             return Ok(false);
         };
@@ -576,18 +572,18 @@ impl App<'_> {
 
     /// Start delete: drafts removed locally; persisted rows get a confirmation modal.
     #[allow(clippy::too_many_lines)]
-    pub(crate) async fn table_data_request_delete(&mut self) -> Result<()> {
+    pub(crate) fn table_data_request_delete(&mut self) {
         let DatabaseExplorerState::TableData(schema, table) =
             &self.database_explorer.state
         else {
-            return Ok(());
+            return;
         };
         let Some(fd) = self.database_explorer.table_data.as_ref() else {
-            return Ok(());
+            return;
         };
         if fd.is_filtered() {
             self.set_status("Clear filter before delete.");
-            return Ok(());
+            return;
         }
         let mut pick: BTreeSet<usize> = fd.table.multi_row_selection.clone();
         if let Some(s) = fd.table.view.state.selected()
@@ -596,7 +592,7 @@ impl App<'_> {
             pick.insert(s);
         }
         if pick.is_empty() {
-            return Ok(());
+            return;
         }
         let col_names: Vec<String> = fd
             .table
@@ -679,7 +675,7 @@ impl App<'_> {
             self.set_status("Draft row(s) removed.");
         }
         if db_specs.is_empty() {
-            return Ok(());
+            return;
         }
         let p = if db_specs.len() > 1 {
             format!(
@@ -692,7 +688,6 @@ impl App<'_> {
         };
         self.pending_row_deletes = Some(db_specs);
         self.modal_manager.open_sql_execution_confirmation_modal(p);
-        Ok(())
     }
 
     /// After confirmation: delete persisted rows, then refetch.
@@ -776,7 +771,7 @@ impl App<'_> {
                 (key.modifiers, key.code),
                 (KeyModifiers::CONTROL, KeyCode::Char('e' | 'E'))
             ) {
-                self.open_cell_value_modal_from_cell_edit().await?;
+                self.open_cell_value_modal_from_cell_edit();
                 return Ok(true);
             }
             if matches!(
@@ -813,7 +808,7 @@ impl App<'_> {
                 Ok(true)
             }
             KeyCode::Char('c') => {
-                if self.table_data_duplicate_as_draft().await? {
+                if self.table_data_duplicate_as_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                 }
                 Ok(true)
@@ -823,7 +818,7 @@ impl App<'_> {
                 Ok(true)
             }
             KeyCode::Char('D') => {
-                self.table_data_request_delete().await?;
+                self.table_data_request_delete();
                 Ok(true)
             }
             KeyCode::Char(' ') => {

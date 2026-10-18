@@ -24,17 +24,14 @@ use crate::{
 const STATUS_DB_NOT_CONNECTED: &str = "Not connected to database.";
 const STATUS_CONNECT_FAILED: &str = "Failed to connect to database.";
 
-pub(crate) fn column_index_for_name(
-    names: &[String],
-    name: &str,
-) -> Option<usize> {
+pub fn column_index_for_name(names: &[String], name: &str) -> Option<usize> {
     names
         .iter()
         .position(|c| c == name)
         .or_else(|| names.iter().position(|c| c.eq_ignore_ascii_case(name)))
 }
 
-pub(crate) fn pk_value_pairs(
+pub fn pk_value_pairs(
     col_names: &[String],
     row_values: &[String],
     pk_names: &[String],
@@ -639,8 +636,7 @@ impl App<'_> {
             self.cell_edit = None;
             return Ok(());
         }
-        let Some(new_value) =
-            self.cell_edit.as_ref().map(|s| s.buffer.clone())
+        let Some(new_value) = self.cell_edit.as_ref().map(|s| s.buffer.clone())
         else {
             return Ok(());
         };
