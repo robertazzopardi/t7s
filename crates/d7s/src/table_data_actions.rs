@@ -10,12 +10,13 @@ use crate::{
     app::App,
     app_state::{AppState, DatabaseExplorerState},
     cell_edit::{
-        all_editable_columns, editable_columns_from_meta, is_table_data_browse_binding,
-        next_editable_column, prev_editable_column, CellEditSession,
+        CellEditSession, all_editable_columns, editable_columns_from_meta,
+        is_table_data_browse_binding, next_editable_column,
+        prev_editable_column,
     },
     db::{
-        DbRowId, RowDeleteSpec, count_insert_default_omit_columns,
-        connection::ConnectionType,
+        DbRowId, RowDeleteSpec, connection::ConnectionType,
+        count_insert_default_omit_columns,
     },
     ui::widgets::raw_table::{RawTableRow, RawTableStateExt},
 };
@@ -105,7 +106,9 @@ impl App<'_> {
         self.database_explorer.connection.r#type == ConnectionType::Sqlite
     }
 
-    fn editable_columns_for_current_table(&self) -> Vec<crate::cell_edit::EditableCol> {
+    fn editable_columns_for_current_table(
+        &self,
+    ) -> Vec<crate::cell_edit::EditableCol> {
         let num_cols = self
             .database_explorer
             .table_data
@@ -178,11 +181,19 @@ impl App<'_> {
         else {
             return;
         };
-        if self
-            .editable_columns_for_current_table()
-            .iter()
-            .find(|c| c.index == col_idx)
-            .is_some_and(|c| !c.editable)
+        // Generated columns are refused on drafts only; saved rows stay editable.
+        let is_draft = self
+            .database_explorer
+            .table_data
+            .as_ref()
+            .and_then(|fd| fd.table.model.items.get(row_idx))
+            .is_some_and(|r| r.is_draft);
+        if is_draft
+            && self
+                .editable_columns_for_current_table()
+                .iter()
+                .find(|c| c.index == col_idx)
+                .is_some_and(|c| !c.editable)
         {
             self.set_status(format!("Column '{column_name}' is not editable"));
             return;
@@ -191,6 +202,10 @@ impl App<'_> {
             None => cell_value.clone(),
             Some(s) => s,
         };
+        if let Some(fd) = self.database_explorer.table_data.as_mut() {
+            fd.table.view.state.select_column(Some(col_idx));
+            fd.table.view.state.select(Some(row_idx));
+        }
         self.cell_edit = Some(CellEditSession {
             row_index: row_idx,
             col_index: col_idx,
@@ -199,7 +214,15 @@ impl App<'_> {
             row_snapshot: snap,
         });
         self.sync_cell_edit_buffer_to_grid();
-        self.set_status(format!("EDIT col={column_name}"));
+        self.set_status(format!("EDIT col={column_name} · Ctrl+e modal"));
+    }
+
+    fn table_data_column_is_selected(&self) -> bool {
+        self.database_explorer
+            .table_data
+            .as_ref()
+            .and_then(|fd| fd.table.view.state.selected_column())
+            .is_some()
     }
 
     pub(crate) fn cancel_cell_edit(&mut self) {
@@ -220,7 +243,8 @@ impl App<'_> {
         forward: bool,
     ) -> Result<()> {
         let row_index = self.cell_edit.as_ref().map(|s| s.row_index);
-        let from_col = self.cell_edit.as_ref().map(|s| s.col_index).unwrap_or(0);
+        let from_col =
+            self.cell_edit.as_ref().map(|s| s.col_index).unwrap_or(0);
         self.finish_cell_edit().await?;
         if self.cell_edit.is_some() {
             return Ok(());
@@ -260,7 +284,8 @@ impl App<'_> {
             .and_then(|fd| fd.table.model.dynamic_column_names.as_ref())
             .map(|names| names.to_vec())
             .unwrap_or_default();
-        let Some(column_name) = col_names.get(session.col_index).cloned() else {
+        let Some(column_name) = col_names.get(session.col_index).cloned()
+        else {
             return Ok(());
         };
         let row_snapshot = session.row_snapshot.clone();
@@ -279,7 +304,8 @@ impl App<'_> {
         let pk_names = if is_draft {
             Vec::new()
         } else {
-            let Some(database) = self.database_explorer.database.as_ref() else {
+            let Some(database) = self.database_explorer.database.as_ref()
+            else {
                 self.set_status("Database not connected");
                 return Ok(());
             };
@@ -327,7 +353,10 @@ impl App<'_> {
                 true
             }
             KeyCode::Enter => false,
-            KeyCode::Char(c) if !c.is_control() => {
+            KeyCode::Char(c)
+                if !c.is_control()
+                    && allows_hotkey_modifiers(key.modifiers) =>
+            {
                 if let Some(session) = self.cell_edit.as_mut() {
                     session.buffer.push(c);
                 }
@@ -376,13 +405,13 @@ impl App<'_> {
         self.insert_draft_row_at(insert_at, row);
     }
 
-    pub(crate) fn table_data_add_blank_draft(&mut self) -> Result<()> {
+    pub(crate) fn table_data_add_blank_draft(&mut self) -> Result<bool> {
         let Some(fd) = self.database_explorer.table_data.as_ref() else {
-            return Ok(());
+            return Ok(false);
         };
         if fd.is_filtered() {
             self.set_status("Clear filter before adding a row.");
-            return Ok(());
+            return Ok(false);
         }
         let names = fd
             .table
@@ -400,21 +429,23 @@ impl App<'_> {
         };
         self.insert_draft_row_below_cursor(row);
         self.set_status("Draft row — edit cells (Enter), commit with s");
-        Ok(())
+        Ok(true)
     }
 
-    pub(crate) async fn table_data_add_defaults_draft(&mut self) -> Result<()> {
+    pub(crate) async fn table_data_add_defaults_draft(
+        &mut self,
+    ) -> Result<bool> {
         let DatabaseExplorerState::TableData(schema, table) =
             self.database_explorer.state.clone()
         else {
-            return Ok(());
+            return Ok(false);
         };
         let Some(fd) = self.database_explorer.table_data.as_ref() else {
-            return Ok(());
+            return Ok(false);
         };
         if fd.is_filtered() {
             self.set_status("Clear filter before adding a row.");
-            return Ok(());
+            return Ok(false);
         }
         self.refresh_table_column_meta(&schema, &table).await?;
         let columns = self
@@ -427,9 +458,13 @@ impl App<'_> {
             .table_pk_names
             .clone()
             .unwrap_or_default();
-        let omit_n =
-            count_insert_default_omit_columns(&columns, &pk, self.engine_sqlite());
-        let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+        let omit_n = count_insert_default_omit_columns(
+            &columns,
+            &pk,
+            self.engine_sqlite(),
+        );
+        let names: Vec<String> =
+            columns.iter().map(|c| c.name.clone()).collect();
         let n = names.len();
         self.discard_table_draft();
         let row = RawTableRow {
@@ -440,7 +475,7 @@ impl App<'_> {
         };
         self.insert_draft_row_below_cursor(row);
         self.set_status(format!("Draft with defaults ({omit_n} cols)"));
-        Ok(())
+        Ok(true)
     }
 
     fn begin_cell_edit_on_first_editable_column(&mut self) {
@@ -454,18 +489,20 @@ impl App<'_> {
         self.begin_cell_edit(None);
     }
 
-    pub(crate) async fn table_data_duplicate_as_draft(&mut self) -> Result<()> {
+    pub(crate) async fn table_data_duplicate_as_draft(
+        &mut self,
+    ) -> Result<bool> {
         let Some(fd) = self.database_explorer.table_data.as_ref() else {
-            return Ok(());
+            return Ok(false);
         };
         if fd.is_filtered() {
             self.set_status("Clear filter before duplicating a row.");
-            return Ok(());
+            return Ok(false);
         }
         let DatabaseExplorerState::TableData(schema, table) =
             &self.database_explorer.state
         else {
-            return Ok(());
+            return Ok(false);
         };
         let sel = fd
             .table
@@ -482,10 +519,10 @@ impl App<'_> {
             .ok_or_else(|| eyre!("no row"))?;
         if base.is_draft {
             self.set_status("Pick a saved row to duplicate, not a draft.");
-            return Ok(());
+            return Ok(false);
         }
         let Some(db) = self.database_explorer.database.as_ref() else {
-            return Ok(());
+            return Ok(false);
         };
         let pk_names = db
             .get_primary_key_columns(schema, table)
@@ -519,7 +556,7 @@ impl App<'_> {
         self.discard_table_draft();
         let insert_at: usize = {
             let Some(fd2) = self.database_explorer.table_data.as_ref() else {
-                return Ok(());
+                return Ok(false);
             };
             let len = fd2.table.model.items.len();
             fd2.table
@@ -533,7 +570,7 @@ impl App<'_> {
         };
         self.insert_draft_row_at(insert_at, row);
         self.set_status("Draft copy — edit cells (Enter), commit with s");
-        Ok(())
+        Ok(true)
     }
 
     pub(crate) async fn table_data_commit_draft(&mut self) -> Result<()> {
@@ -807,8 +844,7 @@ impl App<'_> {
         // reject other modifiers (Ctrl/Alt chords).
         if self.cell_edit.is_some() {
             if key.code == KeyCode::Tab {
-                self.finish_cell_edit_and_move_editable_column(true)
-                    .await?;
+                self.finish_cell_edit_and_move_editable_column(true).await?;
                 return Ok(true);
             }
             if key.code == KeyCode::BackTab {
@@ -823,9 +859,15 @@ impl App<'_> {
             if matches!(
                 (key.modifiers, key.code),
                 (KeyModifiers::CONTROL, KeyCode::Char('e' | 'E'))
-                    | (KeyModifiers::NONE, KeyCode::Char('e'))
             ) {
                 self.open_cell_value_modal_from_cell_edit().await?;
+                return Ok(true);
+            }
+            if matches!(
+                (key.modifiers, key.code),
+                (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C'))
+            ) {
+                self.quit();
                 return Ok(true);
             }
             return Ok(self.handle_cell_edit_key(key));
@@ -839,13 +881,15 @@ impl App<'_> {
                 Ok(true)
             }
             KeyCode::Char('n') | KeyCode::Char('a') => {
-                self.table_data_add_blank_draft()?;
-                self.begin_cell_edit_on_first_editable_column();
+                if self.table_data_add_blank_draft()? {
+                    self.begin_cell_edit_on_first_editable_column();
+                }
                 Ok(true)
             }
             KeyCode::Char('N') => {
-                self.table_data_add_defaults_draft().await?;
-                self.begin_cell_edit_on_first_editable_column();
+                if self.table_data_add_defaults_draft().await? {
+                    self.begin_cell_edit_on_first_editable_column();
+                }
                 Ok(true)
             }
             KeyCode::Char('i') => {
@@ -853,8 +897,9 @@ impl App<'_> {
                 Ok(true)
             }
             KeyCode::Char('c') => {
-                self.table_data_duplicate_as_draft().await?;
-                self.begin_cell_edit_on_first_editable_column();
+                if self.table_data_duplicate_as_draft().await? {
+                    self.begin_cell_edit_on_first_editable_column();
+                }
                 Ok(true)
             }
             KeyCode::Char('s') => {
@@ -870,11 +915,17 @@ impl App<'_> {
                 Ok(true)
             }
             KeyCode::Backspace | KeyCode::Delete => {
-                self.begin_cell_edit(Some(String::new()));
+                // Require an explicit column selection so a stray key on a
+                // freshly opened table cannot overwrite column 0 (often the PK).
+                if self.table_data_column_is_selected() {
+                    self.begin_cell_edit(Some(String::new()));
+                }
                 Ok(true)
             }
             KeyCode::Char(c) if !is_table_data_browse_binding(c) => {
-                self.begin_cell_edit(Some(c.to_string()));
+                if self.table_data_column_is_selected() {
+                    self.begin_cell_edit(Some(c.to_string()));
+                }
                 Ok(true)
             }
             _ => Ok(false),

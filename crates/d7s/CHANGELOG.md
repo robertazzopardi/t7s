@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - TLS for PostgreSQL and MySQL/MariaDB connections (rustls). The connection form has a **TLS** mode (`disable`, `prefer`, `require`, `verify-full`) and an optional **CA Cert** path (used by `verify-full`), stored in the URL as `sslmode=`/`ssl-mode=` and `sslrootcert=`. Default stays `disable`. `prefer` and `require` encrypt but do not verify the certificate. URL `verify-ca` is accepted as `verify-full` (rustls always checks the host name). Unknown `sslmode` / `ssl-mode` values are rejected instead of falling back to plaintext.
-- Spreadsheet-style inline cell editing on table data: Enter or `i` starts edit; typing overwrites the cell; Backspace clears into edit; Esc reverts the cell (draft rows discard the whole row). Saved cells persist on commit (Enter or leaving the cell); draft cells stash locally until `s` commits the row.
+- Spreadsheet-style inline cell editing on table data: Enter or `i` starts edit; typing overwrites the cell; Backspace clears into edit; Esc reverts the cell (a draft row stays until discarded with Esc in Browse). Saved cells persist on commit (Enter or leaving the cell); draft cells stash locally until `s` commits the row.
 - Row drafts: `n` blank draft, `N` draft with column defaults (generated columns omitted on insert), `c` duplicate row, `a` alias for `n`; new drafts auto-enter edit on the first editable column.
 - Tab and Shift+Tab move inline edit across editable columns on the same row (skips read-only columns).
 - While editing a cell, Ctrl+e opens the multiline editor modal; `D` and `d` are ignored so delete/describe do not fire; Space and `y` stay browse-only.

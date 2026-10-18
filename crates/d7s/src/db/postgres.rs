@@ -530,7 +530,8 @@ impl Database for Postgres {
                 c.data_type,
                 c.is_nullable,
                 c.column_default,
-                pgd.description
+                pgd.description,
+                c.is_identity
             FROM information_schema.columns c
             LEFT JOIN pg_catalog.pg_statio_all_tables st ON (c.table_schema = st.schemaname AND c.table_name = st.relname)
             LEFT JOIN pg_catalog.pg_description pgd ON (pgd.objoid = st.relid AND pgd.objsubid = c.ordinal_position)
@@ -547,7 +548,10 @@ impl Database for Postgres {
                 name: row.get(0),
                 data_type: row.get(1),
                 is_nullable: row.get::<_, String>(2) == "YES",
-                default_value: row.get(3),
+                default_value: row.get::<_, Option<String>>(3).or_else(|| {
+                    (row.get::<_, String>(5) == "YES")
+                        .then(|| "GENERATED AS IDENTITY".to_string())
+                }),
                 description: row.get(4),
             })
             .collect();

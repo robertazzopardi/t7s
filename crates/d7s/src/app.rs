@@ -1334,7 +1334,9 @@ mod tests {
     fn table_data_cell_value(app: &App<'_>, col: Option<usize>) -> String {
         let fd = app.database_explorer.table_data.as_ref().unwrap();
         let row = fd.table.view.state.selected().unwrap();
-        let col = col.unwrap_or_else(|| fd.table.view.state.selected_column().unwrap_or(0));
+        let col = col.unwrap_or_else(|| {
+            fd.table.view.state.selected_column().unwrap_or(0)
+        });
         fd.table.model.items[row].values[col].clone()
     }
 
@@ -1388,9 +1390,12 @@ mod tests {
     async fn n_draft_omits_default_columns_on_commit() {
         let mut app = defaults_draft_table_app("draft_defaults").await;
         run_cmd(&mut app, "table def_row").await;
-        app.on_key_event(KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT))
-            .await
-            .unwrap();
+        app.on_key_event(KeyEvent::new(
+            KeyCode::Char('N'),
+            KeyModifiers::SHIFT,
+        ))
+        .await
+        .unwrap();
         assert!(app.has_table_draft_rows());
         assert_eq!(selected_col(&app), 1, "first editable column is name");
         // First editable is `name` (id is rowid PK); tab to `note`.
@@ -1404,16 +1409,20 @@ mod tests {
         let db_path = app.database_explorer.connection.url.clone();
         let name: String = rusqlite::Connection::open(&db_path)
             .unwrap()
-            .query_row("SELECT name FROM def_row ORDER BY id DESC LIMIT 1", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT name FROM def_row ORDER BY id DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(name, "x");
         let note: String = rusqlite::Connection::open(&db_path)
             .unwrap()
-            .query_row("SELECT note FROM def_row ORDER BY id DESC LIMIT 1", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT note FROM def_row ORDER BY id DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(note, "hi");
     }
@@ -1477,6 +1486,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn type_to_overwrite_requires_column_selection() {
+        let mut app = cell_update_table_app("no_col_overwrite").await;
+        run_cmd(&mut app, "table cell_edit_row").await;
+        assert!(
+            app.database_explorer
+                .table_data
+                .as_ref()
+                .unwrap()
+                .table
+                .view
+                .state
+                .selected_column()
+                .is_none()
+        );
+        app.on_key_event(key('z')).await.unwrap();
+        assert!(!app.is_cell_editing());
+        let id: i64 =
+            rusqlite::Connection::open(&app.database_explorer.connection.url)
+                .unwrap()
+                .query_row(
+                    "SELECT id FROM cell_edit_row WHERE name = 'old'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+        assert_eq!(id, 1);
+    }
+
+    #[tokio::test]
+    async fn paste_while_editing_appends_to_buffer() {
+        let mut app = cell_update_table_app("paste_edit").await;
+        run_cmd(&mut app, "table cell_edit_row").await;
+        select_table_column(&mut app, 1);
+        app.on_key_event(enter()).await.unwrap();
+        app.handle_paste_text(" pasted");
+        assert!(app.cell_edit.as_ref().unwrap().buffer.ends_with(" pasted"));
+        assert!(table_data_selected_cell_value(&app).ends_with(" pasted"));
+    }
+
+    #[tokio::test]
+    async fn draft_discard_is_two_esc_from_browse() {
+        let mut app = tables_app("draft_esc_count").await;
+        run_cmd(&mut app, "table users").await;
+        app.on_key_event(key('n')).await.unwrap();
+        assert!(app.is_cell_editing());
+        app.on_key_event(esc()).await.unwrap(); // cancel cell edit
+        assert!(!app.is_cell_editing());
+        assert!(app.has_table_draft_rows());
+        app.on_key_event(esc()).await.unwrap(); // warn
+        assert!(app.has_table_draft_rows());
+        assert!(app.draft_discard_pending);
+        app.on_key_event(esc()).await.unwrap(); // discard
+        assert!(!app.has_table_draft_rows());
+    }
+
+    #[tokio::test]
     async fn table_data_browse_q_quits_without_cell_edit() {
         let mut app = cell_update_table_app("browse_q").await;
         run_cmd(&mut app, "table cell_edit_row").await;
@@ -1516,9 +1581,12 @@ mod tests {
         select_table_column(&mut app, 1);
         app.on_key_event(enter()).await.unwrap();
         assert!(app.is_cell_editing());
-        app.on_key_event(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT))
-            .await
-            .unwrap();
+        app.on_key_event(KeyEvent::new(
+            KeyCode::Char('D'),
+            KeyModifiers::SHIFT,
+        ))
+        .await
+        .unwrap();
         assert!(app.is_cell_editing());
         assert!(app.pending_row_deletes.is_none());
         let db_path = app.database_explorer.connection.url.clone();
@@ -1560,16 +1628,102 @@ mod tests {
         let db_path = app.database_explorer.connection.url.clone();
         let persisted: String = rusqlite::Connection::open(&db_path)
             .unwrap()
-            .query_row(
-                "SELECT name FROM cell_edit_row WHERE id = 1",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT name FROM cell_edit_row WHERE id = 1", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(persisted, "nix");
         app.on_key_event(key('r')).await.unwrap();
         select_table_column(&mut app, 1);
         assert_eq!(table_data_cell_value(&app, Some(1)), "nix");
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    fn db_name(app: &App<'_>, id: i64) -> Option<String> {
+        rusqlite::Connection::open(&app.database_explorer.connection.url)
+            .unwrap()
+            .query_row(
+                "SELECT name FROM cell_edit_row WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn plain_e_types_into_cell_buffer() {
+        let mut app = tables_app("edit_type_e").await;
+        run_cmd(&mut app, "table users").await;
+        app.on_key_event(key('n')).await.unwrap();
+        type_str(&mut app, "hello").await;
+        assert_eq!(app.cell_edit.as_ref().unwrap().buffer, "hello");
+        assert!(app.modal_manager.get_cell_value_modal().is_none());
+    }
+
+    #[tokio::test]
+    async fn unchanged_null_cell_is_not_written_back() {
+        let mut app = cell_update_table_app("edit_null").await;
+        rusqlite::Connection::open(&app.database_explorer.connection.url)
+            .unwrap()
+            .execute_batch("INSERT INTO cell_edit_row VALUES (2, NULL);")
+            .unwrap();
+        run_cmd(&mut app, "table cell_edit_row").await;
+        select_table_column(&mut app, 1);
+        app.on_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+            .await
+            .unwrap();
+        app.on_key_event(enter()).await.unwrap();
+        assert_eq!(app.cell_edit.as_ref().unwrap().buffer, "NULL");
+        app.on_key_event(enter()).await.unwrap();
+        assert!(!app.is_cell_editing());
+        assert_eq!(db_name(&app, 2), None, "still SQL NULL, not 'NULL'");
+    }
+
+    #[tokio::test]
+    async fn refused_create_does_not_enter_edit_on_saved_row() {
+        let mut app = cell_update_table_app("edit_filtered_n").await;
+        rusqlite::Connection::open(&app.database_explorer.connection.url)
+            .unwrap()
+            .execute_batch("INSERT INTO cell_edit_row VALUES (2, 'zed');")
+            .unwrap();
+        run_cmd(&mut app, "table cell_edit_row").await;
+        app.on_key_event(key('/')).await.unwrap();
+        type_str(&mut app, "zed").await;
+        app.on_key_event(enter()).await.unwrap();
+        for c in ['n', 'N', 'c'] {
+            app.on_key_event(key(c)).await.unwrap();
+            assert!(!app.is_cell_editing(), "{c}");
+            assert!(!app.has_table_draft_rows(), "{c}");
+        }
+    }
+
+    #[tokio::test]
+    async fn ctrl_chords_do_not_type_and_ctrl_c_quits_while_editing() {
+        let mut app = cell_update_table_app("edit_ctrl").await;
+        run_cmd(&mut app, "table cell_edit_row").await;
+        select_table_column(&mut app, 1);
+        app.on_key_event(enter()).await.unwrap();
+        app.on_key_event(ctrl('x')).await.unwrap();
+        app.on_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::ALT))
+            .await
+            .unwrap();
+        assert_eq!(app.cell_edit.as_ref().unwrap().buffer, "old");
+        app.running = true;
+        app.on_key_event(ctrl('c')).await.unwrap();
+        assert!(!app.running);
+        assert_eq!(db_name(&app, 1).as_deref(), Some("old"));
+    }
+
+    #[tokio::test]
+    async fn rowid_pk_cell_is_editable_on_saved_rows() {
+        let mut app = cell_update_table_app("edit_saved_pk").await;
+        run_cmd(&mut app, "table cell_edit_row").await;
+        select_table_column(&mut app, 0);
+        app.on_key_event(enter()).await.unwrap();
+        assert!(app.is_cell_editing());
     }
 
     #[tokio::test]

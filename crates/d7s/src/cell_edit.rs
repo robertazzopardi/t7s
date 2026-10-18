@@ -7,7 +7,7 @@ pub struct CellEditSession {
     pub row_snapshot: Vec<String>,
 }
 
-use crate::db::{Column, column_is_editable, sqlite_rowid_pk_omit};
+use crate::db::{Column, column_is_editable, sole_pk, sqlite_rowid_pk_omit};
 
 #[derive(Debug, Clone, Copy)]
 pub struct EditableCol {
@@ -22,8 +22,7 @@ pub struct EditableCol {
 pub fn is_table_data_browse_binding(c: char) -> bool {
     matches!(
         c,
-        'q'
-            | 'e'
+        'q' | 'e'
             | 'E'
             | 't'
             | 'd'
@@ -36,33 +35,40 @@ pub fn is_table_data_browse_binding(c: char) -> bool {
             | 'O'
             | 'p'
             | 'x'
-            | '1'..='5'
-            | 'n'
-            | 'N'
-            | 'c'
-            | 's'
-            | 'r'
-            | 'D'
-            | 'a'
-            | 'i'
-            | 'y'
-            | 'Y'
-            | '/'
-            | ':'
-            | '#'
-            | ' '
-            | 'j'
-            | 'k'
-            | 'h'
-            | 'l'
-            | 'g'
-            | 'G'
-            | '0'
-            | '$'
+            | '1'
+            ..='5'
+                | 'n'
+                | 'N'
+                | 'c'
+                | 's'
+                | 'r'
+                | 'D'
+                | 'R'
+                | 'S'
+                | 'C'
+                | 'a'
+                | 'i'
+                | 'y'
+                | 'Y'
+                | '/'
+                | ':'
+                | '#'
+                | ' '
+                | 'j'
+                | 'k'
+                | 'h'
+                | 'l'
+                | 'g'
+                | 'G'
+                | '0'
+                | '$'
     )
 }
 
-pub fn next_editable_column(cols: &[EditableCol], from: usize) -> Option<usize> {
+pub fn next_editable_column(
+    cols: &[EditableCol],
+    from: usize,
+) -> Option<usize> {
     let editable: Vec<usize> = cols
         .iter()
         .filter(|c| c.editable)
@@ -94,7 +100,7 @@ pub fn editable_columns_from_meta(
     pk_names: &[String],
     engine_sqlite: bool,
 ) -> Vec<EditableCol> {
-    let pk_first = pk_names.first().map(String::as_str);
+    let pk_first = sole_pk(pk_names);
     columns
         .iter()
         .enumerate()
@@ -103,13 +109,20 @@ pub fn editable_columns_from_meta(
                 engine_sqlite && sqlite_rowid_pk_omit(col, pk_first);
             EditableCol {
                 index,
-                editable: column_is_editable(col, engine_sqlite, sqlite_rowid_pk),
+                editable: column_is_editable(
+                    col,
+                    engine_sqlite,
+                    sqlite_rowid_pk,
+                ),
             }
         })
         .collect()
 }
 
-pub fn prev_editable_column(cols: &[EditableCol], from: usize) -> Option<usize> {
+pub fn prev_editable_column(
+    cols: &[EditableCol],
+    from: usize,
+) -> Option<usize> {
     let editable: Vec<usize> = cols
         .iter()
         .filter(|c| c.editable)
@@ -133,13 +146,41 @@ mod tests {
     #[test]
     fn browse_bindings_include_create_and_commit_keys() {
         for c in [
-            'q', 'e', 'E', 't', 'b', 'w', 'A', 'L', 'o', 'O', 'p', 'x', '1', '5', 'n', 'N', 'c',
-            's', 'r', 'D', 'a', 'i', 'y', 'Y', 'd', '/', ':', '#', '?', 'j', 'k', 'h', 'l', 'g',
-            'G', '0', '$',
+            'q', 'e', 'E', 't', 'b', 'w', 'A', 'L', 'o', 'O', 'p', 'x', '1',
+            '5', 'n', 'N', 'c', 's', 'r', 'R', 'S', 'C', 'D', 'a', 'i', 'y',
+            'Y', 'd', '/', ':', '#', '?', 'j', 'k', 'h', 'l', 'g', 'G', '0',
+            '$',
         ] {
             assert!(is_table_data_browse_binding(c), "{c}");
         }
         assert!(!is_table_data_browse_binding('z'));
+    }
+
+    #[test]
+    fn composite_sqlite_pk_stays_editable() {
+        let col = |name: &str| Column {
+            name: name.into(),
+            data_type: "INTEGER".into(),
+            is_nullable: false,
+            default_value: None,
+            description: None,
+        };
+        let cols = [col("a"), col("b")];
+        let both = ["a".to_string(), "b".to_string()];
+        assert!(
+            editable_columns_from_meta(&cols, &both, true)
+                .iter()
+                .all(|c| c.editable)
+        );
+        let one = ["a".to_string()];
+        let ec = editable_columns_from_meta(&cols, &one, true);
+        assert!(!ec[0].editable && ec[1].editable);
+        let mut ident = col("id");
+        ident.default_value = Some("GENERATED AS IDENTITY".into());
+        assert!(!editable_columns_from_meta(&[ident], &[], false)[0].editable);
+        let mut auto = col("id");
+        auto.default_value = Some("auto_increment".into());
+        assert!(!editable_columns_from_meta(&[auto], &[], false)[0].editable);
     }
 
     #[test]

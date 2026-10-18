@@ -213,6 +213,21 @@ pub fn sqlite_rowid_pk_omit(col: &Column, pk_first: Option<&str>) -> bool {
     }) && col.data_type.to_lowercase().contains("int")
 }
 
+/// The PK column name when the primary key is a single column.
+#[must_use]
+pub fn sole_pk(pk_names: &[String]) -> Option<&str> {
+    match pk_names {
+        [only] => Some(only.as_str()),
+        _ => None,
+    }
+}
+
+/// Default expressions meaning the DB generates the value (serial, PG identity, MySQL auto_increment).
+fn is_generated_default(d: &str) -> bool {
+    let d = d.to_lowercase();
+    d.contains("nextval") || d.contains("identity") || d == "auto_increment"
+}
+
 /// Generated / identity / rowid PK columns are not edited in the grid.
 #[must_use]
 pub fn column_is_editable(
@@ -227,14 +242,9 @@ pub fn column_is_editable(
     if u.contains("serial") || u.contains("identity") {
         return false;
     }
-    if col
-        .default_value
+    !col.default_value
         .as_deref()
-        .is_some_and(|d| d.contains("nextval"))
-    {
-        return false;
-    }
-    true
+        .is_some_and(is_generated_default)
 }
 
 /// Columns that will be omitted from INSERT when left empty (defaults / generated).
@@ -244,7 +254,7 @@ pub fn count_insert_default_omit_columns(
     pk_names: &[String],
     engine_sqlite: bool,
 ) -> usize {
-    let pk_first = pk_names.first().map(String::as_str);
+    let pk_first = sole_pk(pk_names);
     columns
         .iter()
         .filter(|col| {

@@ -221,10 +221,8 @@ impl App<'_> {
             .await
         {
             Ok(page) => {
-                let col_meta = database
-                    .get_columns(schema_name, table_name)
-                    .await
-                    .ok();
+                let col_meta =
+                    database.get_columns(schema_name, table_name).await.ok();
                 let pk_meta = database
                     .get_primary_key_columns(schema_name, table_name)
                     .await
@@ -633,6 +631,11 @@ impl App<'_> {
         let Some(session) = self.cell_edit.as_ref() else {
             return Ok(());
         };
+        // Unchanged: leave edit mode without a write (NULL cells render as "NULL").
+        if session.buffer == session.pre_edit_value {
+            self.cell_edit = None;
+            return Ok(());
+        }
         let col_names: Vec<String> = self
             .database_explorer
             .table_data
@@ -659,7 +662,8 @@ impl App<'_> {
         let pk_names = if is_draft {
             Vec::new()
         } else {
-            let Some(database) = self.database_explorer.database.as_ref() else {
+            let Some(database) = self.database_explorer.database.as_ref()
+            else {
                 self.set_status(STATUS_DB_NOT_CONNECTED);
                 return Ok(());
             };

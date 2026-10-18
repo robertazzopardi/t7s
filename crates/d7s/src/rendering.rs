@@ -26,7 +26,8 @@ use crate::{
         theme as d7s_theme,
         widgets::{
             connection_modal::ConnectionModalWidget,
-            describe_content::DescribeRow, global_hotkeys::global_hotkeys,
+            describe_content::DescribeRow,
+            global_hotkeys::global_hotkeys,
             help_content::HelpRow,
             hotkeys::{CELL_EDIT_HOTKEYS, TABLE_DATA_VIEW_HOTKEYS},
             idle_hint::default_idle_hint,
@@ -93,11 +94,7 @@ impl App<'_> {
             } else {
                 &TABLE_DATA_VIEW_HOTKEYS
             };
-            self.hotkeys
-                .iter()
-                .chain(table_hotkeys)
-                .cloned()
-                .collect()
+            self.hotkeys.iter().chain(table_hotkeys).cloned().collect()
         } else {
             Vec::new()
         };

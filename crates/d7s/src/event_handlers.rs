@@ -71,14 +71,7 @@ impl App<'_> {
             }
             // Ignore non-press key events
             // Terminal resize is handled automatically by ratatui
-            Event::Paste(text) => {
-                self.clear_status();
-                if !self.modal_manager.handle_paste(&text)
-                    && let Some(textarea) = &mut self.search_filter
-                {
-                    textarea.insert_str(&text);
-                }
-            }
+            Event::Paste(text) => self.handle_paste_text(&text),
             Event::Key(_)
             | Event::FocusGained
             | Event::FocusLost
@@ -87,6 +80,20 @@ impl App<'_> {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn handle_paste_text(&mut self, text: &str) {
+        self.clear_status();
+        if self.cell_edit.is_some() {
+            if let Some(session) = self.cell_edit.as_mut() {
+                session.buffer.push_str(text);
+            }
+            self.sync_cell_edit_buffer_to_grid();
+        } else if !self.modal_manager.handle_paste(text)
+            && let Some(textarea) = &mut self.search_filter
+        {
+            textarea.insert_str(text);
+        }
     }
 
     /// Handles the key events and updates the state of [`App`].
@@ -419,18 +426,13 @@ impl App<'_> {
                     self.cancel_cell_edit();
                 } else if self.modal_manager.is_any_modal_open() {
                     self.modal_manager.close_active_modal();
-                } else if self
-                    .database_explorer
-                    .current_table_state_mut()
-                    .and_then(|s| s.selected_column())
-                    .is_some()
-                {
-                    self.reset_table_selection_state();
                 } else if matches!(
                     self.database_explorer.state,
                     DatabaseExplorerState::TableData(_, _)
                 ) && self.has_table_draft_rows()
                 {
+                    // Draft discard before column-deselect so n/c (which select
+                    // a column) still use the two-step Esc story.
                     if self.draft_discard_pending {
                         if self.discard_table_draft() {
                             self.set_status("Draft discarded.");
@@ -441,6 +443,13 @@ impl App<'_> {
                             "Draft row pending — Esc again to discard, s to commit",
                         );
                     }
+                } else if self
+                    .database_explorer
+                    .current_table_state_mut()
+                    .and_then(|s| s.selected_column())
+                    .is_some()
+                {
+                    self.reset_table_selection_state();
                 } else if self.state == AppState::DatabaseConnected {
                     let is_sql_executor = matches!(
                         self.database_explorer.state,

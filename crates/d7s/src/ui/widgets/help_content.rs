@@ -188,6 +188,10 @@ const TABLE_DATA_CELL_EDIT_HELP: &[HelpEntry] = &[
         desc: "Next / previous editable column",
     },
     HelpEntry {
+        key: "Ctrl+e",
+        desc: "Multiline editor (modal)",
+    },
+    HelpEntry {
         key: "Backspace",
         desc: "Delete character in buffer",
     },
@@ -343,5 +347,6 @@ mod tests {
         assert!(body.contains("N New row (column defaults)"));
         assert!(body.contains("i Edit selected cell"));
         assert!(body.contains("Tab / Shift+Tab"));
+        assert!(body.contains("Ctrl+e Multiline editor (modal)"));
     }
 }
