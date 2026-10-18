@@ -442,10 +442,9 @@ impl Modal {
 
     /// Build and open the tui-menu dropdown for the current field if it is a dropdown field.
     fn open_dropdown_if_focused(&mut self) {
-        if self.current_field >= self.visible_fields_count() {
+        let Some(idx) = self.focused_field_index() else {
             return;
-        }
-        let idx = self.current_field;
+        };
         let Some(field) = self.fields.get(idx) else {
             return;
         };
@@ -524,53 +523,31 @@ impl Modal {
     pub fn next_field(&mut self) {
         let total = self.total_items();
         if self.current_field < total - 1 {
-            // Clear current focus
-            if self.current_field < self.visible_fields_count() {
-                let logical_index = self.current_field;
-                if logical_index < self.fields.len() {
-                    self.fields[logical_index].set_focus(false);
-                }
+            if let Some(i) = self.focused_field_index() {
+                self.fields[i].set_focus(false);
             }
-
             self.current_field += 1;
-
-            // Set focus on new item
-            if self.current_field < self.visible_fields_count() {
-                let logical_index = self.current_field;
-                if logical_index < self.fields.len() {
-                    self.fields[logical_index].set_focus(true);
-                }
+            if let Some(i) = self.focused_field_index() {
+                self.fields[i].set_focus(true);
             }
         }
     }
 
     pub fn prev_field(&mut self) {
         if self.current_field > 0 {
-            // Clear current focus
-            if self.current_field < self.visible_fields_count() {
-                let logical_index = self.current_field;
-                if logical_index < self.fields.len() {
-                    self.fields[logical_index].set_focus(false);
-                }
+            if let Some(i) = self.focused_field_index() {
+                self.fields[i].set_focus(false);
             }
-
             self.current_field -= 1;
-
-            // Set focus on new item
-            if self.current_field < self.visible_fields_count() {
-                let logical_index = self.current_field;
-                if logical_index < self.fields.len() {
-                    self.fields[logical_index].set_focus(true);
-                }
+            if let Some(i) = self.focused_field_index() {
+                self.fields[i].set_focus(true);
             }
         }
     }
 
     fn forward_key_to_field(&mut self, key: KeyEvent) {
-        if self.current_field < self.visible_fields_count()
-            && let Some(field) = self.fields.get_mut(self.current_field)
-        {
-            field.input_key(key);
+        if let Some(i) = self.focused_field_index() {
+            self.fields[i].input_key(key);
         }
     }
 
@@ -641,15 +618,16 @@ impl Modal {
                     &user,
                     &database,
                 );
-                let tls = |i: usize| {
-                    self.fields.get(i).map_or("", |f| f.value().trim())
+                let mode = self
+                    .fields
+                    .get(TLS_FIELD)
+                    .map_or("disable", |f| f.value().trim());
+                let ca = if self.is_ca_field_hidden() {
+                    ""
+                } else {
+                    self.fields.get(CA_FIELD).map_or("", |f| f.value().trim())
                 };
-                with_tls_query(
-                    connection_type,
-                    &url,
-                    tls(TLS_FIELD),
-                    tls(CA_FIELD),
-                )
+                with_tls_query(connection_type, &url, mode, ca)
             }
             ConnectionType::Sqlite => self
                 .fields
@@ -759,8 +737,7 @@ impl Modal {
                     } else {
                         ModalAction::None
                     }
-                } else if self.current_field < self.visible_fields_count() {
-                    let idx = self.current_field;
+                } else if let Some(idx) = self.focused_field_index() {
                     if self.fields.get(idx).is_some_and(ModalField::is_dropdown)
                     {
                         self.open_dropdown_if_focused();
@@ -904,8 +881,8 @@ impl Modal {
         if self.menu_state.is_some() {
             return;
         }
-        if self.current_field < self.visible_fields_count()
-            && let Some(field) = self.fields.get_mut(self.current_field)
+        if let Some(i) = self.focused_field_index()
+            && let Some(field) = self.fields.get_mut(i)
             && field.options.is_none()
         {
             field.input.insert_str(text);
@@ -1080,18 +1057,52 @@ impl Modal {
             || self.is_sqlite()
     }
 
+    /// CA Cert is only meaningful when TLS is not `disable`.
+    fn is_ca_field_hidden(&self) -> bool {
+        match self.connection_type {
+            Some(ConnectionType::Postgres | ConnectionType::Mysql) => self
+                .fields
+                .get(TLS_FIELD)
+                .is_none_or(|f| f.value() == "disable"),
+            _ => true,
+        }
+    }
+
+    fn is_field_hidden(&self, index: usize) -> bool {
+        (index == CA_FIELD && self.is_ca_field_hidden())
+            || (index == self.password_field_index()
+                && self.is_password_field_hidden())
+    }
+
+    /// Nav index → `fields` index, skipping hidden rows.
+    fn visible_to_field(&self, visible: usize) -> Option<usize> {
+        self.fields
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| !self.is_field_hidden(i))
+            .nth(visible)
+            .map(|(i, _)| i)
+    }
+
+    /// `current_field` when it points at a form field (not storage/buttons).
+    fn focused_field_index(&self) -> Option<usize> {
+        if self.current_field < self.visible_fields_count() {
+            self.visible_to_field(self.current_field)
+        } else {
+            None
+        }
+    }
+
     /// Show password storage row only for Postgres (`SQLite` has no passwords).
     fn is_password_storage_row_visible(&self) -> bool {
         !self.is_sqlite()
     }
 
-    /// Get the number of visible fields (excluding password if hidden)
+    /// Visible form fields (password / CA Cert may be omitted).
     fn visible_fields_count(&self) -> usize {
-        if self.is_password_field_hidden() {
-            self.fields.len() - 1
-        } else {
-            self.fields.len()
-        }
+        (0..self.fields.len())
+            .filter(|&i| !self.is_field_hidden(i))
+            .count()
     }
 
     fn render_fields(&self, area: Rect, buf: &mut Buffer) {
@@ -1113,9 +1124,7 @@ impl Modal {
         let mut visible_index = 0;
 
         for (i, field) in self.fields.iter().enumerate() {
-            if self.is_password_field_hidden()
-                && i == self.password_field_index()
-            {
+            if self.is_field_hidden(i) {
                 continue;
             }
 
@@ -2230,5 +2239,27 @@ mod tls_form_tests {
         });
         let saved = modal.get_connection().expect("valid form");
         assert_eq!(saved.url, "postgres://u@h:1/db");
+    }
+
+    #[test]
+    fn ca_field_hidden_when_tls_disabled() {
+        let mut modal = Modal::default();
+        modal.open_for_edit(&Connection {
+            name: "n".into(),
+            url: "postgres://u@h:1/db".into(),
+            password: Some("p".into()),
+            ..Connection::default()
+        });
+        assert!(modal.is_ca_field_hidden());
+        // name..tls + env + metadata + password = 9 (no CA)
+        assert_eq!(modal.visible_fields_count(), 9);
+
+        modal.fields[super::TLS_FIELD].set_value("require");
+        assert!(!modal.is_ca_field_hidden());
+        assert_eq!(modal.visible_fields_count(), 10);
+
+        modal.fields[super::TLS_FIELD].set_value("disable");
+        assert!(modal.is_ca_field_hidden());
+        assert_eq!(modal.visible_fields_count(), 9);
     }
 }
