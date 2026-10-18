@@ -440,6 +440,22 @@ impl Modal {
         self.is_open = false;
     }
 
+    /// tui-menu `push()` highlights the first child — put `current` first so it starts selected.
+    /// Overlay rendering must use this same order or Up/Down and Enter disagree with what you see.
+    fn dropdown_options_current_first(
+        opts: &[&'static str],
+        current: &str,
+    ) -> Vec<&'static str> {
+        let mut ordered = opts.to_vec();
+        if let Some(pos) = ordered.iter().position(|o| *o == current)
+            && pos != 0
+        {
+            let item = ordered.remove(pos);
+            ordered.insert(0, item);
+        }
+        ordered
+    }
+
     /// Build and open the tui-menu dropdown for the current field if it is a dropdown field.
     fn open_dropdown_if_focused(&mut self) {
         let Some(idx) = self.focused_field_index() else {
@@ -454,16 +470,9 @@ impl Modal {
         if opts.is_empty() {
             return;
         }
-        // Order options with current value first so tui-menu highlights it after push().
-        let current = field.value();
-        let mut children: Vec<MenuItem<&'static str>> =
-            opts.iter().map(|&o| MenuItem::item(o, o)).collect();
-        if let Some(pos) = children.iter().position(|m| m.data == Some(current))
-            && pos != 0
-        {
-            let item = children.remove(pos);
-            children.insert(0, item);
-        }
+        let ordered = Self::dropdown_options_current_first(opts, field.value());
+        let children: Vec<MenuItem<&'static str>> =
+            ordered.iter().map(|&o| MenuItem::item(o, o)).collect();
         let mut state = MenuState::new(vec![MenuItem::group("", children)]);
         state.activate();
         let _ = state.push();
@@ -862,6 +871,13 @@ impl Modal {
                     {
                         field.set_value(value);
                     }
+                    // CA Cert appears/disappears under TLS; keep nav on the TLS row.
+                    if self.dropdown_open == Some(TLS_FIELD) {
+                        self.current_field = TLS_FIELD;
+                        for (i, f) in self.fields.iter_mut().enumerate() {
+                            f.set_focus(i == TLS_FIELD);
+                        }
+                    }
                 }
                 self.close_dropdown(false);
                 ModalAction::None
@@ -1120,7 +1136,7 @@ impl Modal {
             .and_then(|s| s.highlight())
             .and_then(|m| m.data);
 
-        let mut overlay: Option<(Rect, &[&'static str], usize)> = None;
+        let mut overlay: Option<(Rect, Vec<&'static str>, usize)> = None;
         let mut visible_index = 0;
 
         for (i, field) in self.fields.iter().enumerate() {
@@ -1134,13 +1150,15 @@ impl Modal {
 
             if is_dropdown_open {
                 let opts = field.options.as_deref().unwrap_or(&[]);
+                let ordered =
+                    Self::dropdown_options_current_first(opts, field.value());
                 let hi = highlighted_value
-                    .and_then(|v| opts.iter().position(|o| *o == v))
+                    .and_then(|v| ordered.iter().position(|o| *o == v))
                     .unwrap_or(0)
-                    .min(opts.len().saturating_sub(1));
+                    .min(ordered.len().saturating_sub(1));
                 Self::render_trigger_row(row_area, buf, field, true);
-                if !opts.is_empty() {
-                    overlay = Some((row_area, opts, hi));
+                if !ordered.is_empty() {
+                    overlay = Some((row_area, ordered, hi));
                 }
             } else if field.is_dropdown() {
                 // Dropdown: render value with arrow as Paragraph
@@ -1208,7 +1226,7 @@ impl Modal {
             Self::render_dropdown_overlay(
                 buf,
                 trigger_rect,
-                options,
+                &options,
                 highlighted_index,
             );
         }
@@ -2261,5 +2279,21 @@ mod tls_form_tests {
         modal.fields[super::TLS_FIELD].set_value("disable");
         assert!(modal.is_ca_field_hidden());
         assert_eq!(modal.visible_fields_count(), 9);
+    }
+
+    #[test]
+    fn dropdown_order_matches_menu_and_overlay() {
+        let opts = ["disable", "prefer", "require", "verify-full"];
+        assert_eq!(
+            Modal::dropdown_options_current_first(&opts, "require"),
+            vec!["require", "disable", "prefer", "verify-full"]
+        );
+        assert_eq!(
+            Modal::dropdown_options_current_first(&opts, "disable"),
+            vec!["disable", "prefer", "require", "verify-full"]
+        );
+        // After picking require, disable is one Down away in both menu and overlay.
+        let ordered = Modal::dropdown_options_current_first(&opts, "require");
+        assert_eq!(ordered[1], "disable");
     }
 }
