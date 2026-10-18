@@ -1,5 +1,7 @@
+use std::path::PathBuf;
+
 use mysql_async::{
-    Conn, OptsBuilder, Row, Value,
+    Conn, OptsBuilder, Row, SslOpts, Value,
     consts::{ColumnFlags, ColumnType},
     prelude::Queryable,
 };
@@ -7,6 +9,7 @@ use mysql_async::{
 use crate::db::{
     Column, Database, DatabaseInfo, DbRowId, Schema, Table, TableData,
     TableDataPage, TableRow, should_omit_for_insert_default,
+    tls::{TlsConfig, TlsMode},
 };
 
 /// Databases hidden from the database list (server internals).
@@ -105,6 +108,7 @@ pub struct Mysql {
     /// Empty = no default database (server-level connection).
     pub database: String,
     pub password: String,
+    pub tls: TlsConfig,
 }
 
 impl TableData for Mysql {
@@ -138,7 +142,7 @@ impl Mysql {
             .as_deref()
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(3306);
-        let opts = OptsBuilder::default()
+        let base = OptsBuilder::default()
             .ip_or_hostname(self.host.as_deref().unwrap_or("localhost"))
             .tcp_port(port)
             .user(Some(&self.user))
@@ -146,7 +150,27 @@ impl Mysql {
             // Report matched (not just changed) rows so a no-op edit isn't "0 rows".
             .client_found_rows(true)
             .db_name((!self.database.is_empty()).then_some(&self.database));
-        Ok(Conn::new(opts).await?)
+        self.tls.check_valid()?;
+        let mode = self.tls.mode;
+        if mode == TlsMode::Disable {
+            return Ok(Conn::new(base).await?);
+        }
+        let mut ssl = SslOpts::default();
+        if let Some(ca) = &self.tls.ca_path {
+            ssl = ssl.with_root_certs(vec![PathBuf::from(ca).into()]);
+        }
+        if mode != TlsMode::VerifyFull {
+            ssl = ssl
+                .with_danger_accept_invalid_certs(true)
+                .with_danger_skip_domain_validation(true);
+        }
+        match Conn::new(base.clone().ssl_opts(ssl)).await {
+            // `prefer`: retry in plain only when the server lacks TLS, never on auth/network errors.
+            Err(mysql_async::Error::Driver(
+                mysql_async::DriverError::NoClientSslFlagFromServer,
+            )) if mode == TlsMode::Prefer => Ok(Conn::new(base).await?),
+            r => Ok(r?),
+        }
     }
 
     /// Build a `WHERE` clause (and its params) from primary-key pairs.
@@ -498,6 +522,7 @@ mod tests {
             user: "root".into(),
             database: database.into(),
             password: "d7s_password".into(),
+            tls: crate::db::tls::TlsConfig::default(),
         }
     }
 

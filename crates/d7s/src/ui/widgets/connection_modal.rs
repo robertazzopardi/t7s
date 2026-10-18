@@ -30,7 +30,9 @@ use crate::db::{
     connection::{
         Connection, ConnectionType, build_server_url, default_database,
         default_port, parse_connection_string, parse_server_url,
+        with_tls_query,
     },
+    tls::TlsConfig,
 };
 
 // Modal dimension constants
@@ -104,6 +106,10 @@ fn step1_connection_type(index: usize) -> ConnectionType {
 
 /// Index of the Database field in the Postgres/MySQL forms.
 const DATABASE_FIELD: usize = 4;
+/// TLS mode dropdown and optional CA certificate path, right after Database.
+const TLS_FIELD: usize = 5;
+const CA_FIELD: usize = 6;
+const TLS_MODES: [&str; 4] = ["disable", "prefer", "require", "verify-full"];
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct PasswordStorageTypeError;
@@ -289,6 +295,14 @@ impl Modal {
                 user_f.set_value(user);
                 let mut database_f = ModalField::new("Database");
                 database_f.set_value(database);
+                let tls = TlsConfig::from_url(
+                    prefilled.as_deref().unwrap_or_default(),
+                );
+                let mut tls_f = ModalField::new("TLS");
+                tls_f.set_options(TLS_MODES.to_vec());
+                tls_f.set_value(tls.mode.label());
+                let mut ca_f = ModalField::new("CA Cert");
+                ca_f.set_value(tls.ca_path.unwrap_or_default());
                 let mut env = ModalField::new("Environment");
                 env.set_options(vec!["dev", "staging", "prod"]);
                 env.set_value("dev");
@@ -297,8 +311,8 @@ impl Modal {
                 let mut password = ModalField::new("Password");
                 password.set_masked();
                 self.fields = vec![
-                    name, host_f, port_f, user_f, database_f, env, metadata,
-                    password,
+                    name, host_f, port_f, user_f, database_f, tls_f, ca_f, env,
+                    metadata, password,
                 ];
             }
             ConnectionType::Sqlite => {
@@ -382,6 +396,12 @@ impl Modal {
                 user_f.set_value(user);
                 let mut database_f = ModalField::new("Database");
                 database_f.set_value(database);
+                let tls = TlsConfig::from_url(&connection.url);
+                let mut tls_f = ModalField::new("TLS");
+                tls_f.set_options(TLS_MODES.to_vec());
+                tls_f.set_value(tls.mode.label());
+                let mut ca_f = ModalField::new("CA Cert");
+                ca_f.set_value(tls.ca_path.unwrap_or_default());
                 let mut env = ModalField::new("Environment");
                 env.set_options(vec!["dev", "staging", "prod"]);
                 env.set_value(connection.environment.to_string());
@@ -392,8 +412,8 @@ impl Modal {
                 password
                     .set_value(connection.password.clone().unwrap_or_default());
                 self.fields = vec![
-                    name, host_f, port_f, user_f, database_f, env, metadata,
-                    password,
+                    name, host_f, port_f, user_f, database_f, tls_f, ca_f, env,
+                    metadata, password,
                 ];
             }
             ConnectionType::Sqlite => {
@@ -420,12 +440,27 @@ impl Modal {
         self.is_open = false;
     }
 
+    /// tui-menu `push()` highlights the first child — put `current` first so it starts selected.
+    /// Overlay rendering must use this same order or Up/Down and Enter disagree with what you see.
+    fn dropdown_options_current_first(
+        opts: &[&'static str],
+        current: &str,
+    ) -> Vec<&'static str> {
+        let mut ordered = opts.to_vec();
+        if let Some(pos) = ordered.iter().position(|o| *o == current)
+            && pos != 0
+        {
+            let item = ordered.remove(pos);
+            ordered.insert(0, item);
+        }
+        ordered
+    }
+
     /// Build and open the tui-menu dropdown for the current field if it is a dropdown field.
     fn open_dropdown_if_focused(&mut self) {
-        if self.current_field >= self.visible_fields_count() {
+        let Some(idx) = self.focused_field_index() else {
             return;
-        }
-        let idx = self.current_field;
+        };
         let Some(field) = self.fields.get(idx) else {
             return;
         };
@@ -435,16 +470,9 @@ impl Modal {
         if opts.is_empty() {
             return;
         }
-        // Order options with current value first so tui-menu highlights it after push().
-        let current = field.value();
-        let mut children: Vec<MenuItem<&'static str>> =
-            opts.iter().map(|&o| MenuItem::item(o, o)).collect();
-        if let Some(pos) = children.iter().position(|m| m.data == Some(current))
-            && pos != 0
-        {
-            let item = children.remove(pos);
-            children.insert(0, item);
-        }
+        let ordered = Self::dropdown_options_current_first(opts, field.value());
+        let children: Vec<MenuItem<&'static str>> =
+            ordered.iter().map(|&o| MenuItem::item(o, o)).collect();
         let mut state = MenuState::new(vec![MenuItem::group("", children)]);
         state.activate();
         let _ = state.push();
@@ -504,53 +532,31 @@ impl Modal {
     pub fn next_field(&mut self) {
         let total = self.total_items();
         if self.current_field < total - 1 {
-            // Clear current focus
-            if self.current_field < self.visible_fields_count() {
-                let logical_index = self.current_field;
-                if logical_index < self.fields.len() {
-                    self.fields[logical_index].set_focus(false);
-                }
+            if let Some(i) = self.focused_field_index() {
+                self.fields[i].set_focus(false);
             }
-
             self.current_field += 1;
-
-            // Set focus on new item
-            if self.current_field < self.visible_fields_count() {
-                let logical_index = self.current_field;
-                if logical_index < self.fields.len() {
-                    self.fields[logical_index].set_focus(true);
-                }
+            if let Some(i) = self.focused_field_index() {
+                self.fields[i].set_focus(true);
             }
         }
     }
 
     pub fn prev_field(&mut self) {
         if self.current_field > 0 {
-            // Clear current focus
-            if self.current_field < self.visible_fields_count() {
-                let logical_index = self.current_field;
-                if logical_index < self.fields.len() {
-                    self.fields[logical_index].set_focus(false);
-                }
+            if let Some(i) = self.focused_field_index() {
+                self.fields[i].set_focus(false);
             }
-
             self.current_field -= 1;
-
-            // Set focus on new item
-            if self.current_field < self.visible_fields_count() {
-                let logical_index = self.current_field;
-                if logical_index < self.fields.len() {
-                    self.fields[logical_index].set_focus(true);
-                }
+            if let Some(i) = self.focused_field_index() {
+                self.fields[i].set_focus(true);
             }
         }
     }
 
     fn forward_key_to_field(&mut self, key: KeyEvent) {
-        if self.current_field < self.visible_fields_count()
-            && let Some(field) = self.fields.get_mut(self.current_field)
-        {
-            field.input_key(key);
+        if let Some(i) = self.focused_field_index() {
+            self.fields[i].input_key(key);
         }
     }
 
@@ -569,7 +575,7 @@ impl Modal {
         };
 
         let (environment_index, metadata_index) = match connection_type {
-            ConnectionType::Postgres | ConnectionType::Mysql => (5, 6),
+            ConnectionType::Postgres | ConnectionType::Mysql => (7, 8),
             ConnectionType::Sqlite => (2, 3),
         };
         let environment = self
@@ -614,13 +620,23 @@ impl Modal {
                     || default_database(connection_type).to_string(),
                     |f| f.value().to_string(),
                 );
-                build_server_url(
+                let url = build_server_url(
                     connection_type,
                     &host,
                     &port,
                     &user,
                     &database,
-                )
+                );
+                let mode = self
+                    .fields
+                    .get(TLS_FIELD)
+                    .map_or("disable", |f| f.value().trim());
+                let ca = if self.is_ca_field_hidden() {
+                    ""
+                } else {
+                    self.fields.get(CA_FIELD).map_or("", |f| f.value().trim())
+                };
+                with_tls_query(connection_type, &url, mode, ca)
             }
             ConnectionType::Sqlite => self
                 .fields
@@ -653,14 +669,15 @@ impl Modal {
         } else {
             self.fields.len()
         };
+        let is_server = self.connection_type != Some(ConnectionType::Sqlite);
         let optional_db = (self.connection_type == Some(ConnectionType::Mysql))
             .then_some(DATABASE_FIELD);
-        !self
-            .fields
-            .iter()
-            .take(end)
-            .enumerate()
-            .any(|(i, f)| Some(i) != optional_db && f.value().trim().is_empty())
+        let optional_ca = is_server.then_some(CA_FIELD);
+        !self.fields.iter().take(end).enumerate().any(|(i, f)| {
+            Some(i) != optional_db
+                && Some(i) != optional_ca
+                && f.value().trim().is_empty()
+        })
     }
 
     /// Handle key events for UI navigation only
@@ -729,8 +746,7 @@ impl Modal {
                     } else {
                         ModalAction::None
                     }
-                } else if self.current_field < self.visible_fields_count() {
-                    let idx = self.current_field;
+                } else if let Some(idx) = self.focused_field_index() {
                     if self.fields.get(idx).is_some_and(ModalField::is_dropdown)
                     {
                         self.open_dropdown_if_focused();
@@ -855,6 +871,13 @@ impl Modal {
                     {
                         field.set_value(value);
                     }
+                    // CA Cert appears/disappears under TLS; keep nav on the TLS row.
+                    if self.dropdown_open == Some(TLS_FIELD) {
+                        self.current_field = TLS_FIELD;
+                        for (i, f) in self.fields.iter_mut().enumerate() {
+                            f.set_focus(i == TLS_FIELD);
+                        }
+                    }
                 }
                 self.close_dropdown(false);
                 ModalAction::None
@@ -874,8 +897,8 @@ impl Modal {
         if self.menu_state.is_some() {
             return;
         }
-        if self.current_field < self.visible_fields_count()
-            && let Some(field) = self.fields.get_mut(self.current_field)
+        if let Some(i) = self.focused_field_index()
+            && let Some(field) = self.fields.get_mut(i)
             && field.options.is_none()
         {
             field.input.insert_str(text);
@@ -1024,12 +1047,12 @@ impl Modal {
         );
     }
 
-    /// Fixed height for fields section; dropdown is drawn as overlay and does not expand layout.
+    /// Height for fields section; dropdown is drawn as overlay and does not expand layout.
     fn fields_section_height(&self) -> u16 {
         let rows = u16::try_from(self.visible_fields_count())
             .unwrap_or(u16::MAX)
             + u16::from(self.is_password_storage_row_visible());
-        (rows + 2).min(9) // rows + padding, cap for modal
+        rows + 2 // rows + padding (no fixed cap — TLS/CA fields need the space)
     }
 }
 
@@ -1050,18 +1073,52 @@ impl Modal {
             || self.is_sqlite()
     }
 
+    /// CA Cert is only meaningful when TLS is not `disable`.
+    fn is_ca_field_hidden(&self) -> bool {
+        match self.connection_type {
+            Some(ConnectionType::Postgres | ConnectionType::Mysql) => self
+                .fields
+                .get(TLS_FIELD)
+                .is_none_or(|f| f.value() == "disable"),
+            _ => true,
+        }
+    }
+
+    fn is_field_hidden(&self, index: usize) -> bool {
+        (index == CA_FIELD && self.is_ca_field_hidden())
+            || (index == self.password_field_index()
+                && self.is_password_field_hidden())
+    }
+
+    /// Nav index → `fields` index, skipping hidden rows.
+    fn visible_to_field(&self, visible: usize) -> Option<usize> {
+        self.fields
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| !self.is_field_hidden(i))
+            .nth(visible)
+            .map(|(i, _)| i)
+    }
+
+    /// `current_field` when it points at a form field (not storage/buttons).
+    fn focused_field_index(&self) -> Option<usize> {
+        if self.current_field < self.visible_fields_count() {
+            self.visible_to_field(self.current_field)
+        } else {
+            None
+        }
+    }
+
     /// Show password storage row only for Postgres (`SQLite` has no passwords).
     fn is_password_storage_row_visible(&self) -> bool {
         !self.is_sqlite()
     }
 
-    /// Get the number of visible fields (excluding password if hidden)
+    /// Visible form fields (password / CA Cert may be omitted).
     fn visible_fields_count(&self) -> usize {
-        if self.is_password_field_hidden() {
-            self.fields.len() - 1
-        } else {
-            self.fields.len()
-        }
+        (0..self.fields.len())
+            .filter(|&i| !self.is_field_hidden(i))
+            .count()
     }
 
     fn render_fields(&self, area: Rect, buf: &mut Buffer) {
@@ -1079,13 +1136,11 @@ impl Modal {
             .and_then(|s| s.highlight())
             .and_then(|m| m.data);
 
-        let mut overlay: Option<(Rect, &[&'static str], usize)> = None;
+        let mut overlay: Option<(Rect, Vec<&'static str>, usize)> = None;
         let mut visible_index = 0;
 
         for (i, field) in self.fields.iter().enumerate() {
-            if self.is_password_field_hidden()
-                && i == self.password_field_index()
-            {
+            if self.is_field_hidden(i) {
                 continue;
             }
 
@@ -1095,13 +1150,15 @@ impl Modal {
 
             if is_dropdown_open {
                 let opts = field.options.as_deref().unwrap_or(&[]);
+                let ordered =
+                    Self::dropdown_options_current_first(opts, field.value());
                 let hi = highlighted_value
-                    .and_then(|v| opts.iter().position(|o| *o == v))
+                    .and_then(|v| ordered.iter().position(|o| *o == v))
                     .unwrap_or(0)
-                    .min(opts.len().saturating_sub(1));
+                    .min(ordered.len().saturating_sub(1));
                 Self::render_trigger_row(row_area, buf, field, true);
-                if !opts.is_empty() {
-                    overlay = Some((row_area, opts, hi));
+                if !ordered.is_empty() {
+                    overlay = Some((row_area, ordered, hi));
                 }
             } else if field.is_dropdown() {
                 // Dropdown: render value with arrow as Paragraph
@@ -1169,7 +1226,7 @@ impl Modal {
             Self::render_dropdown_overlay(
                 buf,
                 trigger_rect,
-                options,
+                &options,
                 highlighted_index,
             );
         }
@@ -2146,5 +2203,97 @@ impl ModalManager {
             }
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tls_form_tests {
+    use super::Modal;
+    use crate::db::{
+        connection::{Connection, ConnectionType},
+        tls::TlsConfig,
+    };
+
+    #[test]
+    fn tls_fields_round_trip_through_url() {
+        for (t, key) in [
+            (ConnectionType::Postgres, "sslmode"),
+            (ConnectionType::Mysql, "ssl-mode"),
+        ] {
+            let ca = "/tmp/my certs/a&b=c.pem";
+            let conn = Connection {
+                name: "n".into(),
+                r#type: t,
+                url: super::with_tls_query(
+                    t,
+                    &format!("{t}://u@h:1/db"),
+                    "verify-full",
+                    ca,
+                ),
+                password: Some("p".into()),
+                ..Connection::default()
+            };
+            assert!(conn.url.contains(&format!("{key}=verify-full")));
+
+            let mut modal = Modal::default();
+            modal.open_for_edit(&conn);
+            let saved = modal.get_connection().expect("valid form");
+            let tls = TlsConfig::from_url(&saved.url);
+            assert_eq!(tls.mode.label(), "verify-full");
+            assert_eq!(tls.ca_path.as_deref(), Some(ca));
+            // Same host/port/user/db survive the trip.
+            assert!(saved.url.starts_with(&format!("{t}://u@h:1/db?")));
+        }
+    }
+
+    #[test]
+    fn disable_and_empty_ca_add_no_query() {
+        let mut modal = Modal::default();
+        modal.open_for_edit(&Connection {
+            name: "n".into(),
+            url: "postgres://u@h:1/db".into(),
+            password: Some("p".into()),
+            ..Connection::default()
+        });
+        let saved = modal.get_connection().expect("valid form");
+        assert_eq!(saved.url, "postgres://u@h:1/db");
+    }
+
+    #[test]
+    fn ca_field_hidden_when_tls_disabled() {
+        let mut modal = Modal::default();
+        modal.open_for_edit(&Connection {
+            name: "n".into(),
+            url: "postgres://u@h:1/db".into(),
+            password: Some("p".into()),
+            ..Connection::default()
+        });
+        assert!(modal.is_ca_field_hidden());
+        // name..tls + env + metadata + password = 9 (no CA)
+        assert_eq!(modal.visible_fields_count(), 9);
+
+        modal.fields[super::TLS_FIELD].set_value("require");
+        assert!(!modal.is_ca_field_hidden());
+        assert_eq!(modal.visible_fields_count(), 10);
+
+        modal.fields[super::TLS_FIELD].set_value("disable");
+        assert!(modal.is_ca_field_hidden());
+        assert_eq!(modal.visible_fields_count(), 9);
+    }
+
+    #[test]
+    fn dropdown_order_matches_menu_and_overlay() {
+        let opts = ["disable", "prefer", "require", "verify-full"];
+        assert_eq!(
+            Modal::dropdown_options_current_first(&opts, "require"),
+            vec!["require", "disable", "prefer", "verify-full"]
+        );
+        assert_eq!(
+            Modal::dropdown_options_current_first(&opts, "disable"),
+            vec!["disable", "prefer", "require", "verify-full"]
+        );
+        // After picking require, disable is one Down away in both menu and overlay.
+        let ordered = Modal::dropdown_options_current_first(&opts, "require");
+        assert_eq!(ordered[1], "disable");
     }
 }

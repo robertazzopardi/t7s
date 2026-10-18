@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     db::{
         Database, TableData, mysql::Mysql, postgres::Postgres, sqlite::Sqlite,
+        tls::TlsConfig,
     },
     ui::theme,
 };
@@ -149,11 +150,12 @@ impl Display for Connection {
 
                 write!(
                     f,
-                    " Name: {}\n Host: {}\n Port: {}\n User: {}\n Database: {}\n Schema: {}\n Table: {}",
+                    " Name: {}\n Host: {}\n Port: {}\n User: {}\n TLS: {}\n Database: {}\n Schema: {}\n Table: {}",
                     self.name,
                     host,
                     port,
                     user,
+                    TlsConfig::from_url(&self.url).mode.label(),
                     database,
                     self.schema.clone().unwrap_or_default(),
                     self.table.clone().unwrap_or_default(),
@@ -358,6 +360,7 @@ impl Connection {
             user,
             database,
             password: self.password.clone().unwrap_or_default(),
+            tls: TlsConfig::from_url(&self.url),
         })
     }
 
@@ -384,6 +387,7 @@ impl Connection {
             user,
             database,
             password: self.password.clone().unwrap_or_default(),
+            tls: TlsConfig::from_url(&self.url),
         })
     }
 
@@ -460,6 +464,10 @@ impl Connection {
                     .unwrap_or(&database_from_url);
                 lines.push(format!("Host: {host}"));
                 lines.push(format!("User: {user}"));
+                lines.push(format!(
+                    "TLS: {}",
+                    TlsConfig::from_url(&self.url).mode.label()
+                ));
                 lines.push(format!("Database: {database}"));
                 if let Some(schema) =
                     self.schema.as_deref().filter(|s| !s.is_empty())
@@ -533,6 +541,30 @@ pub fn build_server_url(
         format!("{user}@")
     };
     format!("{connection_type}://{auth}{host}:{port}/{database}")
+}
+
+/// Append `sslmode=` (Postgres) / `ssl-mode=` (MySQL) and `sslrootcert=` when TLS is enabled.
+#[must_use]
+pub fn with_tls_query(
+    connection_type: ConnectionType,
+    url: &str,
+    mode: &str,
+    ca_path: &str,
+) -> String {
+    if mode.is_empty() || mode == "disable" {
+        return url.to_string();
+    }
+    let key = if connection_type == ConnectionType::Mysql {
+        "ssl-mode"
+    } else {
+        "sslmode"
+    };
+    let mut q = url::form_urlencoded::Serializer::new(String::new());
+    q.append_pair(key, mode);
+    if !ca_path.is_empty() {
+        q.append_pair("sslrootcert", ca_path);
+    }
+    format!("{url}?{}", q.finish())
 }
 
 /// Default TCP port for a server-based connection type.
