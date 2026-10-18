@@ -9,3 +9,5 @@ crates/d7s/docker/certs/
 .claude/
 docs/superpowers/
 .superpowers/
+
+.worktrees/
