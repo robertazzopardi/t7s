@@ -2,7 +2,9 @@
 //! `sslmode=` (Postgres) / `ssl-mode=` (MySQL) and `sslrootcert=` (CA bundle path).
 
 use std::{
+    fmt::{Display, Formatter},
     io,
+    str::FromStr,
     sync::{Arc, OnceLock},
 };
 
@@ -31,26 +33,29 @@ pub enum TlsMode {
     VerifyFull,
 }
 
-impl TlsMode {
-    fn parse(s: &str) -> Option<Self> {
-        Some(match s.to_lowercase().replace('_', "-").as_str() {
+impl Display for TlsMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Disable => "disable",
+            Self::Prefer => "prefer",
+            Self::Require => "require",
+            Self::VerifyFull => "verify-full",
+        })
+    }
+}
+
+impl FromStr for TlsMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().replace('_', "-").as_str() {
             "disable" | "disabled" => Self::Disable,
             "prefer" | "preferred" => Self::Prefer,
             "require" | "required" => Self::Require,
             // rustls always checks the host name, so verify-ca is as strict as verify-full.
             "verify-ca" | "verify-full" | "verify-identity" => Self::VerifyFull,
-            _ => return None,
+            _ => return Err(()),
         })
-    }
-
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Disable => "disable",
-            Self::Prefer => "prefer",
-            Self::Require => "require",
-            Self::VerifyFull => "verify-full",
-        }
     }
 }
 
@@ -73,7 +78,7 @@ impl TlsConfig {
         for (k, v) in url.query_pairs() {
             match k.as_ref() {
                 "sslmode" | "ssl-mode" | "ssl_mode" => {
-                    if let Some(mode) = TlsMode::parse(&v) {
+                    if let Ok(mode) = v.parse::<TlsMode>() {
                         cfg.mode = mode;
                         cfg.invalid_mode = None;
                     } else {

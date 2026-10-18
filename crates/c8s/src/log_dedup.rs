@@ -1,7 +1,10 @@
 //! Collapse consecutive duplicate / near-duplicate log lines into one row
 //! with a `×N` suffix.
 
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    fmt::{Display, Formatter},
+};
 
 use k9tui::theme;
 use ratatui::text::{Line, Span};
@@ -25,14 +28,15 @@ impl DedupMode {
             Self::Similar => Self::Off,
         }
     }
+}
 
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
+impl Display for DedupMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
             Self::Off => "off",
             Self::Exact => "exact",
             Self::Similar => "similar",
-        }
+        })
     }
 }
 

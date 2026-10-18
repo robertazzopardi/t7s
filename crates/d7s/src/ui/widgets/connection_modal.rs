@@ -300,7 +300,7 @@ impl Modal {
                 );
                 let mut tls_f = ModalField::new("TLS");
                 tls_f.set_options(TLS_MODES.to_vec());
-                tls_f.set_value(tls.mode.label());
+                tls_f.set_value(tls.mode.to_string());
                 let mut ca_f = ModalField::new("CA Cert");
                 ca_f.set_value(tls.ca_path.unwrap_or_default());
                 let mut env = ModalField::new("Environment");
@@ -399,7 +399,7 @@ impl Modal {
                 let tls = TlsConfig::from_url(&connection.url);
                 let mut tls_f = ModalField::new("TLS");
                 tls_f.set_options(TLS_MODES.to_vec());
-                tls_f.set_value(tls.mode.label());
+                tls_f.set_value(tls.mode.to_string());
                 let mut ca_f = ModalField::new("CA Cert");
                 ca_f.set_value(tls.ca_path.unwrap_or_default());
                 let mut env = ModalField::new("Environment");
@@ -2239,7 +2239,7 @@ mod tls_form_tests {
             modal.open_for_edit(&conn);
             let saved = modal.get_connection().expect("valid form");
             let tls = TlsConfig::from_url(&saved.url);
-            assert_eq!(tls.mode.label(), "verify-full");
+            assert_eq!(tls.mode.to_string(), "verify-full");
             assert_eq!(tls.ca_path.as_deref(), Some(ca));
             // Same host/port/user/db survive the trip.
             assert!(saved.url.starts_with(&format!("{t}://u@h:1/db?")));

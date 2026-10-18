@@ -126,14 +126,13 @@ pub enum ConnectionStatus {
     Down,
 }
 
-impl ConnectionStatus {
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
+impl Display for ConnectionStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
             Self::Unknown => "",
             Self::Up => "● up",
             Self::Down => "● down",
-        }
+        })
     }
 }
 
@@ -155,7 +154,7 @@ impl Display for Connection {
                     host,
                     port,
                     user,
-                    TlsConfig::from_url(&self.url).mode.label(),
+                    TlsConfig::from_url(&self.url).mode,
                     database,
                     self.schema.clone().unwrap_or_default(),
                     self.table.clone().unwrap_or_default(),
@@ -189,7 +188,7 @@ impl TableData for Connection {
             ),
             self.environment.to_string(),
             self.auth_badge().to_string(),
-            self.status.label().to_string(),
+            self.status.to_string(),
         ]
     }
 
@@ -318,9 +317,9 @@ mod tests {
 
     #[test]
     fn status_labels_and_column() {
-        assert_eq!(ConnectionStatus::Unknown.label(), "");
-        assert_eq!(ConnectionStatus::Up.label(), "● up");
-        assert_eq!(ConnectionStatus::Down.label(), "● down");
+        assert_eq!(ConnectionStatus::Unknown.to_string(), "");
+        assert_eq!(ConnectionStatus::Up.to_string(), "● up");
+        assert_eq!(ConnectionStatus::Down.to_string(), "● down");
 
         let c = Connection {
             status: ConnectionStatus::Down,
@@ -466,7 +465,7 @@ impl Connection {
                 lines.push(format!("User: {user}"));
                 lines.push(format!(
                     "TLS: {}",
-                    TlsConfig::from_url(&self.url).mode.label()
+                    TlsConfig::from_url(&self.url).mode
                 ));
                 lines.push(format!("Database: {database}"));
                 if let Some(schema) =

@@ -8,6 +8,7 @@
 use std::{
     cell::RefCell,
     collections::VecDeque,
+    fmt::{Display, Formatter},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -32,14 +33,14 @@ pub enum QueryOrigin {
     Metadata,
 }
 
-impl QueryOrigin {
-    const fn label(self) -> &'static str {
-        match self {
+impl Display for QueryOrigin {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
             Self::User => "user",
             Self::Watch => "watch",
             Self::Activity => "activity",
             Self::Metadata => "metadata",
-        }
+        })
     }
 }
 
@@ -70,7 +71,7 @@ impl TableData for QueryLogEntry {
         };
         vec![
             format!("{:02}:{:02}:{:02}", day / 3600, day % 3600 / 60, day % 60),
-            self.origin.label().to_string(),
+            self.origin.to_string(),
             format!("{}ms", self.duration.as_millis()),
             outcome,
             clip_chars(&one_line(&self.sql), SQL_DISPLAY_CHARS),

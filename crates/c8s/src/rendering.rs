@@ -169,7 +169,7 @@ impl App {
                 *q = Hotkey::new('q', "clear filter");
             }
         }
-        let label = self.view.label();
+        let label = self.view.to_string();
         let n = match self.view {
             ResourceKind::Containers => self.containers.model.items.len(),
             ResourceKind::Images => self.images.model.items.len(),
@@ -342,7 +342,7 @@ impl App {
         let filtered = filter_and_highlight(&folded, &self.log_filter);
         self.log_view_len = filtered.len();
 
-        let dedup = self.log_dedup.label();
+        let dedup = self.log_dedup;
         let title = if !self.log_filter.is_empty() {
             format!(
                 " Logs: {name} ({} matches, dedup: {dedup}) ",
