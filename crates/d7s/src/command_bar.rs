@@ -68,11 +68,26 @@ impl App<'_> {
             })
     }
 
+    fn command_schema_names(&self) -> Vec<String> {
+        if self.database_explorer.connection.r#type == ConnectionType::Sqlite {
+            return Vec::new();
+        }
+        self.database_explorer
+            .schemas
+            .as_ref()
+            .map_or_else(Vec::new, |s| {
+                s.original.iter().map(|s| s.name.clone()).collect()
+            })
+    }
+
     /// Dimmed completion shown after the typed text (Tab accepts).
     pub(crate) fn command_suggestion(&self) -> Option<String> {
-        let names = self.command_table_names();
-        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        suggest(&self.command_text(), &refs).filter(|s| {
+        let tables = self.command_table_names();
+        let schemas = self.command_schema_names();
+        let table_refs: Vec<&str> = tables.iter().map(String::as_str).collect();
+        let schema_refs: Vec<&str> =
+            schemas.iter().map(String::as_str).collect();
+        suggest(&self.command_text(), &table_refs, &schema_refs).filter(|s| {
             // `activity` is Postgres-only: don't advertise it elsewhere.
             s != "activity"
                 || self.database_explorer.connection.r#type.has_activity_view()
@@ -127,13 +142,18 @@ impl App<'_> {
 
     /// Resolve and run a command line.
     pub(crate) async fn execute_command(&mut self, text: &str) -> Result<()> {
-        let names = self.command_table_names();
-        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let cmd = resolve(text, &refs);
+        let tables = self.command_table_names();
+        let schemas = self.command_schema_names();
+        let table_refs: Vec<&str> = tables.iter().map(String::as_str).collect();
+        let schema_refs: Vec<&str> =
+            schemas.iter().map(String::as_str).collect();
+        let cmd = resolve(text, &table_refs, &schema_refs);
         let changes_view = matches!(
             cmd,
             Command::Table(_)
                 | Command::NoTable(_)
+                | Command::Schema(_)
+                | Command::NoSchema(_)
                 | Command::Row(_)
                 | Command::Verb(
                     Verb::Connections
@@ -156,10 +176,18 @@ impl App<'_> {
             self.set_status(DRAFT_PENDING);
             return Ok(());
         }
+        let sqlite =
+            self.database_explorer.connection.r#type == ConnectionType::Sqlite;
         match cmd {
             Command::Empty => {}
             Command::NoTable(x) => {
                 self.set_status(format!("No table matching '{x}'"));
+            }
+            Command::Schema(_) | Command::NoSchema(_) if sqlite => {
+                self.set_status("SQLite has no schemas.");
+            }
+            Command::NoSchema(x) => {
+                self.set_status(format!("No schema matching '{x}'"));
             }
             Command::Unknown(x) => {
                 self.set_status(format!("Unknown command: {x}"));
@@ -185,6 +213,9 @@ impl App<'_> {
             Command::Verb(v) => self.run_verb(v).await?,
             Command::Table(candidates) => {
                 self.jump_to_table_by_name(&candidates).await?;
+            }
+            Command::Schema(candidates) => {
+                self.jump_to_schema_by_name(&candidates).await?;
             }
         }
         Ok(())

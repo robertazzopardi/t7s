@@ -1,6 +1,6 @@
 # d7s
 
-A TUI database client for PostgreSQL, MySQL/MariaDB and SQLite, built in Rust with [Ratatui](https://ratatui.rs) and inspired by [k9s](https://k9scli.io/).
+Part of [t7s](https://github.com/robertazzopardi/t7s#naming) (terminals). A TUI database client for PostgreSQL, MySQL/MariaDB and SQLite, built in Rust with [Ratatui](https://ratatui.rs) and inspired by [k9s](https://k9scli.io/).
 
 ## Why
 
@@ -12,9 +12,9 @@ This repo is a Cargo workspace with three crates:
 
 - **[`crates/d7s`](https://github.com/robertazzopardi/t7s/tree/main/crates/d7s)** — the database TUI client covered by this README (db/auth/app-state logic and the binary).
 - **[`crates/k9tui`](https://crates.io/crates/k9tui)** — a reusable k9s-style ratatui widget kit (theme, tables, modals, top bar, hotkeys) extracted from `d7s`, with no dependency back on it. See its [README](https://github.com/robertazzopardi/t7s/blob/main/crates/k9tui/README.md).
-- **[`crates/c8s`](https://crates.io/crates/c8s)** — a k9s-style TUI for Docker containers, the second consumer of k9tui's chrome. See its [README](https://github.com/robertazzopardi/t7s/blob/main/crates/c8s/README.md).
+- **[`crates/c8s`](https://crates.io/crates/c8s)** — a k9s-style TUI for Docker containers, the second consumer of the shared UI crate. See its [README](https://github.com/robertazzopardi/t7s/blob/main/crates/c8s/README.md).
 
-d7s and c8s are the shipped apps; k9tui exists so k9s-style TUI apps in this workspace can reuse its chrome. The rest of this README covers d7s specifically.
+d7s and c8s are the shipped apps; k9tui is the shared UI crate so k9s-style TUI apps in this workspace can reuse the same widgets. The rest of this README covers d7s specifically.
 
 ## Features
 
@@ -43,7 +43,7 @@ Requires [vhs](https://github.com/charmbracelet/vhs) and `sqlite3`. Uses an isol
 
 ### crates.io
 
-Requires Rust stable (1.88 or later).
+Requires Rust stable (1.89 or later).
 
 ```sh
 cargo install d7s --locked
@@ -53,7 +53,7 @@ The `d7s` binary will be placed in `$CARGO_HOME/bin` (usually `~/.cargo/bin`), w
 
 ### Building from source
 
-Requires Rust stable (1.88 or later).
+Requires Rust stable (1.89 or later).
 
 ```sh
 cargo build --release --locked
@@ -157,7 +157,7 @@ Paste works in connection/cell/password modals and the search bar (bracketed pas
 | Command | Action |
 |---------|--------|
 | `:connections` / `:conn` | Back to the connection list |
-| `:schemas` | Schema list (Postgres) |
+| `:schemas` / `:schema` | Schema list (Postgres / MySQL) |
 | `:tables` / `:table` | Tables of the current schema |
 | `:columns` / `:cols` | Columns of the current/selected table |
 | `:sql` / `:editor` | SQL editor |
@@ -165,10 +165,11 @@ Paste works in connection/cell/password modals and the search bar (bracketed pas
 | `:activity` | Activity view (Postgres only) |
 | `:help` | Help |
 | `:q` / `:quit` | Quit |
+| `:schema <name>` | Open that schema's tables (exact, then prefix, then substring match; case-insensitive). SQLite: `SQLite has no schemas.` No match: `No schema matching 'x'`; several: best match opens and the status line lists the rest |
 | `:table <name>` | Open that table's data (exact, then prefix, then substring match; case-insensitive; the name may contain spaces). No match: `No table matching 'x'`; several: best match opens and the status line lists the rest |
 | `:123` | Jump to row 123 (table data) |
 
-Unique verb prefixes work (`:sch`); a bare word that is not a verb is an unknown command (tables are only reached via `:table <name>`, so tables named `log`, `act`, etc. are never shadowed). Tab completes verbs, and after `table ` completes the table name. Navigation commands are refused while a draft row is pending.
+Unique verb prefixes work (`:sch`); a bare word that is not a verb is an unknown command (tables are only reached via `:table <name>`, so tables named `log`, `act`, etc. are never shadowed). Tab completes verbs, and after `table ` / `schema ` completes the name. Navigation commands are refused while a draft row is pending.
 
 ### Upgrading from 0.4
 

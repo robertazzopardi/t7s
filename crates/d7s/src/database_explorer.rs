@@ -322,6 +322,29 @@ impl App<'_> {
         Ok(())
     }
 
+    /// `:schema <name>`: open the tables list for the best-matching schema.
+    pub async fn jump_to_schema_by_name(
+        &mut self,
+        candidates: &[String],
+    ) -> Result<()> {
+        let Some(schema_name) = candidates.first() else {
+            return Ok(());
+        };
+        self.load_tables(schema_name).await?;
+        if candidates.len() > 1
+            && self.database_explorer.state
+                == DatabaseExplorerState::Tables(schema_name.clone())
+        {
+            let shown = candidates.iter().take(4).cloned().collect::<Vec<_>>();
+            self.set_status(format!(
+                "{} matches: {}; opened {schema_name}",
+                candidates.len(),
+                shown.join(", ")
+            ));
+        }
+        Ok(())
+    }
+
     async fn fetch_adjacent_table_page(&mut self, next: bool) -> Result<()> {
         if self.discard_table_draft() {
             self.set_status("Draft discarded (page change).");

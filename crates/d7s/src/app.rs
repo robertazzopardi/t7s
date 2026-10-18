@@ -1223,6 +1223,8 @@ mod tests {
         assert!(render_text(&mut app).contains("Unknown command: zzz"));
         run_cmd(&mut app, "schemas").await;
         assert!(render_text(&mut app).contains("SQLite has no schemas"));
+        run_cmd(&mut app, "schema public").await;
+        assert!(render_text(&mut app).contains("SQLite has no schemas"));
         run_cmd(&mut app, "activity").await;
         assert!(render_text(&mut app).contains("Postgres-only"));
         run_cmd(&mut app, "123").await;
