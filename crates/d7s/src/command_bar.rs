@@ -225,7 +225,7 @@ impl App<'_> {
         match verb {
             Verb::Connections => {
                 self.disconnect_from_database();
-                self.refresh_connections();
+                self.refresh_connections().await;
             }
             Verb::Schemas => {
                 if self.database_explorer.connection.r#type

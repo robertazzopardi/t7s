@@ -448,7 +448,7 @@ impl App<'_> {
                     } else if self.has_active_filter() {
                         self.clear_filter();
                     } else {
-                        self.go_back_in_database();
+                        self.go_back_in_database().await;
                     }
                 } else if self.state == AppState::ConnectionList {
                     self.clear_filter();
@@ -648,7 +648,7 @@ impl App<'_> {
                     .get_connection_modal()
                     .is_some_and(|m| m.is_open)
                 {
-                    self.handle_connection_modal_save();
+                    self.handle_connection_modal_save().await;
                 }
             }
             ModalAction::Test => {
@@ -656,7 +656,7 @@ impl App<'_> {
             }
             ModalAction::Cancel => {
                 if self.modal_manager.was_connection_modal_closed() {
-                    self.refresh_connections();
+                    self.refresh_connections().await;
                 }
                 self.pending_row_deletes = None;
             }
@@ -679,7 +679,7 @@ impl App<'_> {
             if let Err(e) = ConnectionService::delete(&connection.name) {
                 self.set_status(format!("Failed to delete connection: {e}"));
             } else {
-                self.refresh_connections();
+                self.refresh_connections().await;
             }
         }
 
@@ -750,7 +750,7 @@ impl App<'_> {
     }
 
     /// Handle connection modal save action
-    fn handle_connection_modal_save(&mut self) {
+    async fn handle_connection_modal_save(&mut self) {
         let Some(modal) = self.modal_manager.get_connection_modal_mut() else {
             return;
         };
@@ -791,12 +791,14 @@ impl App<'_> {
                     let _ = PasswordService::delete_from_keyring(orig_name);
                 }
                 modal.close();
-                self.refresh_connections();
             }
             Err(e) => {
                 modal.test_result = TestResult::Failed(e.to_string());
+                return;
             }
         }
+        // Drop modal borrow before await (status is runtime-only; refresh re-pings).
+        self.refresh_connections().await;
     }
 
     /// Handle connection modal test action
