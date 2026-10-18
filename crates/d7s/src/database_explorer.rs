@@ -738,7 +738,7 @@ impl App<'_> {
     }
 
     /// Go back to previous level in database navigation
-    pub fn go_back_in_database(&mut self) {
+    pub async fn go_back_in_database(&mut self) {
         let explorer_state = self.database_explorer.state.clone();
         let explorer = &mut self.database_explorer;
         let is_sqlite = explorer.connection.r#type == ConnectionType::Sqlite;
@@ -760,7 +760,7 @@ impl App<'_> {
                 // Postgres: Go back to schemas
                 if is_sqlite {
                     self.disconnect_from_database();
-                    self.refresh_connections();
+                    self.refresh_connections().await;
                 } else if explorer.schemas.is_some() {
                     explorer.state = DatabaseExplorerState::Schemas;
                     explorer.connection.schema = None;
@@ -788,7 +788,7 @@ impl App<'_> {
             DatabaseExplorerState::Databases => {
                 // Go back to connection list (disconnect)
                 self.disconnect_from_database();
-                self.refresh_connections();
+                self.refresh_connections().await;
             }
         }
     }

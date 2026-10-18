@@ -155,6 +155,7 @@ impl App<'_> {
     #[allow(clippy::future_not_send)]
     pub async fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
+        self.ping_connections_if_any().await;
         while self.running {
             terminal.draw(|frame| self.render(frame))?;
             self.tick_watch().await;
@@ -267,8 +268,9 @@ impl App<'_> {
         }
     }
 
-    /// Refresh the table data from the database
-    pub(crate) fn refresh_connections(&mut self) {
+    /// Reload saved connections from disk and re-probe health.
+    /// Status is runtime-only, so a reload without a ping would blank the column.
+    pub(crate) async fn refresh_connections(&mut self) {
         if let Ok(connections) = ConnectionService::get_all() {
             self.database_explorer.connections = FilteredData::new(connections);
             // Reapply filter if one is active
@@ -279,6 +281,7 @@ impl App<'_> {
                 self.apply_filter();
             }
         }
+        self.ping_connections_if_any().await;
     }
 
     /// Copy the value under the cursor to the clipboard
@@ -1044,6 +1047,75 @@ mod tests {
         assert!(text.contains("Status"));
         assert!(text.contains("● up"));
         assert_eq!(text.matches("● down").count(), 2);
+        let _ = std::fs::remove_file(&present.path);
+    }
+
+    #[tokio::test]
+    async fn ping_if_any_skips_when_no_connections() {
+        let mut app = App::default();
+        app.ping_connections_if_any().await;
+        assert!(app.database_explorer.connections.original.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ping_if_any_sets_statuses() {
+        let present = temp_sqlite("launch-ping-present");
+        std::fs::write(&present.path, b"").unwrap();
+        let missing = temp_sqlite("launch-ping-missing");
+
+        let mut app = App::default();
+        app.database_explorer.connections = FilteredData::new(vec![
+            sqlite_conn("present", &present.path),
+            sqlite_conn("missing", &missing.path),
+        ]);
+        assert!(
+            app.database_explorer
+                .connections
+                .original
+                .iter()
+                .all(|c| c.status == ConnectionStatus::Unknown)
+        );
+
+        app.ping_connections_if_any().await;
+
+        let statuses: Vec<_> = app
+            .database_explorer
+            .connections
+            .original
+            .iter()
+            .map(|c| c.status)
+            .collect();
+        assert_eq!(
+            statuses,
+            vec![ConnectionStatus::Up, ConnectionStatus::Down]
+        );
+        let _ = std::fs::remove_file(&present.path);
+    }
+
+    #[tokio::test]
+    async fn refresh_wiping_status_is_restored_by_reprobe() {
+        // refresh_connections replaces rows from disk (Unknown status). Simulate
+        // that wipe, then the same reprobe refresh ends with.
+        let present = temp_sqlite("refresh-ping-present");
+        std::fs::write(&present.path, b"").unwrap();
+        let mut app = App::default();
+        app.database_explorer.connections =
+            FilteredData::new(vec![sqlite_conn("present", &present.path)]);
+        app.ping_connections_if_any().await;
+        let status = |app: &App<'_>| {
+            app.database_explorer
+                .connections
+                .original
+                .first()
+                .map(|c| c.status)
+        };
+        assert_eq!(status(&app), Some(ConnectionStatus::Up));
+
+        app.database_explorer.connections =
+            FilteredData::new(vec![sqlite_conn("present", &present.path)]);
+        assert_eq!(status(&app), Some(ConnectionStatus::Unknown));
+        app.ping_connections_if_any().await;
+        assert_eq!(status(&app), Some(ConnectionStatus::Up));
         let _ = std::fs::remove_file(&present.path);
     }
 
