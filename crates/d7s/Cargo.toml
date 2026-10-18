@@ -31,7 +31,6 @@ include = [
 [package.metadata.bundle]
 identifier = "com.robertazzopardi.d7s"
 
-# cargo-binstall: archives are published by .github/workflows/release.yml
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/d7s-v{ version }-{ target }.tar.gz"
 pkg-fmt = "tgz"

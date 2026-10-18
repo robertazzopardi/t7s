@@ -20,7 +20,6 @@ categories = [
     "development-tools",
 ]
 
-# cargo-binstall: archives are published by .github/workflows/release.yml
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/c8s-v{ version }/c8s-v{ version }-{ target }.tar.gz"
 pkg-fmt = "tgz"

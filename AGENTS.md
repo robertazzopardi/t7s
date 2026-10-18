@@ -10,7 +10,7 @@
 
 ## Learned Workspace Facts
 
-- d7s is a Ratatui TUI database client for PostgreSQL and SQLite, inspired by k9s.
+- d7s is a Ratatui TUI database client for PostgreSQL, MySQL/MariaDB, and SQLite, inspired by k9s.
 - Common tasks run through `just`; demos use VHS (`just demo`) with an isolated demo HOME so recordings stay fake-data-only.
 - Large table browsing uses virtual/paginated loading rather than pulling all rows at once.
 - Passwords use the platform keyring (or prompt every time if not saved).

@@ -5,17 +5,10 @@ on:
     paths-ignore:
       - "**/*.md"
       - "docs/**"
-  # push:
-  #   branches:
-  #     - main
-  #     - master
-  #     - develop
 
 env:
   CARGO_TERM_COLOR: always
 
-# ensure that the workflow is only triggered once per PR, subsequent pushes to the PR will cancel
-# and restart the workflow. See https://docs.github.com/en/actions/using-jobs/using-concurrency
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -55,14 +48,10 @@ jobs:
         with:
           args: --workspace --all-features --all-targets -- -D warnings -W clippy::all -W clippy::pedantic -W clippy::nursery -W clippy::cargo -A clippy::multiple_crate_versions
   doc:
-    # run docs generation on nightly rather than stable. This enables features like
-    # https://doc.rust-lang.org/beta/unstable-book/language-features/doc-cfg.html which allows an
-    # API be documented as only available in some specific platforms.
+    # Nightly for docsrs cfg. Skipped on PRs (no push trigger today).
     name: doc
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # dormant: only `pull_request` is wired up above, so this never runs today;
-    # skips PRs so it only fires once the commented-out `push` trigger is enabled.
     if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -113,7 +102,6 @@ jobs:
           install-linux-dbus: "true"
       - name: Install cargo-nextest
         uses: taiki-e/install-action@23d41aa71228a2692ee31bb433f070fd4bdc6661 # nextest
-      # enable this ci template to run regardless of whether the lockfile is checked in or not
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''
         run: cargo generate-lockfile
