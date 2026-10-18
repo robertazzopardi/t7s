@@ -5,15 +5,20 @@
 //! covered without per-caller changes. Only SQL text / labels are stored;
 //! never passwords, connection strings or edited cell values.
 
-use std::{
+use alloc::{collections::VecDeque, sync::Arc};
+use core::{
     cell::RefCell,
-    collections::VecDeque,
-    fmt::{Display, Formatter},
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    error::Error,
+    fmt::{self, Display, Formatter},
+    future::Future,
+    time::Duration,
+};
+use std::{
+    sync::{Mutex, MutexGuard, PoisonError},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use k9tui::widgets::table::TableData;
+use k9tui::{theme::error, widgets::table::TableData};
 use ratatui::style::Style;
 
 use super::{
@@ -34,7 +39,7 @@ pub enum QueryOrigin {
 }
 
 impl Display for QueryOrigin {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::User => "user",
             Self::Watch => "watch",
@@ -92,7 +97,7 @@ impl TableData for QueryLogEntry {
 
     fn cell_style(&self, column: usize) -> Option<Style> {
         if column == 3 && self.outcome.is_err() {
-            return Some(k9tui::theme::error());
+            return Some(error());
         }
         None
     }
@@ -186,9 +191,9 @@ impl LoggedDatabase {
         label: String,
         count: fn(&T) -> usize,
         fut: F,
-    ) -> Result<T, Box<dyn std::error::Error>>
+    ) -> Result<T, Box<dyn Error>>
     where
-        F: std::future::Future<Output = Result<T, Box<dyn std::error::Error>>>,
+        F: Future<Output = Result<T, Box<dyn Error>>>,
     {
         let (at, start) = (SystemTime::now(), Instant::now());
         // Real SQL reported by the backend; fall back to the label.
@@ -227,7 +232,7 @@ impl Database for LoggedDatabase {
     async fn execute_sql(
         &self,
         sql: &str,
-    ) -> Result<Vec<TableRow>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<TableRow>, Box<dyn Error>> {
         self.record(
             self.log.sql_origin(),
             sql.to_string(),
@@ -239,9 +244,7 @@ impl Database for LoggedDatabase {
 
     // The methods below pass a descriptive label that is only shown when the
     // backend reports no SQL via `report_sql`; no values are included.
-    async fn get_schemas(
-        &self,
-    ) -> Result<Vec<Schema>, Box<dyn std::error::Error>> {
+    async fn get_schemas(&self) -> Result<Vec<Schema>, Box<dyn Error>> {
         self.record(
             QueryOrigin::Metadata,
             "get_schemas".into(),
@@ -254,7 +257,7 @@ impl Database for LoggedDatabase {
     async fn get_tables(
         &self,
         schema_name: &str,
-    ) -> Result<Vec<Table>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Table>, Box<dyn Error>> {
         self.record(
             QueryOrigin::Metadata,
             format!("get_tables {schema_name}"),
@@ -268,7 +271,7 @@ impl Database for LoggedDatabase {
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<Vec<Column>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Column>, Box<dyn Error>> {
         self.record(
             QueryOrigin::Metadata,
             format!("get_columns {schema_name}.{table_name}"),
@@ -284,7 +287,7 @@ impl Database for LoggedDatabase {
         table_name: &str,
         offset: u64,
         limit: u32,
-    ) -> Result<TableDataPage, Box<dyn std::error::Error>> {
+    ) -> Result<TableDataPage, Box<dyn Error>> {
         self.record(
             QueryOrigin::Metadata,
             format!(
@@ -301,7 +304,7 @@ impl Database for LoggedDatabase {
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>, Box<dyn Error>> {
         self.record(
             QueryOrigin::Metadata,
             format!("get_primary_key_columns {schema_name}.{table_name}"),
@@ -319,7 +322,7 @@ impl Database for LoggedDatabase {
         new_value: &str,
         primary_key: &[(String, String)],
         row_id_fallback: Option<DbRowId>,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    ) -> Result<u64, Box<dyn Error>> {
         self.record(
             QueryOrigin::User,
             format!(
@@ -343,7 +346,7 @@ impl Database for LoggedDatabase {
         schema_name: &str,
         table_name: &str,
         values: &[String],
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    ) -> Result<u64, Box<dyn Error>> {
         self.record(
             QueryOrigin::User,
             format!("insert_table_row {schema_name}.{table_name}"),
@@ -359,7 +362,7 @@ impl Database for LoggedDatabase {
         table_name: &str,
         primary_key: &[(String, String)],
         row_id_fallback: Option<DbRowId>,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    ) -> Result<u64, Box<dyn Error>> {
         self.record(
             QueryOrigin::User,
             format!("delete_table_row {schema_name}.{table_name}"),
@@ -378,7 +381,7 @@ impl Database for LoggedDatabase {
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    ) -> Result<u64, Box<dyn Error>> {
         self.record(
             QueryOrigin::Metadata,
             format!("get_table_row_count {schema_name}.{table_name}"),
@@ -392,7 +395,7 @@ impl Database for LoggedDatabase {
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>, Box<dyn Error>> {
         self.record(
             QueryOrigin::Metadata,
             format!("get_table_index_names {schema_name}.{table_name}"),
@@ -406,7 +409,7 @@ impl Database for LoggedDatabase {
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<String>, Box<dyn Error>> {
         self.record(
             QueryOrigin::Metadata,
             format!("get_table_size {schema_name}.{table_name}"),
@@ -416,9 +419,7 @@ impl Database for LoggedDatabase {
         .await
     }
 
-    async fn get_databases(
-        &self,
-    ) -> Result<Vec<DatabaseInfo>, Box<dyn std::error::Error>> {
+    async fn get_databases(&self) -> Result<Vec<DatabaseInfo>, Box<dyn Error>> {
         self.record(
             QueryOrigin::Metadata,
             "get_databases".into(),
@@ -431,8 +432,17 @@ impl Database for LoggedDatabase {
 
 #[cfg(test)]
 pub mod tests {
+    use std::{env::temp_dir, fs::remove_file, process::id, thread::current};
+
+    use rusqlite::Connection;
+    use tokio::task::yield_now;
+
     use super::*;
-    use crate::db::sqlite::Sqlite;
+    use crate::{
+        app::ACTIVITY_QUERY,
+        db,
+        db::{postgres::Postgres, sqlite::Sqlite, tls::TlsConfig},
+    };
 
     fn entry(sql: &str) -> QueryLogEntry {
         QueryLogEntry {
@@ -447,12 +457,12 @@ pub mod tests {
     /// Unique temp `SQLite` file path (each `Sqlite` call opens a fresh
     /// connection, so `:memory:` would not persist between calls).
     pub fn temp_sqlite(tag: &str) -> Sqlite {
-        let path = std::env::temp_dir().join(format!(
+        let path = temp_dir().join(format!(
             "d7s-test-{tag}-{}-{:?}.db",
-            std::process::id(),
-            std::thread::current().id()
+            id(),
+            current().id()
         ));
-        let _ = std::fs::remove_file(&path);
+        let _ = remove_file(&path);
         Sqlite {
             name: tag.to_string(),
             path: path.to_string_lossy().into_owned(),
@@ -488,7 +498,7 @@ pub mod tests {
         let log = QueryLog::default();
         let sqlite = temp_sqlite("decorator");
         // Seed directly: Sqlite::execute_sql re-runs row-less statements.
-        rusqlite::Connection::open(&sqlite.path)
+        Connection::open(&sqlite.path)
             .unwrap()
             .execute_batch("CREATE TABLE t(a); INSERT INTO t VALUES (1),(2);")
             .unwrap();
@@ -521,7 +531,7 @@ pub mod tests {
     async fn metadata_and_edits_log_real_sql_without_values() {
         let log = QueryLog::default();
         let sqlite = temp_sqlite("realsql");
-        rusqlite::Connection::open(&sqlite.path)
+        Connection::open(&sqlite.path)
             .unwrap()
             .execute_batch("CREATE TABLE t(id INTEGER PRIMARY KEY, a TEXT);")
             .unwrap();
@@ -669,7 +679,7 @@ pub mod tests {
             "label2".into(),
             |(): &()| 0,
             async {
-                tokio::task::yield_now().await;
+                yield_now().await;
                 report_sql("X");
                 Ok(())
             },
@@ -728,7 +738,7 @@ pub mod tests {
     async fn edit_paths_never_log_cell_or_key_values() {
         let log = QueryLog::default();
         let sqlite = temp_sqlite("novalues");
-        rusqlite::Connection::open(&sqlite.path)
+        Connection::open(&sqlite.path)
             .unwrap()
             .execute_batch(
                 "CREATE TABLE t(k TEXT PRIMARY KEY, a TEXT, b TEXT);",
@@ -752,7 +762,7 @@ pub mod tests {
             "b",
             "secretFallback",
             &[],
-            Some(crate::db::DbRowId::Sqlite(1)),
+            Some(db::DbRowId::Sqlite(1)),
         )
         .await
         .unwrap();
@@ -778,16 +788,16 @@ pub mod tests {
     #[ignore = "requires docker test database"]
     async fn pg_edit_paths_never_log_cell_or_key_values() {
         let log = QueryLog::default();
-        let pg = crate::db::postgres::Postgres {
+        let pg = Postgres {
             name: "test".into(),
             host: Some("localhost".into()),
             port: Some("5432".into()),
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
-            tls: crate::db::tls::TlsConfig::default(),
+            tls: TlsConfig::default(),
         };
-        let t = format!("d7s_qlog_{}", std::process::id());
+        let t = format!("d7s_qlog_{}", id());
         pg.execute_sql(&format!(
             "CREATE TABLE {t} (k text PRIMARY KEY, a text)"
         ))
@@ -836,10 +846,10 @@ pub mod tests {
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
-            tls: crate::db::tls::TlsConfig::default(),
+            tls: TlsConfig::default(),
         }));
         log.set_origin(QueryOrigin::Activity);
-        let rows = db.execute_sql(crate::app::ACTIVITY_QUERY).await.unwrap();
+        let rows = db.execute_sql(ACTIVITY_QUERY).await.unwrap();
         assert!(
             rows.iter().any(|r| r
                 .values

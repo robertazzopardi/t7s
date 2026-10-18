@@ -1,8 +1,8 @@
 //! Table data view: draft rows, multi-select, insert/delete, refresh.
 
-use std::collections::BTreeSet;
+use alloc::collections::BTreeSet;
 
-use color_eyre::Result;
+use color_eyre::{Result, eyre::eyre};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use k9tui::widgets::navigation::TableNavigationHandler;
 
@@ -145,7 +145,7 @@ impl App<'_> {
             .model
             .dynamic_column_names
             .clone()
-            .ok_or_else(|| color_eyre::eyre::eyre!("no columns"))?;
+            .ok_or_else(|| eyre!("no columns"))?;
         let n = names.len();
         self.discard_table_draft();
         let row = RawTableRow {
@@ -167,8 +167,8 @@ impl App<'_> {
             self.set_status("Clear filter before duplicating a row.");
             return Ok(());
         }
-        let DatabaseExplorerState::TableData(ref schema, ref table) =
-            self.database_explorer.state
+        let DatabaseExplorerState::TableData(schema, table) =
+            &self.database_explorer.state
         else {
             return Ok(());
         };
@@ -177,14 +177,14 @@ impl App<'_> {
             .view
             .state
             .selected()
-            .ok_or_else(|| color_eyre::eyre::eyre!("no selection"))?;
+            .ok_or_else(|| eyre!("no selection"))?;
         let base = fd
             .table
             .model
             .items
             .get(sel)
             .cloned()
-            .ok_or_else(|| color_eyre::eyre::eyre!("no row"))?;
+            .ok_or_else(|| eyre!("no row"))?;
         if base.is_draft {
             self.set_status("Pick a saved row to duplicate, not a draft.");
             return Ok(());
@@ -267,7 +267,7 @@ impl App<'_> {
             .items
             .get(sel)
             .map(|r| r.values.clone())
-            .ok_or_else(|| color_eyre::eyre::eyre!("no draft row"))?;
+            .ok_or_else(|| eyre!("no draft row"))?;
         let Some(db) = self.database_explorer.database.as_ref() else {
             return Ok(());
         };
@@ -315,8 +315,8 @@ impl App<'_> {
     /// Start delete: drafts removed locally; persisted rows get a confirmation modal.
     #[allow(clippy::too_many_lines)]
     pub(crate) async fn table_data_request_delete(&mut self) -> Result<()> {
-        let DatabaseExplorerState::TableData(ref schema, ref table) =
-            self.database_explorer.state
+        let DatabaseExplorerState::TableData(schema, table) =
+            &self.database_explorer.state
         else {
             return Ok(());
         };
@@ -455,8 +455,8 @@ impl App<'_> {
         if specs.is_empty() {
             return Ok(());
         }
-        let DatabaseExplorerState::TableData(ref schema, ref table) =
-            self.database_explorer.state
+        let DatabaseExplorerState::TableData(schema, table) =
+            &self.database_explorer.state
         else {
             return Ok(());
         };

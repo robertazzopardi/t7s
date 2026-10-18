@@ -1,6 +1,16 @@
+use std::{
+    collections::HashMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use bollard::models::{
+    ContainerCpuStats, ContainerInspectResponse, ContainerStatsResponse,
+    ContainerSummary, ImageInspect, ImageSummary, Network, NetworkInspect,
+    PortSummary, Volume,
+};
 pub mod client;
 
-use std::fmt::Write as _;
+use core::fmt::Write as _;
 
 use k9tui::widgets::table::TableData;
 
@@ -27,7 +37,7 @@ impl ContainerRow {
 
     /// Build a row from a bollard container-summary response.
     #[must_use]
-    pub fn from_summary(summary: &bollard::models::ContainerSummary) -> Self {
+    pub fn from_summary(summary: &ContainerSummary) -> Self {
         let id = summary.id.clone().unwrap_or_default();
         let name = summary
             .names
@@ -61,10 +71,7 @@ impl ContainerRow {
     }
 
     /// Fill `cpu`/`mem` from a one-shot stats sample.
-    pub fn apply_stats(
-        &mut self,
-        stats: &bollard::models::ContainerStatsResponse,
-    ) {
+    pub fn apply_stats(&mut self, stats: &ContainerStatsResponse) {
         if let Some(pct) = cpu_percent(stats) {
             self.cpu = format!("{pct:.1}%");
         }
@@ -94,10 +101,10 @@ impl ContainerRow {
 
 /// CPU % between the previous and current sample, as `docker stats` does.
 #[allow(clippy::cast_precision_loss)]
-fn cpu_percent(stats: &bollard::models::ContainerStatsResponse) -> Option<f64> {
+fn cpu_percent(stats: &ContainerStatsResponse) -> Option<f64> {
     let cur = stats.cpu_stats.as_ref()?;
     let pre = stats.precpu_stats.as_ref()?;
-    let total = |c: &bollard::models::ContainerCpuStats| {
+    let total = |c: &ContainerCpuStats| {
         c.cpu_usage.as_ref().and_then(|u| u.total_usage)
     };
     let cpu_delta = total(cur)?.checked_sub(total(pre)?)? as f64;
@@ -113,9 +120,7 @@ fn cpu_percent(stats: &bollard::models::ContainerStatsResponse) -> Option<f64> {
 /// Render a k9s-style "describe" text block from a full container inspect
 /// response — whatever bollard already gives us, no extra API calls.
 #[must_use]
-pub fn describe_text(
-    inspect: &bollard::models::ContainerInspectResponse,
-) -> String {
+pub fn describe_text(inspect: &ContainerInspectResponse) -> String {
     let mut out = String::new();
     let mut line = |label: &str, value: &str| {
         let _ = writeln!(out, "{label:<14}{value}");
@@ -220,11 +225,7 @@ fn kv(out: &mut String, label: &str, value: &str) {
 }
 
 /// `Title:` followed by indented `key=value` lines (sorted), or `(none)`.
-fn map_section(
-    out: &mut String,
-    title: &str,
-    map: &std::collections::HashMap<String, String>,
-) {
+fn map_section(out: &mut String, title: &str, map: &HashMap<String, String>) {
     out.push('\n');
     let _ = writeln!(out, "{title}:");
     if map.is_empty() {
@@ -252,7 +253,7 @@ fn list_section(out: &mut String, title: &str, items: &[String]) {
 
 /// "describe" text for an image inspect response.
 #[must_use]
-pub fn describe_image_text(inspect: &bollard::models::ImageInspect) -> String {
+pub fn describe_image_text(inspect: &ImageInspect) -> String {
     let mut out = String::new();
     kv(&mut out, "ID:", inspect.id.as_deref().unwrap_or(""));
     if let Some(created) = &inspect.created {
@@ -324,7 +325,7 @@ pub fn describe_image_text(inspect: &bollard::models::ImageInspect) -> String {
 
 /// "describe" text for a volume inspect response.
 #[must_use]
-pub fn describe_volume_text(volume: &bollard::models::Volume) -> String {
+pub fn describe_volume_text(volume: &Volume) -> String {
     let mut out = String::new();
     kv(&mut out, "Name:", &volume.name);
     kv(&mut out, "Driver:", &volume.driver);
@@ -348,9 +349,7 @@ pub fn describe_volume_text(volume: &bollard::models::Volume) -> String {
 
 /// "describe" text for a network inspect response.
 #[must_use]
-pub fn describe_network_text(
-    inspect: &bollard::models::NetworkInspect,
-) -> String {
+pub fn describe_network_text(inspect: &NetworkInspect) -> String {
     let mut out = String::new();
     kv(&mut out, "ID:", inspect.id.as_deref().unwrap_or(""));
     kv(&mut out, "Name:", inspect.name.as_deref().unwrap_or(""));
@@ -426,7 +425,7 @@ fn short_id(id: &str) -> String {
     id.get(..12.min(id.len())).unwrap_or(id).to_string()
 }
 
-fn format_port(port: &bollard::models::PortSummary) -> String {
+fn format_port(port: &PortSummary) -> String {
     let proto = port.typ.map(|t| t.to_string()).unwrap_or_default();
     match (port.ip.as_ref(), port.public_port) {
         (Some(ip), Some(public)) => {
@@ -479,7 +478,7 @@ pub struct ImageRow {
 
 impl ImageRow {
     #[must_use]
-    pub fn from_summary(summary: &bollard::models::ImageSummary) -> Self {
+    pub fn from_summary(summary: &ImageSummary) -> Self {
         let repo_tags = if summary.repo_tags.is_empty() {
             "<none>:<none>".to_string()
         } else {
@@ -529,7 +528,7 @@ pub struct VolumeRow {
 
 impl VolumeRow {
     #[must_use]
-    pub fn from_volume(volume: &bollard::models::Volume) -> Self {
+    pub fn from_volume(volume: &Volume) -> Self {
         Self {
             name: volume.name.clone(),
             driver: volume.driver.clone(),
@@ -573,7 +572,7 @@ pub struct NetworkRow {
 
 impl NetworkRow {
     #[must_use]
-    pub fn from_network(network: &bollard::models::Network) -> Self {
+    pub fn from_network(network: &Network) -> Self {
         Self {
             id: network.id.as_deref().map_or_else(String::new, short_id),
             name: network.name.clone().unwrap_or_default(),
@@ -621,8 +620,8 @@ fn format_size(bytes: i64) -> String {
 
 /// Render a Unix timestamp as a rough "N `unit` ago" string, docker-CLI style.
 fn format_timestamp(secs: i64) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     let created = secs.max(0).unsigned_abs();
     let elapsed = now.saturating_sub(created);

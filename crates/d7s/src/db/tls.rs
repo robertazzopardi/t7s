@@ -1,12 +1,12 @@
 //! TLS settings for server connections, read from the connection URL query:
 //! `sslmode=` (Postgres) / `ssl-mode=` (MySQL) and `sslrootcert=` (CA bundle path).
 
-use std::{
-    fmt::{Display, Formatter},
-    io,
+use alloc::sync::Arc;
+use core::{
+    fmt::{self, Display, Formatter},
     str::FromStr,
-    sync::{Arc, OnceLock},
 };
+use std::{io, sync::OnceLock};
 
 use rustls::{
     ClientConfig, DigitallySignedStruct, Error as TlsError, RootCertStore,
@@ -14,9 +14,13 @@ use rustls::{
     client::danger::{
         HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
     },
-    crypto::{CryptoProvider, aws_lc_rs},
+    crypto::{
+        CryptoProvider, aws_lc_rs, verify_tls12_signature,
+        verify_tls13_signature,
+    },
     pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject},
 };
+use url::Url;
 // Loaded once: reading the OS store on every query-time connect is slow.
 static NATIVE: OnceLock<Vec<CertificateDer<'static>>> = OnceLock::new();
 
@@ -34,7 +38,7 @@ pub enum TlsMode {
 }
 
 impl Display for TlsMode {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Disable => "disable",
             Self::Prefer => "prefer",
@@ -72,7 +76,7 @@ impl TlsConfig {
     #[must_use]
     pub fn from_url(url: &str) -> Self {
         let mut cfg = Self::default();
-        let Ok(url) = url::Url::parse(url) else {
+        let Ok(url) = Url::parse(url) else {
             return cfg;
         };
         for (k, v) in url.query_pairs() {
@@ -171,7 +175,7 @@ impl ServerCertVerifier for NoVerify {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, TlsError> {
-        rustls::crypto::verify_tls12_signature(
+        verify_tls12_signature(
             msg,
             cert,
             dss,
@@ -185,7 +189,7 @@ impl ServerCertVerifier for NoVerify {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, TlsError> {
-        rustls::crypto::verify_tls13_signature(
+        verify_tls13_signature(
             msg,
             cert,
             dss,

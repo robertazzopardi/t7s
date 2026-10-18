@@ -1,6 +1,7 @@
 use ratatui::{
+    buffer::Buffer,
     prelude::*,
-    widgets::{Paragraph, Widget},
+    widgets::{Paragraph, Widget, Wrap},
 };
 
 use crate::theme;
@@ -21,11 +22,11 @@ impl StatusLine {
         }
     }
 
-    pub fn set_message(&mut self, message: impl Into<String>) {
+    pub fn set_message<S: Into<String>>(&mut self, message: S) {
         self.message = message.into();
     }
 
-    pub fn set_idle_hint(&mut self, hint: impl Into<String>) {
+    pub fn set_idle_hint<S: Into<String>>(&mut self, hint: S) {
         self.idle_hint = hint.into();
     }
 
@@ -35,7 +36,7 @@ impl StatusLine {
 }
 
 impl Widget for StatusLine {
-    fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+    fn render(self, area: Rect, buf: &mut Buffer) {
         if area.height == 0 || area.width == 0 {
             return;
         }
@@ -48,7 +49,7 @@ impl Widget for StatusLine {
 
         Paragraph::new(text)
             .style(style)
-            .wrap(ratatui::widgets::Wrap { trim: true })
+            .wrap(Wrap { trim: true })
             .render(area, buf);
     }
 }

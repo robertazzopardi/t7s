@@ -4,7 +4,7 @@ use ratatui::{
     style::{Color, Style},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use ratatui_textarea::TextArea;
+use ratatui_textarea::{CursorMove, TextArea};
 
 use crate::{theme, widgets::buttons::Buttons};
 
@@ -46,11 +46,11 @@ impl ModalField {
     }
 
     /// Set the text value of this field, replacing all content.
-    pub fn set_value(&mut self, text: impl Into<String>) {
+    pub fn set_value<S: Into<String>>(&mut self, text: S) {
         let text = text.into();
         self.input = Self::make_input(&text);
         // Move cursor to end of the pre-filled text
-        self.input.move_cursor(ratatui_textarea::CursorMove::End);
+        self.input.move_cursor(CursorMove::End);
         // Restore cursor style based on current focus state
         if self.is_focused {
             self.input.set_cursor_style(theme::focus_cursor());
@@ -94,7 +94,7 @@ impl ModalField {
     /// Ensure value is one of the options. Sets to first option if invalid.
     #[allow(clippy::indexing_slicing)]
     pub fn clamp_to_options(&mut self) {
-        if let Some(ref opts) = self.options
+        if let Some(opts) = &self.options
             && !opts.is_empty()
             && !opts.iter().any(|o| *o == self.value())
         {
@@ -131,9 +131,9 @@ pub struct ConfirmDialog {
 
 impl ConfirmDialog {
     #[must_use]
-    pub fn new(
-        title: impl Into<String>,
-        message: impl Into<String>,
+    pub fn new<T: Into<String>, M: Into<String>>(
+        title: T,
+        message: M,
         border_style: Style,
         default_button: usize,
     ) -> Self {
@@ -267,7 +267,7 @@ impl TextPromptModal {
     }
 
     #[must_use]
-    pub fn new(title: impl Into<String>, width: u16, height: u16) -> Self {
+    pub fn new<T: Into<String>>(title: T, width: u16, height: u16) -> Self {
         Self {
             is_open: true,
             submitted: false,
@@ -285,7 +285,7 @@ impl TextPromptModal {
     }
 
     #[must_use]
-    pub fn with_prompt(mut self, prompt: impl Into<String>) -> Self {
+    pub fn with_prompt<S: Into<String>>(mut self, prompt: S) -> Self {
         self.prompt = Some(prompt.into());
         self
     }
@@ -487,7 +487,7 @@ impl Widget for TextPromptModal {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{Terminal, backend::TestBackend, buffer::Cell};
 
     use super::*;
 
@@ -554,7 +554,7 @@ mod tests {
             .buffer()
             .content
             .iter()
-            .map(ratatui::buffer::Cell::symbol)
+            .map(Cell::symbol)
             .collect();
 
         assert!(content.contains("Delete?"));

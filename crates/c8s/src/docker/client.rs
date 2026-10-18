@@ -1,6 +1,13 @@
+use alloc::collections::BTreeSet;
+use core::time::Duration;
+use std::process::Stdio;
+
 use bollard::{
     Docker,
-    models::{ContainerInspectResponse, ImageInspect, NetworkInspect, Volume},
+    models::{
+        ContainerInspectResponse, ContainerStatsResponse, ImageInspect,
+        NetworkInspect, Volume,
+    },
     query_parameters::{
         InspectContainerOptions, InspectNetworkOptions, ListContainersOptions,
         ListImagesOptions, ListNetworksOptions, ListVolumesOptions,
@@ -9,12 +16,13 @@ use bollard::{
         StopContainerOptions, TopOptionsBuilder,
     },
 };
-use color_eyre::Result;
-use futures_util::StreamExt;
+use color_eyre::{Result, eyre::eyre};
+use futures_util::{StreamExt, future::join_all};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
     sync::mpsc::UnboundedSender,
+    time::timeout,
 };
 
 use super::{
@@ -36,10 +44,10 @@ pub struct DaemonHealth {
 }
 
 /// Upper bound for the daemon health probe.
-const HEALTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Upper bound for one container stats sample.
-const STATS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+const STATS_TIMEOUT: Duration = Duration::from_secs(3);
 
 impl DaemonHealth {
     /// Lines shown in the health panel.
@@ -96,15 +104,12 @@ impl DockerClient {
     /// a hard timeout so a wedged daemon can't freeze the UI (the caller
     /// awaits this on the event loop).
     pub async fn daemon_health(&self) -> Result<DaemonHealth> {
-        let (version, info) = tokio::time::timeout(HEALTH_TIMEOUT, async {
+        let (version, info) = timeout(HEALTH_TIMEOUT, async {
             tokio::try_join!(self.docker.version(), self.docker.info())
         })
         .await
         .map_err(|_| {
-            color_eyre::eyre::eyre!(
-                "timed out after {}s",
-                HEALTH_TIMEOUT.as_secs()
-            )
+            eyre!("timed out after {}s", HEALTH_TIMEOUT.as_secs())
         })??;
         Ok(DaemonHealth {
             server_version: version.version.unwrap_or_default(),
@@ -128,15 +133,13 @@ impl DockerClient {
             summaries.iter().map(ContainerRow::from_summary).collect();
         // Stats only exist for running containers. Sampled concurrently, each
         // with a timeout; failures just leave the cells blank.
-        futures_util::future::join_all(
-            rows.iter_mut().filter(|r| r.status == "running").map(
-                |row| async move {
-                    if let Some(stats) = self.container_stats(&row.id).await {
-                        row.apply_stats(&stats);
-                    }
-                },
-            ),
-        )
+        join_all(rows.iter_mut().filter(|r| r.status == "running").map(
+            |row| async move {
+                if let Some(stats) = self.container_stats(&row.id).await {
+                    row.apply_stats(&stats);
+                }
+            },
+        ))
         .await;
         Ok(rows)
     }
@@ -145,18 +148,15 @@ impl DockerClient {
     async fn container_stats(
         &self,
         id: &str,
-    ) -> Option<bollard::models::ContainerStatsResponse> {
+    ) -> Option<ContainerStatsResponse> {
         let options = StatsOptions {
             stream: false,
             one_shot: false,
         };
-        tokio::time::timeout(
-            STATS_TIMEOUT,
-            self.docker.stats(id, Some(options)).next(),
-        )
-        .await
-        .ok()?
-        .and_then(Result::ok)
+        timeout(STATS_TIMEOUT, self.docker.stats(id, Some(options)).next())
+            .await
+            .ok()?
+            .and_then(Result::ok)
     }
 
     /// Processes of a container with their output targets, found by running
@@ -169,15 +169,13 @@ impl DockerClient {
         // The kernel hides another user's `/proc/<pid>/fd` (no ptrace cap),
         // e.g. postgres (uid 70) under the default root exec. Rescan as each
         // owner of a process whose fds came back empty.
-        let owners: std::collections::BTreeSet<String> = rows
+        let owners: BTreeSet<String> = rows
             .iter()
             .filter(|r| r.stdout.is_empty() && !r.user.is_empty())
             .map(|r| r.user.clone())
             .collect();
-        let scans = futures_util::future::join_all(
-            owners.iter().map(|uid| Self::scan(id, Some(uid))),
-        )
-        .await;
+        let scans =
+            join_all(owners.iter().map(|uid| Self::scan(id, Some(uid)))).await;
         for seen in scans.into_iter().flatten() {
             for s in seen.into_iter().filter(|s| !s.stdout.is_empty()) {
                 if let Some(r) = rows.iter_mut().find(|r| r.pid == s.pid) {
@@ -237,8 +235,8 @@ impl DockerClient {
     ) {
         let child = Command::new("docker")
             .args(["exec", id, "tail", "-n", "200", "-F", path])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn();
         let Ok(mut child) = child else {

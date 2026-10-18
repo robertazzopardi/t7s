@@ -1,4 +1,4 @@
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 
 use crate::{theme, widgets::table::TableData};
 
@@ -33,9 +33,7 @@ impl TableData for HelpRow {
 
     fn cell_style(&self, column: usize) -> Option<Style> {
         if self.section_header {
-            return Some(
-                theme::accent().add_modifier(ratatui::style::Modifier::BOLD),
-            );
+            return Some(theme::accent().add_modifier(Modifier::BOLD));
         }
         if column == 0 {
             Some(theme::accent())

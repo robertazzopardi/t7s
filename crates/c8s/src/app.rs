@@ -1,21 +1,36 @@
-use std::time::Duration;
+use core::time::Duration;
+use std::{io::stdout, process::Command};
 
 use ansi_to_tui::IntoText;
-use color_eyre::Result;
+use color_eyre::{Result, eyre::eyre};
 use crossterm::{
     ExecutableCommand,
-    event::{DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind},
+    event::{
+        DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind, poll,
+        read,
+    },
     execute,
+    terminal::{
+        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode,
+    },
 };
 use k9tui::widgets::{
+    constraint_len_calculator,
     hotkey::Hotkey,
     modal::ConfirmDialog,
     status_line::StatusLine,
     table::{TableData, TableDataState, filter_rows},
 };
-use ratatui::{DefaultTerminal, Terminal, backend::Backend, text::Line};
-use tokio::sync::mpsc::{
-    UnboundedReceiver, UnboundedSender, unbounded_channel,
+use ratatui::{
+    DefaultTerminal, Terminal,
+    backend::Backend,
+    text::{Line, Text},
+};
+use tokio::{
+    sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+    task::JoinHandle,
+    time::sleep,
 };
 
 use crate::{
@@ -24,6 +39,8 @@ use crate::{
         ContainerRow, ImageRow, NetworkRow, ProcessRow, VolumeRow,
         client::DockerClient,
     },
+    log_dedup::DedupMode,
+    ui::widgets::hotkeys::LIST_HOTKEYS,
 };
 
 pub const APP_NAME: &str = r"         ______
@@ -75,7 +92,7 @@ pub struct App {
     pub(crate) networks: TableDataState<NetworkRow>,
     pub(crate) processes: TableDataState<ProcessRow>,
     /// Aborts the running `docker top` poller, if any, when leaving the view.
-    pub(crate) process_task: Option<tokio::task::JoinHandle<()>>,
+    pub(crate) process_task: Option<JoinHandle<()>>,
     /// Where `q` goes from the log view when it was not opened from the list.
     pub(crate) logs_back: Option<AppState>,
     /// Unfiltered rows from the last poll, kept so the `/` filter can be
@@ -108,7 +125,7 @@ pub struct App {
     pub(crate) log_viewport_height: usize,
     /// Row count of the last-rendered (deduped + filtered) log view.
     pub(crate) log_view_len: usize,
-    pub(crate) log_dedup: crate::log_dedup::DedupMode,
+    pub(crate) log_dedup: DedupMode,
     /// Case-insensitive substring filter applied to log lines. Empty = no filter.
     pub(crate) log_filter: String,
     /// True while the `/` search bar is open for editing.
@@ -122,8 +139,8 @@ pub struct App {
     pub(crate) bg_tx: UnboundedSender<BackgroundEvent>,
     pub(crate) bg_rx: UnboundedReceiver<BackgroundEvent>,
     /// Aborts the running log-tail task, if any, when leaving the log view.
-    pub(crate) log_task: Option<tokio::task::JoinHandle<()>>,
-    poll_task: Option<tokio::task::JoinHandle<()>>,
+    pub(crate) log_task: Option<JoinHandle<()>>,
+    poll_task: Option<JoinHandle<()>>,
 }
 
 impl App {
@@ -135,7 +152,7 @@ impl App {
             state: AppState::default(),
             view: ResourceKind::default(),
             docker: None,
-            hotkeys: crate::ui::widgets::hotkeys::LIST_HOTKEYS.to_vec(),
+            hotkeys: LIST_HOTKEYS.to_vec(),
             containers: TableDataState::new(Vec::new()),
             images: TableDataState::new(Vec::new()),
             volumes: TableDataState::new(Vec::new()),
@@ -160,7 +177,7 @@ impl App {
             log_follow: true,
             log_viewport_height: 0,
             log_view_len: 0,
-            log_dedup: crate::log_dedup::DedupMode::default(),
+            log_dedup: DedupMode::default(),
             log_filter: String::new(),
             log_search_open: false,
             describe_scroll: 0,
@@ -262,7 +279,7 @@ impl App {
                             tx.send(BackgroundEvent::PollError(e.to_string()));
                     }
                 }
-                tokio::time::sleep(POLL_INTERVAL).await;
+                sleep(POLL_INTERVAL).await;
             }
         }));
     }
@@ -291,7 +308,7 @@ impl App {
         self.running = false;
     }
 
-    pub(crate) fn set_status(&mut self, message: impl Into<String>) {
+    pub(crate) fn set_status<S: Into<String>>(&mut self, message: S) {
         self.status_line.set_message(message);
     }
 
@@ -353,7 +370,7 @@ impl App {
                     let parsed = line
                         .as_bytes()
                         .into_text()
-                        .unwrap_or_else(|_| ratatui::text::Text::raw(line));
+                        .unwrap_or_else(|_| Text::raw(line));
                     self.log_lines.extend(parsed.lines);
                     if self.log_lines.len() > MAX_LOG_LINES {
                         let drop = self.log_lines.len() - MAX_LOG_LINES;
@@ -371,10 +388,10 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> Result<()> {
-        if !crossterm::event::poll(Duration::from_millis(100))? {
+        if !poll(Duration::from_millis(100))? {
             return Ok(());
         }
-        match crossterm::event::read()? {
+        match read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 self.on_key_event(key, terminal).await?;
             }
@@ -394,20 +411,18 @@ impl App {
         terminal: &mut Terminal<B>,
         id: &str,
     ) -> Result<()> {
-        execute!(std::io::stdout(), DisableBracketedPaste)?;
-        std::io::stdout().execute(crossterm::terminal::LeaveAlternateScreen)?;
-        crossterm::terminal::disable_raw_mode()?;
+        execute!(stdout(), DisableBracketedPaste)?;
+        stdout().execute(LeaveAlternateScreen)?;
+        disable_raw_mode()?;
 
-        let status = std::process::Command::new("docker")
+        let status = Command::new("docker")
             .args(["exec", "-it", id, "sh"])
             .status();
 
-        std::io::stdout().execute(crossterm::terminal::EnterAlternateScreen)?;
-        crossterm::terminal::enable_raw_mode()?;
-        execute!(std::io::stdout(), EnableBracketedPaste)?;
-        terminal
-            .clear()
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+        stdout().execute(EnterAlternateScreen)?;
+        enable_raw_mode()?;
+        execute!(stdout(), EnableBracketedPaste)?;
+        terminal.clear().map_err(|e| eyre!("{e}"))?;
 
         match status {
             Ok(s) if s.success() => self.set_status("Exec session ended"),
@@ -549,7 +564,7 @@ impl App {
                 if tx.send(event).is_err() {
                     break;
                 }
-                tokio::time::sleep(POLL_INTERVAL).await;
+                sleep(POLL_INTERVAL).await;
             }
         }));
     }
@@ -654,8 +669,7 @@ fn apply_table_update<T: TableData + Clone>(
     rows: Vec<T>,
 ) {
     let selected = table.view.state.selected();
-    table.model.longest_item_lens =
-        k9tui::widgets::constraint_len_calculator(&rows);
+    table.model.longest_item_lens = constraint_len_calculator(&rows);
     table.model.items = rows;
 
     let len = table.model.items.len();

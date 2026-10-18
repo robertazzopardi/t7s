@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter};
+use core::fmt::{self, Display, Formatter};
 
 use crate::docker::client::DaemonHealth;
 
@@ -34,7 +34,7 @@ pub enum ResourceKind {
 }
 
 impl Display for ResourceKind {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Containers => "Containers",
             Self::Images => "Images",

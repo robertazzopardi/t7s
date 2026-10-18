@@ -1,3 +1,4 @@
+use crossterm::event::KeyCode;
 use k9tui::{
     theme,
     widgets::{
@@ -8,12 +9,15 @@ use k9tui::{
 use ratatui::{
     Frame,
     prelude::*,
+    style::Color,
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
 use crate::{
     app::{APP_NAME, App},
     app_state::{AppState, ResourceKind},
+    command::suggest,
+    docker::client::DaemonHealth,
     log_dedup::fold,
     ui::widgets::hotkeys::{
         GLOBAL_HOTKEYS, VIEW_SWITCH_HOTKEYS, describe_hotkeys, log_hotkeys,
@@ -115,7 +119,7 @@ impl App {
         let area = frame.area();
         let text = format!("{message}\n\nPress r to retry, q to quit.");
         Paragraph::new(text)
-            .style(Style::default().fg(ratatui::style::Color::Red))
+            .style(Style::default().fg(Color::Red))
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true })
             .render(centered(area), frame.buffer_mut());
@@ -123,10 +127,7 @@ impl App {
 
     /// c8s's single-daemon analog of a fleet health dashboard: this daemon's
     /// version/info, since there's only ever one daemon connected to summarize.
-    fn render_daemon_health(
-        frame: &mut Frame,
-        health: &crate::docker::client::DaemonHealth,
-    ) {
+    fn render_daemon_health(frame: &mut Frame, health: &DaemonHealth) {
         let area = frame.area();
         let mut text = health.lines().join("\n");
         text.push_str("\n\nPress i, q, or Esc to close.");
@@ -162,9 +163,8 @@ impl App {
         if !self.list_filter.is_empty() {
             // `q` clears the active filter instead of quitting while one is
             // set (see event_handlers.rs); keep the hint truthful.
-            if let Some(q) = global
-                .iter_mut()
-                .find(|h| h.keycode == crossterm::event::KeyCode::Char('q'))
+            if let Some(q) =
+                global.iter_mut().find(|h| h.keycode == KeyCode::Char('q'))
             {
                 *q = Hotkey::new('q', "clear filter");
             }
@@ -211,7 +211,7 @@ impl App {
                 let inner = search_block.inner(search_area);
                 frame.render_widget(search_block, search_area);
                 if self.command_mode {
-                    let ghost = crate::command::suggest(&self.command_text)
+                    let ghost = suggest(&self.command_text)
                         .map(|s| {
                             s.chars()
                                 .skip(self.command_text.chars().count())

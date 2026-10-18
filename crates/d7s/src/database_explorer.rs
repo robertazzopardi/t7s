@@ -1,3 +1,5 @@
+use core::fmt;
+
 use color_eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use k9tui::widgets::{
@@ -5,13 +7,14 @@ use k9tui::widgets::{
 };
 
 use crate::{
-    app::App,
+    app::{ACTIVITY_QUERY, App},
     app_state::DatabaseExplorerState,
     db::{
         Database, DbRowId, TableDataPage, connection::ConnectionType,
         query_log::QueryOrigin,
     },
     filtered_data::FilteredData,
+    services::PreferencesService,
     ui::widgets::{
         connection_modal::CellValueApply, raw_table::RawTableStateExt,
     },
@@ -37,18 +40,18 @@ macro_rules! explorer_selected_row_name {
 }
 
 impl App<'_> {
-    pub(crate) fn status_load_failed(
+    pub(crate) fn status_load_failed<E: fmt::Display>(
         &mut self,
         resource: &str,
-        err: impl std::fmt::Display,
+        err: E,
     ) {
         self.set_status(format!("Failed to load {resource}: {err}"));
     }
 
-    pub(crate) fn status_action_failed(
+    pub(crate) fn status_action_failed<E: fmt::Display>(
         &mut self,
         action: &str,
-        err: impl std::fmt::Display,
+        err: E,
     ) {
         self.set_status(format!("{action} failed: {err}"));
     }
@@ -424,7 +427,7 @@ impl App<'_> {
             let Some(meta) = explorer.table_data_virtual.as_ref() else {
                 return Ok(false);
             };
-            let Some(ref table_fd) = explorer.table_data else {
+            let Some(table_fd) = &explorer.table_data else {
                 return Ok(false);
             };
             if table_fd.is_filtered() {
@@ -502,8 +505,8 @@ impl App<'_> {
                     ));
                 }
             }
-            DatabaseExplorerState::Columns(ref schema_name, ref table_name) => {
-                self.load_table_data(schema_name, table_name).await?;
+            DatabaseExplorerState::Columns(schema_name, table_name) => {
+                self.load_table_data(&schema_name, &table_name).await?;
                 self.set_status(format!("Opened {schema_name}.{table_name}"));
             }
             DatabaseExplorerState::TableData(schema_name, table_name) => {
@@ -709,7 +712,7 @@ impl App<'_> {
         self.database_explorer.sql_executor.clear_results();
         self.query_log.set_origin(if !record_history {
             QueryOrigin::Watch
-        } else if sql == crate::app::ACTIVITY_QUERY {
+        } else if sql == ACTIVITY_QUERY {
             QueryOrigin::Activity
         } else {
             QueryOrigin::User
@@ -727,10 +730,7 @@ impl App<'_> {
                 let data = results.into_iter().map(|r| r.values).collect();
                 self.database_explorer.sql_executor.set_results(data, &cols);
                 if record_history {
-                    let _ =
-                        crate::services::PreferencesService::push_sql_history(
-                            &sql,
-                        );
+                    let _ = PreferencesService::push_sql_history(&sql);
                 }
             }
             Err(e) => self.set_status(format!("SQL error: {e}")),

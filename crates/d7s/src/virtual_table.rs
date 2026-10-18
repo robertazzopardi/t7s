@@ -1,5 +1,7 @@
 //! Paged ("virtual") table view: only one window of rows is loaded at a time.
 
+use core::fmt;
+
 /// Rows loaded per fetch when browsing table data in the explorer.
 pub const VIRTUAL_TABLE_PAGE_SIZE: u32 = 200;
 
@@ -68,7 +70,7 @@ impl VirtualTableMeta {
             } else {
                 "drafts"
             };
-            let _ = std::fmt::Write::write_fmt(
+            let _ = fmt::Write::write_fmt(
                 &mut s,
                 format_args!(" \u{00b7} {local_draft_rows} local {label}"),
             );

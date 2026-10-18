@@ -1,6 +1,6 @@
 #![allow(clippy::indexing_slicing)]
 
-use std::{fmt::Display, str::FromStr};
+use core::{fmt, fmt::Display, str::FromStr};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use k9tui::{
@@ -22,15 +22,16 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, StatefulWidget},
 };
 use ratatui_textarea::TextArea;
+use serde_json::{Map, Value};
 use tui_menu::{MenuEvent, MenuItem, MenuState};
 use unicode_width::UnicodeWidthStr;
 
 use crate::db::{
     DbRowId,
     connection::{
-        Connection, ConnectionType, build_server_url, default_database,
-        default_port, parse_connection_string, parse_server_url,
-        with_tls_query,
+        Connection, ConnectionStatus, ConnectionType, build_server_url,
+        default_database, default_port, parse_connection_string,
+        parse_server_url, with_tls_query,
     },
     tls::TlsConfig,
 };
@@ -75,7 +76,7 @@ pub enum PasswordStorageType {
 }
 
 impl Display for PasswordStorageType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Keyring => write!(f, "keyring"),
             Self::DontSave => write!(f, "dont_save"),
@@ -151,8 +152,8 @@ pub struct Modal {
     pub connection_type: Option<ConnectionType>,
 }
 
-impl std::fmt::Debug for Modal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Modal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Modal")
             .field("fields", &self.fields)
             .field("current_field", &self.current_field)
@@ -464,7 +465,7 @@ impl Modal {
         let Some(field) = self.fields.get(idx) else {
             return;
         };
-        let Some(ref opts) = field.options else {
+        let Some(opts) = &field.options else {
             return;
         };
         if opts.is_empty() {
@@ -589,11 +590,10 @@ impl Modal {
             .map_or("", |f| f.value().trim());
         let metadata_str = metadata_str.to_string();
         let metadata = if metadata_str.is_empty() {
-            serde_json::Value::Object(serde_json::Map::new())
+            Value::Object(Map::new())
         } else {
-            serde_json::from_str(&metadata_str).unwrap_or_else(|_| {
-                serde_json::Value::Object(serde_json::Map::new())
-            })
+            serde_json::from_str(&metadata_str)
+                .unwrap_or_else(|_| Value::Object(Map::new()))
         };
 
         let (password, password_storage) = if self.is_sqlite() {
@@ -656,7 +656,7 @@ impl Modal {
             table: None,
             password: if self.is_sqlite() { None } else { password },
             password_storage,
-            status: crate::db::connection::ConnectionStatus::default(),
+            status: ConnectionStatus::default(),
         })
     }
 

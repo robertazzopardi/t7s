@@ -1,3 +1,5 @@
+use core::mem::take;
+
 use color_eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use k9tui::{
@@ -12,7 +14,8 @@ use ratatui::{Terminal, backend::Backend, style::Style};
 use crate::{
     app::App,
     app_state::{AppState, ResourceKind},
-    command::Command,
+    command::{Command, resolve, suggest},
+    ui::widgets::hotkeys::{LIST_HOTKEYS, RESOURCE_HOTKEYS},
 };
 
 impl App {
@@ -223,12 +226,12 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
             (_, KeyCode::Esc) => self.close_command_bar(),
             (_, KeyCode::Enter) => {
-                let text = std::mem::take(&mut self.command_text);
+                let text = take(&mut self.command_text);
                 self.close_command_bar();
                 self.run_command(&text);
             }
             (_, KeyCode::Tab) => {
-                if let Some(s) = crate::command::suggest(&self.command_text) {
+                if let Some(s) = suggest(&self.command_text) {
                     self.command_text = s.to_string();
                 }
             }
@@ -251,7 +254,7 @@ impl App {
     }
 
     fn run_command(&mut self, text: &str) {
-        match crate::command::resolve(text) {
+        match resolve(text) {
             Command::Empty => {}
             Command::View(kind) => self.switch_view(kind),
             Command::Quit => self.quit(),
@@ -395,14 +398,10 @@ impl App {
     fn switch_view(&mut self, kind: ResourceKind) {
         self.view = kind;
         self.hotkeys = match kind {
-            ResourceKind::Containers => {
-                crate::ui::widgets::hotkeys::LIST_HOTKEYS.to_vec()
-            }
+            ResourceKind::Containers => LIST_HOTKEYS.to_vec(),
             ResourceKind::Images
             | ResourceKind::Volumes
-            | ResourceKind::Networks => {
-                crate::ui::widgets::hotkeys::RESOURCE_HOTKEYS.to_vec()
-            }
+            | ResourceKind::Networks => RESOURCE_HOTKEYS.to_vec(),
         };
     }
 
@@ -540,12 +539,15 @@ const fn singular(kind: ResourceKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use k9tui::widgets::table::TableDataState;
-    use ratatui::backend::TestBackend;
+    use ratatui::{backend::TestBackend, buffer::Cell};
 
     use super::*;
-    use crate::docker::{
-        ContainerRow, ImageRow, NetworkRow, VolumeRow,
-        client::{DaemonHealth, DockerClient},
+    use crate::{
+        docker::{
+            ContainerRow, ImageRow, NetworkRow, VolumeRow,
+            client::{DaemonHealth, DockerClient},
+        },
+        ui::widgets::hotkeys::RESOURCE_HOTKEYS,
     };
 
     type Term = Terminal<TestBackend>;
@@ -600,11 +602,7 @@ mod tests {
         let buf = term.backend().buffer();
         buf.content
             .chunks(usize::from(buf.area.width))
-            .map(|row| {
-                row.iter()
-                    .map(ratatui::buffer::Cell::symbol)
-                    .collect::<String>()
-            })
+            .map(|row| row.iter().map(Cell::symbol).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -796,10 +794,7 @@ mod tests {
         app.on_key_event(key(KeyCode::Enter), &mut t).await.unwrap();
         assert!(!app.command_mode && !app.list_search_open);
         assert_eq!(app.view, ResourceKind::Images);
-        assert_eq!(
-            app.hotkeys.len(),
-            crate::ui::widgets::hotkeys::RESOURCE_HOTKEYS.len()
-        );
+        assert_eq!(app.hotkeys.len(), RESOURCE_HOTKEYS.len());
     }
 
     #[tokio::test]

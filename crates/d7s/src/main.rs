@@ -1,3 +1,12 @@
+extern crate alloc;
+
+use std::{
+    env,
+    panic::{set_hook, take_hook},
+    process::exit,
+};
+
+use color_eyre::eyre::eyre;
 mod app;
 mod app_state;
 mod auth;
@@ -43,28 +52,28 @@ Options:
 
 /// `None` = run TUI; `Some(name)` = connect on launch; exits process on --help/--version.
 fn parse_launch_args() -> color_eyre::Result<Option<String>> {
-    let mut args = std::env::args().skip(1);
+    let mut args = env::args().skip(1);
     let mut connection: Option<String> = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => {
                 print_usage();
-                std::process::exit(0);
+                exit(0);
             }
             "-V" | "--version" => {
                 println!("{PKG_NAME} {PKG_VERSION}");
-                std::process::exit(0);
+                exit(0);
             }
             "-c" | "--connection" => {
-                let name = args.next().ok_or_else(|| {
-                    color_eyre::eyre::eyre!("--connection requires a name")
-                })?;
+                let name = args
+                    .next()
+                    .ok_or_else(|| eyre!("--connection requires a name"))?;
                 connection = Some(name);
             }
             other => {
                 eprintln!("Unknown argument: {other}\n");
                 print_usage();
-                std::process::exit(1);
+                exit(1);
             }
         }
     }
@@ -77,8 +86,8 @@ async fn main() -> color_eyre::Result<()> {
     let launch_connection = parse_launch_args()?;
     let terminal = ratatui::init();
     execute!(stdout(), EnableBracketedPaste)?;
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
+    let prev_hook = take_hook();
+    set_hook(Box::new(move |info| {
         let _ = execute!(stdout(), DisableBracketedPaste);
         prev_hook(info);
     }));

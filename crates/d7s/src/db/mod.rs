@@ -1,3 +1,7 @@
+use core::error::Error;
+use std::fs::create_dir_all;
+
+use directories::BaseDirs;
 use k9tui::widgets::table::TableData;
 
 pub mod connection;
@@ -39,22 +43,20 @@ pub trait Database: Send + Sync {
     async fn execute_sql(
         &self,
         sql: &str,
-    ) -> Result<Vec<TableRow>, Box<dyn std::error::Error>>;
+    ) -> Result<Vec<TableRow>, Box<dyn Error>>;
 
-    async fn get_schemas(
-        &self,
-    ) -> Result<Vec<Schema>, Box<dyn std::error::Error>>;
+    async fn get_schemas(&self) -> Result<Vec<Schema>, Box<dyn Error>>;
 
     async fn get_tables(
         &self,
         schema_name: &str,
-    ) -> Result<Vec<Table>, Box<dyn std::error::Error>>;
+    ) -> Result<Vec<Table>, Box<dyn Error>>;
 
     async fn get_columns(
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<Vec<Column>, Box<dyn std::error::Error>>;
+    ) -> Result<Vec<Column>, Box<dyn Error>>;
 
     /// Returns up to `limit` rows starting at `offset` (0-based), plus column names and row locators.
     async fn get_table_data_page(
@@ -63,14 +65,14 @@ pub trait Database: Send + Sync {
         table_name: &str,
         offset: u64,
         limit: u32,
-    ) -> Result<TableDataPage, Box<dyn std::error::Error>>;
+    ) -> Result<TableDataPage, Box<dyn Error>>;
 
     /// Ordered primary-key column names (composite keys preserve order).
     async fn get_primary_key_columns(
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>>;
+    ) -> Result<Vec<String>, Box<dyn Error>>;
 
     /// Update a single cell. Uses `primary_key` for the `WHERE` clause when non-empty; otherwise
     /// `row_id_fallback` (`rowid` / `ctid`) when present.
@@ -82,7 +84,7 @@ pub trait Database: Send + Sync {
         new_value: &str,
         primary_key: &[(String, String)],
         row_id_fallback: Option<DbRowId>,
-    ) -> Result<u64, Box<dyn std::error::Error>>;
+    ) -> Result<u64, Box<dyn Error>>;
 
     /// Insert one row. `values` align with [`Database::get_columns`] order for this table.
     /// Empty string with a nullable column becomes SQL `NULL`. Same `WHERE` identity as update.
@@ -91,7 +93,7 @@ pub trait Database: Send + Sync {
         schema_name: &str,
         table_name: &str,
         values: &[String],
-    ) -> Result<u64, Box<dyn std::error::Error>>;
+    ) -> Result<u64, Box<dyn Error>>;
 
     /// Delete one row; same `WHERE` construction as [`Database::update_table_cell`].
     async fn delete_table_row(
@@ -100,21 +102,21 @@ pub trait Database: Send + Sync {
         table_name: &str,
         primary_key: &[(String, String)],
         row_id_fallback: Option<DbRowId>,
-    ) -> Result<u64, Box<dyn std::error::Error>>;
+    ) -> Result<u64, Box<dyn Error>>;
 
     /// Total row count for the table (for paging UI). May be expensive on huge tables.
     async fn get_table_row_count(
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<u64, Box<dyn std::error::Error>>;
+    ) -> Result<u64, Box<dyn Error>>;
 
     /// Index names defined on the table, for the describe view. Cheap metadata lookup only.
     async fn get_table_index_names(
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>>;
+    ) -> Result<Vec<String>, Box<dyn Error>>;
 
     /// On-disk size of the table, formatted for display, when cheaply available
     /// (e.g. Postgres `pg_total_relation_size`). `None` when not supported.
@@ -122,11 +124,9 @@ pub trait Database: Send + Sync {
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>>;
+    ) -> Result<Option<String>, Box<dyn Error>>;
 
-    async fn get_databases(
-        &self,
-    ) -> Result<Vec<DatabaseInfo>, Box<dyn std::error::Error>>;
+    async fn get_databases(&self) -> Result<Vec<DatabaseInfo>, Box<dyn Error>>;
 }
 
 /// Database information
@@ -162,7 +162,7 @@ pub fn should_omit_for_insert_default(
     if explicit_null {
         return false;
     }
-    if let Some(ref d) = col.default_value {
+    if let Some(d) = &col.default_value {
         let t = d.trim();
         if !t.is_empty() && t.to_uppercase() != "NULL" {
             return true;
@@ -318,7 +318,7 @@ impl TableData for TableRow {
 }
 
 pub fn get_app_data_dir() -> Result<PathBuf> {
-    let Some(path) = directories::BaseDirs::new() else {
+    let Some(path) = BaseDirs::new() else {
         return Err(eyre::eyre!(
             "Unable to find data directory for ratatui-template"
         ));
@@ -329,7 +329,7 @@ pub fn get_app_data_dir() -> Result<PathBuf> {
     path.push("d7s");
 
     // Create directory if it doesn't exist
-    std::fs::create_dir_all(&path)?;
+    create_dir_all(&path)?;
 
     Ok(path)
 }

@@ -1,4 +1,7 @@
+use std::collections::HashSet;
+
 use color_eyre::Result;
+use tokio::task::JoinSet;
 
 use crate::{
     app::App,
@@ -170,7 +173,7 @@ impl App<'_> {
     /// (possibly filtered) rows so clearing a search keeps them.
     pub async fn check_connections_health(&mut self) {
         let connections = &mut self.database_explorer.connections;
-        let mut set = tokio::task::JoinSet::new();
+        let mut set = JoinSet::new();
         for connection in connections.original.clone() {
             set.spawn(async move {
                 let up = ConnectionService::ping(&connection).await;
@@ -179,7 +182,7 @@ impl App<'_> {
         }
 
         // A probe task that panics is reported as Down rather than left "Checking".
-        let mut up_names = std::collections::HashSet::new();
+        let mut up_names = HashSet::new();
         while let Some(result) = set.join_next().await {
             if let Ok((name, true)) = result {
                 up_names.insert(name);

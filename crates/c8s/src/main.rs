@@ -1,3 +1,6 @@
+extern crate alloc;
+
+use std::panic::{set_hook, take_hook};
 mod app;
 mod app_state;
 mod command;
@@ -20,8 +23,8 @@ async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     let terminal = ratatui::init();
     execute!(stdout(), EnableBracketedPaste)?;
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
+    let prev_hook = take_hook();
+    set_hook(Box::new(move |info| {
         let _ = execute!(stdout(), DisableBracketedPaste);
         prev_hook(info);
     }));

@@ -1,4 +1,5 @@
-use std::{borrow::Cow, fmt::Display};
+use alloc::borrow::Cow;
+use core::fmt::{self, Display};
 
 use crossterm::event::KeyCode;
 use unicode_width::UnicodeWidthStr;
@@ -32,7 +33,7 @@ pub struct Hotkey {
 }
 
 impl Display for Hotkey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.key_label())
     }
 }
