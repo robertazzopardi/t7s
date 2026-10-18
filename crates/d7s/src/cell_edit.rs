@@ -19,7 +19,7 @@ pub struct EditableCol {
 ///
 /// Must include every `Char` handled by `handle_hotkeys` / navigation while on
 /// table data so `handle_table_data_hotkeys` can fall through to global handlers.
-pub fn is_table_data_browse_binding(c: char) -> bool {
+pub const fn is_table_data_browse_binding(c: char) -> bool {
     matches!(
         c,
         'q' | 'e'
@@ -174,13 +174,23 @@ mod tests {
         );
         let one = ["a".to_string()];
         let ec = editable_columns_from_meta(&cols, &one, true);
-        assert!(!ec[0].editable && ec[1].editable);
+        assert!(!ec.first().unwrap().editable && ec.get(1).unwrap().editable);
         let mut ident = col("id");
         ident.default_value = Some("GENERATED AS IDENTITY".into());
-        assert!(!editable_columns_from_meta(&[ident], &[], false)[0].editable);
+        assert!(
+            !editable_columns_from_meta(&[ident], &[], false)
+                .first()
+                .unwrap()
+                .editable
+        );
         let mut auto = col("id");
         auto.default_value = Some("auto_increment".into());
-        assert!(!editable_columns_from_meta(&[auto], &[], false)[0].editable);
+        assert!(
+            !editable_columns_from_meta(&[auto], &[], false)
+                .first()
+                .unwrap()
+                .editable
+        );
     }
 
     #[test]

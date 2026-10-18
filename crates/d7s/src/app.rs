@@ -1337,7 +1337,13 @@ mod tests {
         let col = col.unwrap_or_else(|| {
             fd.table.view.state.selected_column().unwrap_or(0)
         });
-        fd.table.model.items[row].values[col].clone()
+        fd.table
+            .model
+            .items
+            .get(row)
+            .and_then(|r| r.values.get(col))
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn select_table_column(app: &mut App<'_>, col: usize) {

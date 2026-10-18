@@ -22,16 +22,6 @@ use crate::{
 };
 
 impl App<'_> {
-    pub(crate) fn table_data_selected_is_draft(&self) -> bool {
-        let Some(fd) = self.database_explorer.table_data.as_ref() else {
-            return false;
-        };
-        let Some(sel) = fd.table.view.state.selected() else {
-            return false;
-        };
-        fd.table.model.items.get(sel).is_some_and(|r| r.is_draft)
-    }
-
     fn strip_draft_rows_from_table_data(&mut self) {
         let Some(fd) = self.database_explorer.table_data.as_mut() else {
             return;
@@ -114,8 +104,7 @@ impl App<'_> {
             .table_data
             .as_ref()
             .and_then(|fd| fd.table.model.items.first())
-            .map(|r| r.values.len())
-            .unwrap_or(0);
+            .map_or(0, |r| r.values.len());
         let Some(cols) = self.database_explorer.table_columns.as_ref() else {
             return all_editable_columns(num_cols);
         };
@@ -154,7 +143,7 @@ impl App<'_> {
         Ok(())
     }
 
-    pub(crate) fn is_cell_editing(&self) -> bool {
+    pub(crate) const fn is_cell_editing(&self) -> bool {
         self.cell_edit.is_some()
     }
 
@@ -165,10 +154,10 @@ impl App<'_> {
         let Some(fd) = self.database_explorer.table_data.as_mut() else {
             return;
         };
-        if let Some(row) = fd.table.model.items.get_mut(session.row_index) {
-            if let Some(cell) = row.values.get_mut(session.col_index) {
-                *cell = session.buffer.clone();
-            }
+        if let Some(row) = fd.table.model.items.get_mut(session.row_index)
+            && let Some(cell) = row.values.get_mut(session.col_index)
+        {
+            cell.clone_from(&session.buffer);
         }
     }
 
@@ -198,10 +187,7 @@ impl App<'_> {
             self.set_status(format!("Column '{column_name}' is not editable"));
             return;
         }
-        let buffer = match replace_with {
-            None => cell_value.clone(),
-            Some(s) => s,
-        };
+        let buffer = replace_with.unwrap_or_else(|| cell_value.clone());
         if let Some(fd) = self.database_explorer.table_data.as_mut() {
             fd.table.view.state.select_column(Some(col_idx));
             fd.table.view.state.select(Some(row_idx));
@@ -229,12 +215,11 @@ impl App<'_> {
         let Some(session) = self.cell_edit.take() else {
             return;
         };
-        if let Some(fd) = self.database_explorer.table_data.as_mut() {
-            if let Some(row) = fd.table.model.items.get_mut(session.row_index) {
-                if let Some(cell) = row.values.get_mut(session.col_index) {
-                    *cell = session.pre_edit_value;
-                }
-            }
+        if let Some(fd) = self.database_explorer.table_data.as_mut()
+            && let Some(row) = fd.table.model.items.get_mut(session.row_index)
+            && let Some(cell) = row.values.get_mut(session.col_index)
+        {
+            *cell = session.pre_edit_value;
         }
     }
 
@@ -243,8 +228,7 @@ impl App<'_> {
         forward: bool,
     ) -> Result<()> {
         let row_index = self.cell_edit.as_ref().map(|s| s.row_index);
-        let from_col =
-            self.cell_edit.as_ref().map(|s| s.col_index).unwrap_or(0);
+        let from_col = self.cell_edit.as_ref().map_or(0, |s| s.col_index);
         self.finish_cell_edit().await?;
         if self.cell_edit.is_some() {
             return Ok(());
@@ -336,6 +320,8 @@ impl App<'_> {
         Ok(())
     }
 
+    // Swallow remaining keys while editing so Browse bindings cannot fire mid-edit.
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn handle_cell_edit_key(&mut self, key: KeyEvent) -> bool {
         if self.cell_edit.is_none() {
             return false;
@@ -481,10 +467,10 @@ impl App<'_> {
     fn begin_cell_edit_on_first_editable_column(&mut self) {
         let cols = self.editable_columns_for_current_table();
         let col = cols.iter().find(|c| c.editable).map(|c| c.index);
-        if let Some(col) = col {
-            if let Some(fd) = self.database_explorer.table_data.as_mut() {
-                fd.table.view.state.select_column(Some(col));
-            }
+        if let Some(col) = col
+            && let Some(fd) = self.database_explorer.table_data.as_mut()
+        {
+            fd.table.view.state.select_column(Some(col));
         }
         self.begin_cell_edit(None);
     }
@@ -880,7 +866,7 @@ impl App<'_> {
                 self.reload_current_table_data().await?;
                 Ok(true)
             }
-            KeyCode::Char('n') | KeyCode::Char('a') => {
+            KeyCode::Char('n' | 'a') => {
                 if self.table_data_add_blank_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                 }

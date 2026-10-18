@@ -10,7 +10,7 @@ use crate::{
     app::{ACTIVITY_QUERY, App},
     app_state::DatabaseExplorerState,
     db::{
-        Database, DbRowId, TableDataPage, connection::ConnectionType,
+        Database, TableDataPage, connection::ConnectionType,
         query_log::QueryOrigin,
     },
     filtered_data::FilteredData,
@@ -216,34 +216,33 @@ impl App<'_> {
             .ok();
         let page_size = self.page_size;
 
-        match database
+        // Bind the page (or return) before further awaits so `Box<dyn Error>`
+        // from the page Result is not held across `.await` (clippy::future_not_send).
+        let page = match database
             .get_table_data_page(schema_name, table_name, 0, page_size)
             .await
         {
-            Ok(page) => {
-                let col_meta =
-                    database.get_columns(schema_name, table_name).await.ok();
-                let pk_meta = database
-                    .get_primary_key_columns(schema_name, table_name)
-                    .await
-                    .ok();
-                self.replace_explorer_table_page(
-                    page, 0, page_size, total_rows,
-                );
-                let explorer = &mut self.database_explorer;
-                explorer.table_columns = col_meta;
-                explorer.table_pk_names = pk_meta;
-                explorer.state = DatabaseExplorerState::TableData(
-                    schema_name.to_string(),
-                    table_name.to_string(),
-                );
-                explorer.record_recent_table_open(schema_name, table_name);
-            }
+            Ok(page) => page,
             Err(e) => {
                 self.database_explorer.table_data_virtual = None;
                 self.status_load_failed("table data", e);
+                return Ok(());
             }
-        }
+        };
+        let col_meta = database.get_columns(schema_name, table_name).await.ok();
+        let pk_meta = database
+            .get_primary_key_columns(schema_name, table_name)
+            .await
+            .ok();
+        self.replace_explorer_table_page(page, 0, page_size, total_rows);
+        let explorer = &mut self.database_explorer;
+        explorer.table_columns = col_meta;
+        explorer.table_pk_names = pk_meta;
+        explorer.state = DatabaseExplorerState::TableData(
+            schema_name.to_string(),
+            table_name.to_string(),
+        );
+        explorer.record_recent_table_open(schema_name, table_name);
 
         Ok(())
     }
@@ -562,14 +561,6 @@ impl App<'_> {
         let cell_value = row.values.get(selected_col)?.clone();
         let snap = row.values.clone();
         Some((column_name, cell_value, selected_row, selected_col, snap))
-    }
-
-    fn get_selected_row_db_id(&self) -> Option<DbRowId> {
-        let explorer = &self.database_explorer;
-        let fd = explorer.table_data.as_ref()?;
-        let selected = fd.table.view.state.selected()?;
-        let row = fd.table.model.items.get(selected)?;
-        row.db_row_id.clone()
     }
 
     /// Persist a cell edit from the modal or inline editor.

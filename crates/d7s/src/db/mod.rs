@@ -215,14 +215,14 @@ pub fn sqlite_rowid_pk_omit(col: &Column, pk_first: Option<&str>) -> bool {
 
 /// The PK column name when the primary key is a single column.
 #[must_use]
-pub fn sole_pk(pk_names: &[String]) -> Option<&str> {
+pub const fn sole_pk(pk_names: &[String]) -> Option<&str> {
     match pk_names {
         [only] => Some(only.as_str()),
         _ => None,
     }
 }
 
-/// Default expressions meaning the DB generates the value (serial, PG identity, MySQL auto_increment).
+/// Default expressions meaning the DB generates the value (serial, PG identity, MySQL `auto_increment`).
 fn is_generated_default(d: &str) -> bool {
     let d = d.to_lowercase();
     d.contains("nextval") || d.contains("identity") || d == "auto_increment"
