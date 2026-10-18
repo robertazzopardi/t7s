@@ -1,6 +1,6 @@
 # k9tui
 
-Reusable [k9s](https://k9scli.io/)-style ratatui widget kit — theme, tables, modals, top bar and hotkey chrome for building keyboard-driven, row-based TUI apps. Extracted from [d7s](https://github.com/robertazzopardi/t7s), which remains its reference consumer.
+Part of [t7s](https://github.com/robertazzopardi/t7s#naming) (terminals). Shared UI crate for [k9s](https://k9scli.io/)-style ratatui apps — theme, tables, modals, top bar and hotkeys for building keyboard-driven, row-based TUIs. Extracted from [d7s](https://github.com/robertazzopardi/t7s), which remains its reference consumer.
 
 ## What's in it
 
@@ -22,7 +22,7 @@ Reusable [k9s](https://k9scli.io/)-style ratatui widget kit — theme, tables, m
 k9tui = "0.1"
 ```
 
-App-specific behavior (domain types, orchestration, key-handling policy) stays in the consuming crate; k9tui only holds chrome and interaction patterns with no dependency back on any app.
+App-specific behavior (domain types, orchestration, key-handling policy) stays in the consuming crate; k9tui only holds shared UI widgets and interaction patterns with no dependency back on any app.
 
 ## Status
 

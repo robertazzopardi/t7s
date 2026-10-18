@@ -1,8 +1,8 @@
 ## Learned User Preferences
 
-- Keep d7s visually and interaction-wise k9s-like (chrome, density, and flow should read as a k9s-style TUI).
+- Keep d7s visually and interaction-wise k9s-like (layout, density, and flow should read as a k9s-style TUI).
 - Prefer real ratatui `Block` / `Table` / `Paragraph` widgets with borders over custom borderless or hand-drawn layouts.
-- Do not strip the ASCII logo or Block borders for “density”; compact chrome that removes branded panel structure is a rejected look.
+- Do not strip the ASCII logo or Block borders for “density”; a compact layout that removes branded panel structure is a rejected look.
 - When restyling, match k9s as the visual reference but keep the widget-based structure of the polished baseline screenshot—do not abandon ratatui widgets.
 - Funnel help and similar lists through the main navigable table (Key / Description style), not a separate boxed panel.
 - Prefer jj for local branch/bookmark workflows; verify a bookmark before merge and be careful with `main`.

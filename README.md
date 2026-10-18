@@ -2,6 +2,10 @@
 
 A monorepo of k9s-style terminal UIs, built in Rust with [Ratatui](https://ratatui.rs).
 
+## Naming
+
+**t7s** is short for “terminals”. Apps in the family follow it: **d7s** (databases), **c8s** (containers), plus **k9tui**, the shared UI crate.
+
 ## Why
 
 After discovering [k9s](https://k9scli.io/), I liked its format enough to want it for more than Kubernetes — a keyboard-driven, table-first TUI shell reused across a few small tools.
@@ -22,7 +26,7 @@ A TUI for Docker: containers (with CPU/memory), images, volumes and networks, st
 
 ## Shared widget kit
 
-- **[`crates/k9tui`](crates/k9tui)** — the k9s-style ratatui chrome (theme, tables, modals, top bar, hotkeys) both apps build on, with no dependency back on either. See its [README](crates/k9tui/README.md).
+- **[`crates/k9tui`](crates/k9tui)** — shared UI crate (theme, tables, modals, top bar, hotkeys) both apps build on, with no dependency back on either. See its [README](crates/k9tui/README.md).
 
 ## Installing
 
