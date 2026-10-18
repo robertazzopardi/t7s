@@ -200,6 +200,15 @@ impl App<'_> {
         self.set_status("Connection health check complete.");
     }
 
+    /// Run the connection-list health probe once at startup when any
+    /// connections are saved. No-op for an empty list.
+    pub async fn ping_connections_on_launch(&mut self) {
+        if self.database_explorer.connections.original.is_empty() {
+            return;
+        }
+        self.check_connections_health().await;
+    }
+
     /// Disconnect from the current database
     pub fn disconnect_from_database(&mut self) {
         self.database_explorer.state = DatabaseExplorerState::Connections;

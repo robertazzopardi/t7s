@@ -155,6 +155,7 @@ impl App<'_> {
     #[allow(clippy::future_not_send)]
     pub async fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
+        self.ping_connections_on_launch().await;
         while self.running {
             terminal.draw(|frame| self.render(frame))?;
             self.tick_watch().await;
@@ -1044,6 +1045,47 @@ mod tests {
         assert!(text.contains("Status"));
         assert!(text.contains("● up"));
         assert_eq!(text.matches("● down").count(), 2);
+        let _ = std::fs::remove_file(&present.path);
+    }
+
+    #[tokio::test]
+    async fn ping_on_launch_skips_when_no_connections() {
+        let mut app = App::default();
+        app.ping_connections_on_launch().await;
+        assert!(app.database_explorer.connections.original.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ping_on_launch_sets_statuses() {
+        let present = temp_sqlite("launch-ping-present");
+        std::fs::write(&present.path, b"").unwrap();
+        let missing = temp_sqlite("launch-ping-missing");
+
+        let mut app = App::default();
+        app.database_explorer.connections = FilteredData::new(vec![
+            sqlite_conn("present", &present.path),
+            sqlite_conn("missing", &missing.path),
+        ]);
+        assert!(app
+            .database_explorer
+            .connections
+            .original
+            .iter()
+            .all(|c| c.status == ConnectionStatus::Unknown));
+
+        app.ping_connections_on_launch().await;
+
+        let statuses: Vec<_> = app
+            .database_explorer
+            .connections
+            .original
+            .iter()
+            .map(|c| c.status)
+            .collect();
+        assert_eq!(
+            statuses,
+            vec![ConnectionStatus::Up, ConnectionStatus::Down]
+        );
         let _ = std::fs::remove_file(&present.path);
     }
 
