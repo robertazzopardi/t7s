@@ -1,42 +1,43 @@
 # t7s
 
-A monorepo of k9s-style terminal UIs, built in Rust with [Ratatui](https://ratatui.rs).
+k9s-style terminal UIs in Rust ([Ratatui](https://ratatui.rs)). **t7s** is short for “terminals”: **d7s** (databases), **c8s** (containers), and **k9tui** (shared UI crate).
 
-## Naming
-
-**t7s** is short for “terminals”. Apps in the family follow it: **d7s** (databases), **c8s** (containers), plus **k9tui**, the shared UI crate.
-
-## Why
-
-After discovering [k9s](https://k9scli.io/), I liked its format enough to want it for more than Kubernetes — a keyboard-driven, table-first TUI shell reused across a few small tools.
+Inspired by [k9s](https://k9scli.io/) — keyboard-driven, table-first TUIs for more than Kubernetes.
 
 ## Apps
 
 ### [d7s](crates/d7s)
 
-A TUI database client for PostgreSQL and SQLite: connection management, keyring-backed credentials, schema/table/row navigation, and a SQL executor. See its [README](crates/d7s/README.md).
+PostgreSQL, MySQL/MariaDB, and SQLite client: connections, keyring credentials, schema/table/row navigation, SQL editor. [README](crates/d7s/README.md).
 
 ![d7s — connect, browse tables, filter, help, SQL](crates/d7s/demo.gif)
 
 ### [c8s](crates/c8s)
 
-A TUI for Docker: containers (with CPU/memory), images, volumes and networks, start/stop/restart/remove, live log tail, and exec shell. See its [README](crates/c8s/README.md).
+Docker TUI: containers (CPU/memory), images, volumes, networks, logs, exec. [README](crates/c8s/README.md).
 
 ![c8s — container list, restart, live logs](crates/c8s/demo.gif)
 
-## Shared widget kit
+### [k9tui](crates/k9tui)
 
-- **[`crates/k9tui`](crates/k9tui)** — shared UI crate (theme, tables, modals, top bar, hotkeys) both apps build on, with no dependency back on either. See its [README](crates/k9tui/README.md).
+Shared UI crate (theme, tables, modals, top bar, hotkeys). [README](crates/k9tui/README.md).
 
-## Installing
+## Install
 
 ```sh
 cargo install d7s --locked
 cargo install c8s --locked
 ```
 
-See each app's README for details.
+Prebuilt binaries are on [GitHub Releases](https://github.com/robertazzopardi/t7s/releases), or `cargo binstall d7s` / `cargo binstall c8s`.
 
 ## Contributing
 
-PRs welcome. `just check` runs fmt, clippy (pedantic/nursery), and tests before you push — see `just --list` for other recipes.
+PRs welcome. `just check` runs fmt, clippy, and tests (`just --list` for more).
+
+## Releasing
+
+1. Put notes under `## [x.y.z]` in `crates/<crate>/CHANGELOG.md` (not only `[Unreleased]`).
+2. `just release <k9tui|d7s|c8s> <version>` — publishes to crates.io, then tags (`vX.Y.Z` / `c8s-vX.Y.Z` / `k9tui-vX.Y.Z`). Binstall picks up archive URLs from the published crate metadata.
+3. Tag runs `.github/workflows/release.yml` (per-target archives + `SHA256SUMS`; only d7s is GitHub Latest). k9tui has no binary release.
+4. Rebuild an existing tag: `gh workflow run release.yml --ref main -f tag=v0.5.0`. Delete stale bare assets if present: `gh release delete-asset <tag> d7s -y` (and `d7s.exe`).
