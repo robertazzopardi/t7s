@@ -150,6 +150,7 @@ impl Mysql {
             // Report matched (not just changed) rows so a no-op edit isn't "0 rows".
             .client_found_rows(true)
             .db_name((!self.database.is_empty()).then_some(&self.database));
+        self.tls.check_valid()?;
         let mode = self.tls.mode;
         if mode == TlsMode::Disable {
             return Ok(Conn::new(base).await?);

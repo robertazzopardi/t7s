@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-- TLS for PostgreSQL and MySQL/MariaDB connections (rustls). The connection form has a **TLS** mode (`disable`, `prefer`, `require`, `verify-full`) and an optional **CA Cert** path (used by `verify-full`), stored in the URL as `sslmode=`/`ssl-mode=` and `sslrootcert=`. Default stays `disable`. `prefer` and `require` encrypt but do not verify the certificate.
+- TLS for PostgreSQL and MySQL/MariaDB connections (rustls). The connection form has a **TLS** mode (`disable`, `prefer`, `require`, `verify-full`) and an optional **CA Cert** path (used by `verify-full`), stored in the URL as `sslmode=`/`ssl-mode=` and `sslrootcert=`. Default stays `disable`. `prefer` and `require` encrypt but do not verify the certificate. URL `verify-ca` is accepted as `verify-full` (rustls always checks the host name). Unknown `sslmode` / `ssl-mode` values are rejected instead of falling back to plaintext.
 
 ## [0.5.0] - 2026-10-10
 

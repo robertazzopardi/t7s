@@ -18,7 +18,7 @@ d7s and c8s are the shipped apps; k9tui exists so k9s-style TUI apps in this wor
 
 ## Features
 
-- **Multi-db Support** — currently supports PostgreSQL, MySQL/MariaDB and SQLite, with more to come! (MySQL connections have no TLS yet; tables without a primary key are read-only.)
+- **Multi-db Support** — currently supports PostgreSQL, MySQL/MariaDB and SQLite, with more to come! (TLS for Postgres and MySQL/MariaDB via rustls; MySQL tables without a primary key are read-only.)
 - **Connection management** — save, edit, and delete named connections.
 - **Credential storage** — passwords are stored in the platform keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service), or never saved and prompted everytime.
 - **Database traversal** — navigate databases, schemas, tables, columns, and row data with keyboard-driven menus, supports vim.

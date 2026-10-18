@@ -59,6 +59,8 @@ pub struct TlsConfig {
     pub mode: TlsMode,
     /// PEM file with extra root certificates (self-signed or private CA).
     pub ca_path: Option<String>,
+    /// Unrecognized `sslmode` / `ssl-mode` from the URL (connect must fail).
+    invalid_mode: Option<String>,
 }
 
 impl TlsConfig {
@@ -71,7 +73,13 @@ impl TlsConfig {
         for (k, v) in url.query_pairs() {
             match k.as_ref() {
                 "sslmode" | "ssl-mode" | "ssl_mode" => {
-                    cfg.mode = TlsMode::parse(&v).unwrap_or(cfg.mode);
+                    if let Some(mode) = TlsMode::parse(&v) {
+                        cfg.mode = mode;
+                        cfg.invalid_mode = None;
+                    } else {
+                        // Do not fall back to disable — a typo must not go plaintext.
+                        cfg.invalid_mode = Some(v.into_owned());
+                    }
                 }
                 "sslrootcert" | "ssl-ca" | "ssl_ca" if !v.is_empty() => {
                     cfg.ca_path = Some(v.into_owned());
@@ -82,12 +90,31 @@ impl TlsConfig {
         cfg
     }
 
+    /// Fail fast when the URL had an unrecognized TLS mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `sslmode` / `ssl-mode` was present but not recognized.
+    pub fn check_valid(&self) -> io::Result<()> {
+        if let Some(bad) = &self.invalid_mode {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "unknown TLS mode `{bad}` (use disable, prefer, require, or verify-full)"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// rustls config for the current mode (not meaningful for `Disable`).
     ///
     /// # Errors
     ///
-    /// Returns an error if the CA file cannot be read or parsed.
+    /// Returns an error if the CA file cannot be read or parsed, or if the URL
+    /// TLS mode was unrecognized.
     pub fn client_config(&self) -> io::Result<ClientConfig> {
+        self.check_valid()?;
         let provider = Arc::new(aws_lc_rs::default_provider());
         let builder = ClientConfig::builder_with_provider(provider.clone())
             .with_safe_default_protocol_versions()
@@ -189,6 +216,20 @@ mod tests {
             TlsConfig::from_url("postgres://u@h/db").mode,
             TlsMode::Disable
         );
+        assert!(
+            TlsConfig::from_url("postgres://u@h/db")
+                .check_valid()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn unknown_sslmode_is_rejected() {
+        let c = TlsConfig::from_url("postgres://u@h/db?sslmode=typo");
+        assert!(c.check_valid().is_err());
+        assert!(c.client_config().is_err());
+        let msg = c.check_valid().unwrap_err().to_string();
+        assert!(msg.contains("typo"), "{msg}");
     }
 
     #[test]
@@ -196,11 +237,12 @@ mod tests {
         let c = TlsConfig {
             mode: TlsMode::VerifyFull,
             ca_path: Some("/nonexistent/ca.pem".into()),
+            ..TlsConfig::default()
         };
         assert!(c.client_config().is_err());
     }
 
-    // ---- live tests: need `just docker-tls-up` and `docker compose up -d postgres` ----
+    // ---- live tests: need `just docker-tls-up` (includes plain Postgres on 5432) ----
 
     use ConnectionType::{Mysql, Postgres};
 

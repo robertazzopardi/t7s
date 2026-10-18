@@ -28,6 +28,7 @@ async fn connect_pg(
     config: &str,
     tls: &TlsConfig,
 ) -> Result<tokio_postgres::Client, Box<dyn std::error::Error>> {
+    tls.check_valid()?;
     let mut config: tokio_postgres::Config = config.parse()?;
     // With `SslMode::Disable` the connector is never used.
     config.ssl_mode(match tls.mode {

@@ -464,6 +464,10 @@ impl Connection {
                     .unwrap_or(&database_from_url);
                 lines.push(format!("Host: {host}"));
                 lines.push(format!("User: {user}"));
+                lines.push(format!(
+                    "TLS: {}",
+                    TlsConfig::from_url(&self.url).mode.label()
+                ));
                 lines.push(format!("Database: {database}"));
                 if let Some(schema) =
                     self.schema.as_deref().filter(|s| !s.is_empty())

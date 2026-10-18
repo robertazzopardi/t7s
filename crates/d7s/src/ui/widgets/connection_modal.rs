@@ -1054,12 +1054,12 @@ impl Modal {
         );
     }
 
-    /// Fixed height for fields section; dropdown is drawn as overlay and does not expand layout.
+    /// Height for fields section; dropdown is drawn as overlay and does not expand layout.
     fn fields_section_height(&self) -> u16 {
         let rows = u16::try_from(self.visible_fields_count())
             .unwrap_or(u16::MAX)
             + u16::from(self.is_password_storage_row_visible());
-        (rows + 2).min(9) // rows + padding, cap for modal
+        rows + 2 // rows + padding (no fixed cap — TLS/CA fields need the space)
     }
 }
 
