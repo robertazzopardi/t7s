@@ -45,7 +45,7 @@ PRs welcome. `just check` runs fmt, clippy (pedantic/nursery), and tests before 
 
 ## Releasing
 
-1. Bump the crate version and add a `## [x.y.z]` section to `crates/<crate>/CHANGELOG.md`, using these headings in order (omit empty ones): optional highlights / `### New crates`, `### Breaking`, `### Added`, `### Changed`, `### Fixed`.
-2. Merge to `main`, then `just release <k9tui|d7s|c8s> <version>` (publishes to crates.io, then tags `vX.Y.Z` for d7s or `c8s-vX.Y.Z` for c8s).
-3. The tag triggers `.github/workflows/release.yml`: it builds archives (`<crate>-v<version>-<target>.tar.gz`/`.zip`) plus `SHA256SUMS`, and publishes a release whose body is the CHANGELOG section plus a generated Install table. k9tui tags build nothing.
-4. To rebuild assets for an existing tag: `gh workflow run release.yml -f tag=v0.5.0`.
+1. Bump the crate version and move notes into a `## [x.y.z]` section in `crates/<crate>/CHANGELOG.md` (do not leave the release notes only under `[Unreleased]`). Use these headings in order (omit empty ones): optional highlights / `### New crates`, `### Breaking`, `### Added`, `### Changed`, `### Fixed`.
+2. Merge to `main`, then `just release <k9tui|d7s|c8s> <version>` (publishes to crates.io, then tags `vX.Y.Z` for d7s or `c8s-vX.Y.Z` for c8s). Publishing is what makes `cargo binstall` see new archive URLs; repairing GitHub assets alone does not update crates.io metadata for an already-published version.
+3. The tag triggers `.github/workflows/release.yml`: it builds archives (`<crate>-v<version>-<target>.tar.gz`/`.zip`) plus `SHA256SUMS`, and publishes a release whose body is that version’s CHANGELOG section plus a generated Install table. Only d7s is marked GitHub “Latest”. k9tui tags build nothing.
+4. To rebuild assets for an existing tag: `gh workflow run release.yml --ref main -f tag=v0.5.0`. Same-named archives are replaced; delete leftover pre-archive assets from older releases (`d7s`, `d7s.exe`) with `gh release delete-asset <tag> <name> -y`.
