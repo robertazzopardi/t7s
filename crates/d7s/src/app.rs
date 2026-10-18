@@ -1068,12 +1068,13 @@ mod tests {
             sqlite_conn("present", &present.path),
             sqlite_conn("missing", &missing.path),
         ]);
-        assert!(app
-            .database_explorer
-            .connections
-            .original
-            .iter()
-            .all(|c| c.status == ConnectionStatus::Unknown));
+        assert!(
+            app.database_explorer
+                .connections
+                .original
+                .iter()
+                .all(|c| c.status == ConnectionStatus::Unknown)
+        );
 
         app.ping_connections_if_any().await;
 
@@ -1101,22 +1102,20 @@ mod tests {
         app.database_explorer.connections =
             FilteredData::new(vec![sqlite_conn("present", &present.path)]);
         app.ping_connections_if_any().await;
-        assert_eq!(
-            app.database_explorer.connections.original[0].status,
-            ConnectionStatus::Up
-        );
+        let status = |app: &App<'_>| {
+            app.database_explorer
+                .connections
+                .original
+                .first()
+                .map(|c| c.status)
+        };
+        assert_eq!(status(&app), Some(ConnectionStatus::Up));
 
         app.database_explorer.connections =
             FilteredData::new(vec![sqlite_conn("present", &present.path)]);
-        assert_eq!(
-            app.database_explorer.connections.original[0].status,
-            ConnectionStatus::Unknown
-        );
+        assert_eq!(status(&app), Some(ConnectionStatus::Unknown));
         app.ping_connections_if_any().await;
-        assert_eq!(
-            app.database_explorer.connections.original[0].status,
-            ConnectionStatus::Up
-        );
+        assert_eq!(status(&app), Some(ConnectionStatus::Up));
         let _ = std::fs::remove_file(&present.path);
     }
 
