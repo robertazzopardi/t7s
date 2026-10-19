@@ -1,7 +1,7 @@
 use crossterm::event::KeyCode;
 use k9tui::widgets::hotkey::Hotkey;
 
-pub const LIST_HOTKEYS: [Hotkey; 10] = [
+pub const LIST_HOTKEYS: [Hotkey; 11] = [
     Hotkey::new('a', "running only"),
     Hotkey::new('p', "processes"),
     Hotkey::new('s', "start/stop"),
@@ -11,15 +11,17 @@ pub const LIST_HOTKEYS: [Hotkey; 10] = [
     Hotkey::new('d', "describe"),
     Hotkey::new('D', "remove"),
     Hotkey::new('i', "daemon health"),
+    Hotkey::new('W', "column width"),
     Hotkey::new(':', "command"),
 ];
 
 /// Hotkeys shown for the image/volume/network list views, which only
 /// support navigation and removal (no start/stop/restart/logs/exec).
-pub const RESOURCE_HOTKEYS: [Hotkey; 4] = [
+pub const RESOURCE_HOTKEYS: [Hotkey; 5] = [
     Hotkey::new('d', "describe"),
     Hotkey::new('D', "remove"),
     Hotkey::new('i', "daemon health"),
+    Hotkey::new('W', "column width"),
     Hotkey::new(':', "command"),
 ];
 
@@ -55,6 +57,7 @@ pub fn process_hotkeys() -> Vec<Hotkey> {
         Hotkey::new('k', "up"),
         Hotkey::new('g', "top"),
         Hotkey::new('G', "bottom"),
+        Hotkey::new('W', "column width"),
         Hotkey::code(KeyCode::Esc, "back"),
         Hotkey::new('q', "back"),
     ]
