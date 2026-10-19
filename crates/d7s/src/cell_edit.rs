@@ -25,7 +25,7 @@ pub const fn is_table_data_browse_binding(c: char) -> bool {
         // app / overlays
         'q' | '?' | ':' | '/' | '#' | ' '
         // connection + explorer chrome
-        | 'e' | 'E' | 't' | 'd' | 'b' | 'w' | 'A' | 'L' | 'o' | 'O' | 'p' | 'x'
+        | 'e' | 'E' | 't' | 'd' | 'b' | 'w' | 'W' | 'A' | 'L' | 'o' | 'O' | 'p' | 'x'
         // recent tables
         | '1' | '2' | '3' | '4' | '5'
         // table-data row ops
@@ -112,6 +112,12 @@ pub fn prev_editable_column(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn width_toggle_key_is_browse_binding() {
+        assert!(is_table_data_browse_binding('W'));
+        assert!(is_table_data_browse_binding('w')); // watch, not width
+    }
 
     #[test]
     fn browse_bindings_include_create_and_commit_keys() {

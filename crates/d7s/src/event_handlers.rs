@@ -384,6 +384,10 @@ impl App<'_> {
                 self.toggle_watch();
                 Ok(true)
             }
+            (_, KeyCode::Char('W')) => {
+                self.toggle_column_width_mode();
+                Ok(true)
+            }
             (_, KeyCode::Char('L'))
                 if self.state == AppState::DatabaseConnected =>
             {

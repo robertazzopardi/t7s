@@ -20,7 +20,7 @@ use crossterm::{
 use k9tui::widgets::{
     hotkey::Hotkey,
     status_line::StatusLine,
-    table::{TableData, TableDataState},
+    table::{ColumnWidthMode, TableData, TableDataState},
 };
 use ratatui::DefaultTerminal;
 use ratatui_textarea::TextArea;
@@ -110,6 +110,8 @@ pub struct App<'a> {
     pub(crate) show_query_log: bool,
     pub(crate) query_log_table: TableDataState<QueryLogEntry>,
     pub(crate) cell_edit: Option<CellEditSession>,
+    /// `W`: session-wide column layout (Fit / Content) for every data table.
+    pub(crate) column_width_mode: ColumnWidthMode,
 }
 
 impl Default for App<'_> {
@@ -140,11 +142,48 @@ impl Default for App<'_> {
             show_query_log: false,
             query_log_table: TableDataState::new(Vec::new()),
             cell_edit: None,
+            column_width_mode: ColumnWidthMode::Fit,
         }
     }
 }
 
 impl App<'_> {
+    pub(crate) fn toggle_column_width_mode(&mut self) {
+        self.column_width_mode = self.column_width_mode.toggle();
+        self.sync_column_width_mode();
+        self.set_status(format!(
+            "Column width: {}",
+            self.column_width_mode.label()
+        ));
+    }
+
+    /// Push the session width mode onto every table the app owns, so tables
+    /// created later (new query, new drill-down) inherit it.
+    pub(crate) fn sync_column_width_mode(&mut self) {
+        let m = self.column_width_mode;
+        self.help_table.view.column_width_mode = m;
+        self.describe_table.view.column_width_mode = m;
+        self.query_log_table.view.column_width_mode = m;
+        let e = &mut self.database_explorer;
+        e.connections.table.view.column_width_mode = m;
+        if let Some(t) = &mut e.databases {
+            t.table.view.column_width_mode = m;
+        }
+        if let Some(t) = &mut e.schemas {
+            t.table.view.column_width_mode = m;
+        }
+        if let Some(t) = &mut e.tables {
+            t.table.view.column_width_mode = m;
+        }
+        if let Some(t) = &mut e.columns {
+            t.table.view.column_width_mode = m;
+        }
+        if let Some(t) = &mut e.table_data {
+            t.table.view.column_width_mode = m;
+        }
+        e.sql_executor.table_state.view.column_width_mode = m;
+    }
+
     /// Post initilisation for the App
     pub fn init(mut self) -> Result<Self> {
         init_db()?;
@@ -2141,10 +2180,10 @@ mod tests {
             let _ = render_sized(&mut app, w, h);
         }
         let text = render_sized(&mut app, 80, 24);
-        assert!(text.contains(long), "ghost fits at 80 cols");
+        assert!(text.contains(long), "long name fits at 80 cols (not Fit-soft-capped)");
         // Ghost is clipped, not wrapped, in a 20x5 terminal.
         let text = render_sized(&mut app, 20, 5);
-        assert!(!text.contains(long));
+        assert!(!text.contains(&long[3..]));
         // Typed text wider than the bar: ghost vanishes, no panic.
         type_str(&mut app, &"x".repeat(300)).await;
         for (w, h) in [(20, 5), (80, 24), (5, 3)] {
@@ -2278,5 +2317,31 @@ mod tests {
         );
         run_cmd(&mut app, "conn").await;
         assert_eq!(app.state, AppState::ConnectionList);
+    }
+
+    #[test]
+    fn toggle_column_width_mode_syncs_all_tables() {
+        let mut app = App::default();
+        assert_eq!(app.column_width_mode, ColumnWidthMode::Fit);
+        app.toggle_column_width_mode();
+        assert_eq!(app.column_width_mode, ColumnWidthMode::Content);
+        assert_eq!(app.status_line.message(), "Column width: Content");
+        assert_eq!(
+            app.help_table.view.column_width_mode,
+            ColumnWidthMode::Content
+        );
+        assert_eq!(
+            app.database_explorer
+                .sql_executor
+                .table_state
+                .view
+                .column_width_mode,
+            ColumnWidthMode::Content
+        );
+        app.toggle_column_width_mode();
+        assert_eq!(
+            app.database_explorer.connections.table.view.column_width_mode,
+            ColumnWidthMode::Fit
+        );
     }
 }

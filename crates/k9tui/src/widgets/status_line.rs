@@ -26,6 +26,11 @@ impl StatusLine {
         self.message = message.into();
     }
 
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
     pub fn set_idle_hint<S: Into<String>>(&mut self, hint: S) {
         self.idle_hint = hint.into();
     }

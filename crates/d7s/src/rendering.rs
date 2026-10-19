@@ -42,6 +42,7 @@ const FILTER_BAR_HEIGHT: u16 = 3;
 impl App<'_> {
     #[allow(clippy::too_many_lines)]
     pub fn render(&mut self, frame: &mut Frame) {
+        self.sync_column_width_mode();
         let idle_hint =
             default_idle_hint(self.state, &self.database_explorer.state);
         self.status_line.set_idle_hint(if self.watch_active {

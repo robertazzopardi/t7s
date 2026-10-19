@@ -19,7 +19,7 @@ use k9tui::widgets::{
     hotkey::Hotkey,
     modal::ConfirmDialog,
     status_line::StatusLine,
-    table::{TableData, TableDataState, filter_rows},
+    table::{ColumnWidthMode, TableData, TableDataState, filter_rows},
 };
 use ratatui::{
     DefaultTerminal, Terminal,
@@ -91,6 +91,8 @@ pub struct App {
     pub(crate) volumes: TableDataState<VolumeRow>,
     pub(crate) networks: TableDataState<NetworkRow>,
     pub(crate) processes: TableDataState<ProcessRow>,
+    /// Session-wide Fit/Content column sizing (`W` toggles).
+    pub(crate) column_width_mode: ColumnWidthMode,
     /// Aborts the running `docker top` poller, if any, when leaving the view.
     pub(crate) process_task: Option<JoinHandle<()>>,
     /// Where `q` goes from the log view when it was not opened from the list.
@@ -158,6 +160,7 @@ impl App {
             volumes: TableDataState::new(Vec::new()),
             networks: TableDataState::new(Vec::new()),
             processes: TableDataState::new(Vec::new()),
+            column_width_mode: ColumnWidthMode::Fit,
             process_task: None,
             logs_back: None,
             containers_all: Vec::new(),
@@ -188,6 +191,26 @@ impl App {
             log_task: None,
             poll_task: None,
         }
+    }
+
+    pub(crate) fn toggle_column_width_mode(&mut self) {
+        self.column_width_mode = self.column_width_mode.toggle();
+        self.sync_column_width_mode();
+        self.set_status(format!(
+            "Column width: {}",
+            self.column_width_mode.label()
+        ));
+    }
+
+    /// Push the session width mode onto every table, including `processes`,
+    /// which is recreated on each open.
+    pub(crate) fn sync_column_width_mode(&mut self) {
+        let m = self.column_width_mode;
+        self.containers.view.column_width_mode = m;
+        self.images.view.column_width_mode = m;
+        self.volumes.view.column_width_mode = m;
+        self.networks.view.column_width_mode = m;
+        self.processes.view.column_width_mode = m;
     }
 
     /// Attempt to connect to the daemon and, on success, start polling.
