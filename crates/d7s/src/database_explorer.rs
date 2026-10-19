@@ -9,13 +9,14 @@ use k9tui::widgets::{
 use crate::{
     app::{ACTIVITY_QUERY, App},
     app_state::DatabaseExplorerState,
+    bg::{BgEvent, SqlExecuteOk},
     db::{
         Database, DbRowId, TableDataPage, connection::ConnectionType,
         query_log::QueryOrigin,
     },
+    in_flight::sql_key,
     error::Result,
     filtered_data::FilteredData,
-    services::PreferencesService,
     ui::widgets::{
         connection_modal::CellValueApply, raw_table::RawTableStateExt,
     },
@@ -744,17 +745,17 @@ impl App<'_> {
     }
 
     /// Execute SQL query from the SQL executor
-    pub(crate) async fn execute_sql_query(&mut self) {
-        self.execute_sql_query_inner(true).await;
+    pub(crate) fn execute_sql_query(&mut self) {
+        self.execute_sql_query_inner(true);
     }
 
     /// Re-run the currently selected statement without touching SQL history.
     /// Used by watch mode's periodic refresh.
-    pub(crate) async fn execute_sql_query_watch_tick(&mut self) {
-        self.execute_sql_query_inner(false).await;
+    pub(crate) fn execute_sql_query_watch_tick(&mut self) {
+        self.execute_sql_query_inner(false);
     }
 
-    async fn execute_sql_query_inner(&mut self, record_history: bool) {
+    fn execute_sql_query_inner(&mut self, record_history: bool) {
         let sql = self
             .database_explorer
             .sql_executor
@@ -767,12 +768,21 @@ impl App<'_> {
             return;
         }
 
-        let Some(database) = self.database_explorer.database.as_ref() else {
+        let Some(database) = self.database_explorer.database.clone() else {
             self.set_status(STATUS_DB_NOT_CONNECTED);
             return;
         };
 
-        // Clear any previous results/errors before executing
+        let key = sql_key(&self.database_explorer.connection.name);
+        if record_history {
+            if !self.in_flight.try_begin(key.clone()) {
+                self.set_status("Already running a query on this connection");
+                return;
+            }
+        } else if !self.in_flight.try_begin(key.clone()) {
+            return;
+        }
+
         self.database_explorer.sql_executor.clear_results();
         self.query_log.set_origin(if !record_history {
             QueryOrigin::Watch
@@ -781,24 +791,37 @@ impl App<'_> {
         } else {
             QueryOrigin::User
         });
+        self.set_status("Running query…");
 
-        match database.execute_sql(&sql).await {
-            Ok(results) => {
-                let Some(first) = results.first() else {
-                    self.set_status(
-                        "Query executed successfully but returned no data",
-                    );
-                    return;
-                };
-                let cols = first.column_names.clone();
-                let data = results.into_iter().map(|r| r.values).collect();
-                self.database_explorer.sql_executor.set_results(data, &cols);
-                if record_history {
-                    let _ = PreferencesService::push_sql_history(&sql);
+        let tx = self.bg_tx.clone();
+        tokio::spawn(async move {
+            let result = match database.execute_sql(&sql).await {
+                Ok(results) => {
+                    let Some(first) = results.first() else {
+                        let _ = tx.send(BgEvent::SqlFinished {
+                            key,
+                            sql,
+                            record_history,
+                            result: Err(
+                                "Query executed successfully but returned no data"
+                                    .into(),
+                            ),
+                        });
+                        return;
+                    };
+                    let cols = first.column_names.clone();
+                    let rows = results.into_iter().map(|r| r.values).collect();
+                    Ok(SqlExecuteOk { cols, rows })
                 }
-            }
-            Err(e) => self.set_status(format!("SQL error: {e}")),
-        }
+                Err(e) => Err(e.to_string()),
+            };
+            let _ = tx.send(BgEvent::SqlFinished {
+                key,
+                sql,
+                record_history,
+                result,
+            });
+        });
     }
 
     /// Go back to previous level in database navigation

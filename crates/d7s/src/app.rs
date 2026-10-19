@@ -32,8 +32,8 @@ use ratatui_textarea::TextArea;
 use crate::{
     app,
     app_state::{AppState, DatabaseExplorerState},
-    bg::BgEvent,
-    in_flight::InFlight,
+    bg::{BgEvent, SqlExecuteOk},
+    in_flight::{InFlight, sql_key},
     cell_edit::CellEditSession,
     database_explorer_state::DatabaseExplorer,
     db::{
@@ -117,7 +117,6 @@ pub struct App<'a> {
     pub(crate) query_log_table: TableDataState<QueryLogEntry>,
     pub(crate) cell_edit: Option<CellEditSession>,
     pub(crate) in_flight: InFlight,
-    #[allow(dead_code)] // wired in Tasks 9–12
     pub(crate) bg_tx: UnboundedSender<BgEvent>,
     pub(crate) bg_rx: UnboundedReceiver<BgEvent>,
 }
@@ -202,6 +201,41 @@ impl App<'_> {
                     self.in_flight.end(&key);
                     self.set_status(message);
                 }
+                BgEvent::SqlFinished {
+                    key,
+                    sql,
+                    record_history,
+                    result,
+                } => {
+                    self.in_flight.end(&key);
+                    let still_sql_view = sql_key(&self.database_explorer.connection.name)
+                        == key
+                        && matches!(
+                            self.database_explorer.state,
+                            DatabaseExplorerState::SqlResults(_)
+                        );
+                    match result {
+                        Ok(SqlExecuteOk { cols, rows }) => {
+                            if still_sql_view {
+                                self.database_explorer
+                                    .sql_executor
+                                    .set_results(rows, &cols);
+                            }
+                            if record_history {
+                                let _ = PreferencesService::push_sql_history(&sql);
+                            }
+                        }
+                        Err(message) => {
+                            if message
+                                == "Query executed successfully but returned no data"
+                            {
+                                self.set_status(message);
+                            } else {
+                                self.set_status(format!("SQL error: {message}"));
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -224,7 +258,7 @@ impl App<'_> {
             return;
         }
         self.watch_last_tick = Instant::now();
-        self.execute_sql_query_watch_tick().await;
+        self.execute_sql_query_watch_tick();
     }
 
     /// Toggle SQL-results watch mode (`w`).
@@ -721,7 +755,7 @@ impl App<'_> {
         self.database_explorer
             .sql_executor
             .set_selected_statement(statement);
-        self.execute_sql_query().await;
+        self.execute_sql_query();
     }
 
     /// `L`: show every query d7s ran this session, newest first.
@@ -797,6 +831,7 @@ mod tests {
         Terminal, backend::TestBackend, buffer::Cell, style::Modifier,
     };
     use rusqlite::Connection as RusqliteConnection;
+    use tokio::task::yield_now;
 
     use super::*;
     use crate::{
@@ -990,6 +1025,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sql_execute_refuses_when_sql_key_busy() {
+        let mut app = sqlite_app("conn");
+        app.database_explorer
+            .sql_executor
+            .set_selected_statement("SELECT a FROM t");
+        let key = sql_key(&app.database_explorer.connection.name);
+        assert!(app.in_flight.try_begin(key.clone()));
+        app.execute_sql_query();
+        assert!(app.in_flight.contains(&key));
+    }
+
+    #[tokio::test]
     async fn watch_tick_is_logged_but_not_added_to_sql_history() {
         let mut app = sqlite_app("watchtick");
         app.enter_sql_results_state("SELECT a FROM t".into());
@@ -998,7 +1045,8 @@ mod tests {
             .set_selected_statement("SELECT a FROM t");
         let history_before = PreferencesService::load_sql_history();
 
-        app.execute_sql_query_watch_tick().await;
+        app.execute_sql_query_watch_tick();
+        drain_bg_work(&mut app).await;
 
         assert_eq!(PreferencesService::load_sql_history(), history_before);
         let snap = app.query_log.snapshot();
@@ -1167,11 +1215,22 @@ mod tests {
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
     }
 
+    async fn drain_bg_work(app: &mut App<'_>) {
+        for _ in 0..500 {
+            app.drain_bg_events();
+            if app.in_flight.is_empty() {
+                return;
+            }
+            yield_now().await;
+        }
+    }
+
     #[allow(clippy::future_not_send)]
     async fn run_cmd(app: &mut App<'_>, cmd: &str) {
         app.on_key_event(key(':')).await.unwrap();
         type_str(app, cmd).await;
         app.on_key_event(enter()).await.unwrap();
+        drain_bg_work(app).await;
     }
 
     #[tokio::test]
