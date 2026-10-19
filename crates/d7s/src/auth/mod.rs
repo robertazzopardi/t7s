@@ -1,7 +1,18 @@
 #[cfg(debug_assertions)]
-use std::collections::HashMap;
+use core::{
+    error::Error as StdError,
+    fmt::{Display, Formatter, Result as FmtResult},
+};
+#[cfg(not(debug_assertions))]
+use core::{
+    error::Error as StdError,
+    fmt::{Display, Formatter, Result as FmtResult},
+};
 #[cfg(debug_assertions)]
-use std::sync::{Mutex, OnceLock};
+use std::{
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+};
 
 #[cfg(not(debug_assertions))]
 use keyring::Entry;
@@ -46,8 +57,8 @@ pub enum Error {
 }
 
 #[cfg(debug_assertions)]
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             Self::NotFound => write!(f, "Password not found"),
             Self::Other(msg) => write!(f, "{msg}"),
@@ -56,11 +67,11 @@ impl std::fmt::Display for Error {
 }
 
 #[cfg(debug_assertions)]
-impl std::error::Error for Error {}
+impl StdError for Error {}
 
 #[cfg(not(debug_assertions))]
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             Error::KeyringError(e) => write!(f, "{}", e),
         }
@@ -68,7 +79,7 @@ impl std::fmt::Display for Error {
 }
 
 #[cfg(not(debug_assertions))]
-impl std::error::Error for Error {}
+impl StdError for Error {}
 
 impl Keyring {
     /// Creates a new keyring entry

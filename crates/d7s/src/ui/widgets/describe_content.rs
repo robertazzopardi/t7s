@@ -3,7 +3,7 @@
 
 use k9tui::theme;
 pub use k9tui::widgets::table::TableData;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 
 /// One row in the describe table: a field label and its value.
 #[derive(Clone, Debug)]
@@ -15,7 +15,7 @@ pub struct DescribeRow {
 
 impl DescribeRow {
     #[must_use]
-    pub fn new(field: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn new<F: Into<String>, V: Into<String>>(field: F, value: V) -> Self {
         Self {
             field: field.into(),
             value: value.into(),
@@ -24,7 +24,7 @@ impl DescribeRow {
     }
 
     #[must_use]
-    pub fn section(title: impl Into<String>) -> Self {
+    pub fn section<T: Into<String>>(title: T) -> Self {
         Self {
             field: title.into(),
             value: String::new(),
@@ -56,9 +56,7 @@ impl TableData for DescribeRow {
 
     fn cell_style(&self, column: usize) -> Option<Style> {
         if self.section_header {
-            return Some(
-                theme::accent().add_modifier(ratatui::style::Modifier::BOLD),
-            );
+            return Some(theme::accent().add_modifier(Modifier::BOLD));
         }
         if column == 0 {
             Some(theme::accent())

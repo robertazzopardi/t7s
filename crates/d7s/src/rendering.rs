@@ -1,3 +1,5 @@
+use core::fmt;
+
 use k9tui::{
     theme,
     widgets::{
@@ -12,6 +14,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{APP_NAME, App},
@@ -382,10 +385,8 @@ impl App<'_> {
         };
         let ghost: String = full.chars().skip(typed.chars().count()).collect();
         let x = text_area.x.saturating_add(
-            u16::try_from(unicode_width::UnicodeWidthStr::width(
-                typed.as_str(),
-            ))
-            .unwrap_or(u16::MAX),
+            u16::try_from(UnicodeWidthStr::width(typed.as_str()))
+                .unwrap_or(u16::MAX),
         );
         let width = text_area.right().saturating_sub(x);
         if width == 0 {
@@ -489,7 +490,7 @@ impl App<'_> {
     }
 }
 
-fn render_filtered_data_table<T: TableData + Clone + std::fmt::Debug>(
+fn render_filtered_data_table<T: TableData + Clone + fmt::Debug>(
     frame: &mut Frame,
     filtered_data: Option<&FilteredData<T>>,
     area: Rect,

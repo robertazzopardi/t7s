@@ -1,7 +1,8 @@
+use alloc::borrow::Cow;
+use core::fmt::Write;
 use std::{
-    borrow::Cow,
     collections::{HashMap, HashSet, hash_map::Entry},
-    fmt::Write,
+    error, io,
     sync::{Mutex, OnceLock},
 };
 
@@ -13,6 +14,7 @@ use tokio_postgres::{
     config::SslMode,
     types::{FromSql, ToSql, Type},
 };
+use tokio_postgres_rustls::MakeRustlsConnect;
 use uuid::Uuid;
 
 use crate::db::{
@@ -27,7 +29,7 @@ use crate::db::{
 async fn connect_pg(
     config: &str,
     tls: &TlsConfig,
-) -> Result<tokio_postgres::Client, Box<dyn std::error::Error>> {
+) -> Result<tokio_postgres::Client, Box<dyn error::Error>> {
     tls.check_valid()?;
     let mut config: tokio_postgres::Config = config.parse()?;
     // With `SslMode::Disable` the connector is never used.
@@ -36,8 +38,7 @@ async fn connect_pg(
         TlsMode::Prefer => SslMode::Prefer,
         TlsMode::Require | TlsMode::VerifyFull => SslMode::Require,
     });
-    let connector =
-        tokio_postgres_rustls::MakeRustlsConnect::new(tls.client_config()?);
+    let connector = MakeRustlsConnect::new(tls.client_config()?);
     let (client, conn) = config.connect(connector).await?;
     tokio::spawn(async move {
         if let Err(e) = conn.await {
@@ -128,7 +129,7 @@ async fn pg_column_format_types(
     client: &tokio_postgres::Client,
     schema_name: &str,
     table_name: &str,
-) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
+) -> Result<HashMap<String, String>, Box<dyn error::Error>> {
     let q = r"
         SELECT a.attname::text AS col,
                pg_catalog.format_type(a.atttypid, a.atttypmod) AS fmt
@@ -423,7 +424,7 @@ impl Database for Postgres {
     async fn execute_sql(
         &self,
         sql: &str,
-    ) -> Result<Vec<TableRow>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<TableRow>, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
 
         // Prepare once; statements without result columns are executed (not
@@ -462,9 +463,7 @@ impl Database for Postgres {
         Ok(result)
     }
 
-    async fn get_schemas(
-        &self,
-    ) -> Result<Vec<Schema>, Box<dyn std::error::Error>> {
+    async fn get_schemas(&self) -> Result<Vec<Schema>, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
 
         let query = "
@@ -491,7 +490,7 @@ impl Database for Postgres {
     async fn get_tables(
         &self,
         schema_name: &str,
-    ) -> Result<Vec<Table>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Table>, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
 
         let query = "
@@ -522,7 +521,7 @@ impl Database for Postgres {
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<Vec<Column>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Column>, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
 
         let query = "
@@ -562,7 +561,7 @@ impl Database for Postgres {
         table_name: &str,
         offset: u64,
         limit: u32,
-    ) -> Result<TableDataPage, Box<dyn std::error::Error>> {
+    ) -> Result<TableDataPage, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
 
         let layout = self
@@ -617,7 +616,7 @@ impl Database for Postgres {
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
         let q = "
             SELECT kcu.column_name
@@ -644,7 +643,7 @@ impl Database for Postgres {
         new_value: &str,
         primary_key: &[(String, String)],
         row_id_fallback: Option<DbRowId>,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    ) -> Result<u64, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
         let col_types =
             pg_column_format_types(&client, schema_name, table_name).await?;
@@ -714,7 +713,7 @@ impl Database for Postgres {
         schema_name: &str,
         table_name: &str,
         values: &[String],
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    ) -> Result<u64, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
         let columns = self.get_columns(schema_name, table_name).await?;
         if values.len() != columns.len() {
@@ -779,7 +778,7 @@ impl Database for Postgres {
         table_name: &str,
         primary_key: &[(String, String)],
         row_id_fallback: Option<DbRowId>,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    ) -> Result<u64, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
         let col_types =
             pg_column_format_types(&client, schema_name, table_name).await?;
@@ -831,7 +830,7 @@ impl Database for Postgres {
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    ) -> Result<u64, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
         let q = format!(
             "SELECT COUNT(*)::bigint FROM {}.{}",
@@ -847,7 +846,7 @@ impl Database for Postgres {
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
         let q = "SELECT indexname FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 ORDER BY indexname";
         let rows = pg_query(&client, q, &[&schema_name, &table_name]).await?;
@@ -858,7 +857,7 @@ impl Database for Postgres {
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<String>, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
         let q =
             "SELECT pg_size_pretty(pg_total_relation_size($1::text::regclass))";
@@ -873,7 +872,7 @@ impl Database for Postgres {
 
     async fn get_databases(
         &self,
-    ) -> Result<Vec<DatabaseInfo>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<DatabaseInfo>, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
 
         let query = "
@@ -900,7 +899,7 @@ impl Postgres {
         client: &tokio_postgres::Client,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<CachedTableColumnInfo, Box<dyn std::error::Error>> {
+    ) -> Result<CachedTableColumnInfo, Box<dyn error::Error>> {
         let key = PostgresTableIdentity {
             host: self.host.clone().unwrap_or_else(|| "localhost".to_string()),
             port: self.port.clone().unwrap_or_else(|| "5432".to_string()),
@@ -911,7 +910,7 @@ impl Postgres {
 
         {
             let guard = table_column_cache().lock().map_err(|_| {
-                std::io::Error::other("table column cache lock poisoned")
+                io::Error::other("table column cache lock poisoned")
             })?;
             if let Some(info) = guard.get(&key) {
                 return Ok(info.clone());
@@ -944,7 +943,7 @@ impl Postgres {
         };
 
         let mut guard = table_column_cache().lock().map_err(|_| {
-            std::io::Error::other("table column cache lock poisoned")
+            io::Error::other("table column cache lock poisoned")
         })?;
         match guard.entry(key) {
             Entry::Occupied(e) => Ok(e.get().clone()),
@@ -954,7 +953,7 @@ impl Postgres {
 
     async fn get_connection(
         &self,
-    ) -> Result<tokio_postgres::Client, Box<dyn std::error::Error>> {
+    ) -> Result<tokio_postgres::Client, Box<dyn error::Error>> {
         let config = format!(
             "host={} port={} user={} password={} dbname={}",
             self.host.clone().unwrap_or_else(|| "localhost".to_string()),
@@ -977,7 +976,7 @@ impl Postgres {
         schema_name: &str,
         table_name: &str,
         limit: i64,
-    ) -> Result<Vec<Vec<String>>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Vec<String>>, Box<dyn error::Error>> {
         let client = self.get_connection().await?;
 
         let query =
@@ -1359,7 +1358,10 @@ fn try_get_time(row: &Row, index: usize) -> String {
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
+    use std::process::id;
+
     use super::*;
+    use crate::db::tls;
 
     /// Needs `just docker-up` (d7s-test-db on localhost:5432).
     #[tokio::test]
@@ -1372,9 +1374,9 @@ mod tests {
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
-            tls: crate::db::tls::TlsConfig::default(),
+            tls: tls::TlsConfig::default(),
         };
-        let t = format!("d7s_once_{}", std::process::id());
+        let t = format!("d7s_once_{}", id());
         pg.execute_sql(&format!("CREATE TABLE {t} (id int)"))
             .await
             .unwrap();
@@ -1401,9 +1403,9 @@ mod tests {
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
-            tls: crate::db::tls::TlsConfig::default(),
+            tls: tls::TlsConfig::default(),
         };
-        let pid = std::process::id();
+        let pid = id();
         let odd = format!("Odd'Tbl_{pid}");
         let plain = format!("d7s_size_{pid}");
         for t in [&odd, &plain] {

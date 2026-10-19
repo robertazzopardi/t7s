@@ -12,6 +12,7 @@ use crate::{
     app_state::{AppState, DatabaseExplorerState},
     command::{Command, Verb, resolve, suggest},
     db::connection::ConnectionType,
+    services::PreferencesService,
     ui::widgets::help_content::help_rows,
 };
 
@@ -133,7 +134,7 @@ impl App<'_> {
     pub(crate) fn request_editor(&mut self) {
         let sql = &mut self.database_explorer.sql_executor;
         if sql.sql_input().trim().is_empty()
-            && let Some(last) = crate::services::PreferencesService::last_sql()
+            && let Some(last) = PreferencesService::last_sql()
         {
             sql.set_sql(&last);
         }

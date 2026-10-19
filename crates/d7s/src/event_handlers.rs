@@ -1,3 +1,5 @@
+use core::time::Duration;
+
 use color_eyre::Result;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
@@ -47,7 +49,7 @@ impl App<'_> {
     pub async fn handle_crossterm_events(&mut self) -> Result<()> {
         // Short timeout (rather than a blocking read) so the run loop keeps
         // spinning to pick up watch-mode ticks between keypresses.
-        if !event::poll(std::time::Duration::from_millis(200))? {
+        if !event::poll(Duration::from_millis(200))? {
             return Ok(());
         }
         match event::read()? {
@@ -767,7 +769,7 @@ impl App<'_> {
         }
 
         if connection.uses_keyring()
-            && let Some(ref password) = connection.password
+            && let Some(password) = &connection.password
             && let Err(e) =
                 PasswordService::save_to_keyring(&connection.name, password)
         {
@@ -785,7 +787,7 @@ impl App<'_> {
             Ok(()) => {
                 // If switching to "ask every time" on an existing connection,
                 // delete the old keyring credential after the save succeeds.
-                if let Some(ref orig_name) = original_name
+                if let Some(orig_name) = &original_name
                     && connection.should_ask_every_time()
                 {
                     let _ = PasswordService::delete_from_keyring(orig_name);
@@ -827,7 +829,7 @@ impl App<'_> {
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use crate::app::App;
+    use crate::{app::App, app_state};
 
     #[tokio::test]
     async fn p_is_only_handled_on_the_connection_list() {
@@ -837,7 +839,7 @@ mod tests {
 
         // Anywhere else the key must fall through, not be swallowed.
         app.database_explorer.state =
-            crate::app_state::DatabaseExplorerState::Tables("s".into());
+            app_state::DatabaseExplorerState::Tables("s".into());
         assert!(!app.handle_hotkeys(p).await.unwrap());
     }
 }

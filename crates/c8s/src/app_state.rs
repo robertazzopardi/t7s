@@ -1,3 +1,5 @@
+use core::fmt::{self, Display, Formatter};
+
 use crate::docker::client::DaemonHealth;
 
 /// Top-level application state.
@@ -31,14 +33,13 @@ pub enum ResourceKind {
     Networks,
 }
 
-impl ResourceKind {
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
+impl Display for ResourceKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
             Self::Containers => "Containers",
             Self::Images => "Images",
             Self::Volumes => "Volumes",
             Self::Networks => "Networks",
-        }
+        })
     }
 }

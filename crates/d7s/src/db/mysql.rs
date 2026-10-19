@@ -1,7 +1,9 @@
-use std::path::PathBuf;
+use core::iter::once;
+use std::{error, path::PathBuf};
 
 use mysql_async::{
-    Conn, OptsBuilder, Row, SslOpts, Value,
+    Conn, DriverError, Error as MysqlAsyncError, OptsBuilder, Row, SslOpts,
+    Value,
     consts::{ColumnFlags, ColumnType},
     prelude::Queryable,
 };
@@ -20,7 +22,7 @@ const SYSTEM_DATABASES: &str =
 const TABLE_BYTES: &str =
     "CAST(COALESCE(data_length, 0) + COALESCE(index_length, 0) AS UNSIGNED)";
 
-type DbResult<T> = Result<T, Box<dyn std::error::Error>>;
+type DbResult<T> = Result<T, Box<dyn error::Error>>;
 
 /// Backtick-quote an identifier, doubling embedded backticks.
 fn my_quote_ident(ident: &str) -> String {
@@ -166,8 +168,8 @@ impl Mysql {
         }
         match Conn::new(base.clone().ssl_opts(ssl)).await {
             // `prefer`: retry in plain only when the server lacks TLS, never on auth/network errors.
-            Err(mysql_async::Error::Driver(
-                mysql_async::DriverError::NoClientSslFlagFromServer,
+            Err(MysqlAsyncError::Driver(
+                DriverError::NoClientSslFlagFromServer,
             )) if mode == TlsMode::Prefer => Ok(Conn::new(base).await?),
             r => Ok(r?),
         }
@@ -380,8 +382,7 @@ impl Database for Mysql {
         } else {
             Value::from(new_value)
         };
-        let params: Vec<Value> =
-            std::iter::once(new_value).chain(pk_params).collect();
+        let params: Vec<Value> = once(new_value).chain(pk_params).collect();
         let res = conn.exec_iter(sql, params).await?;
         Ok(res.affected_rows())
     }
@@ -508,7 +509,10 @@ impl Database for Mysql {
 
 #[cfg(test)]
 mod tests {
+    use std::{env::var, process::id};
+
     use super::*;
+    use crate::db::tls;
 
     /// Docker test server (`just docker-up`); `D7S_MYSQL_PORT` selects MariaDB (3307).
     fn test_db(database: &str) -> Mysql {
@@ -516,13 +520,12 @@ mod tests {
             name: "test".into(),
             host: Some("localhost".into()),
             port: Some(
-                std::env::var("D7S_MYSQL_PORT")
-                    .unwrap_or_else(|_| "13306".into()),
+                var("D7S_MYSQL_PORT").unwrap_or_else(|_| "13306".into()),
             ),
             user: "root".into(),
             database: database.into(),
             password: "d7s_password".into(),
-            tls: crate::db::tls::TlsConfig::default(),
+            tls: tls::TlsConfig::default(),
         }
     }
 
@@ -544,7 +547,7 @@ mod tests {
     #[allow(clippy::indexing_slicing, clippy::too_many_lines)]
     async fn crud_round_trip() {
         let my = test_db("d7s_test");
-        let t = format!("d7s_crud_{}", std::process::id());
+        let t = format!("d7s_crud_{}", id());
         my.execute_sql(&format!(
             "CREATE TABLE `{t}` (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(20) NOT NULL, \
              note TEXT, blob_col BLOB, KEY idx_name (name))"

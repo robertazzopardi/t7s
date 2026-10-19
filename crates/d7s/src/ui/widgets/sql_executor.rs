@@ -7,7 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, StatefulWidget, Wrap},
 };
-use ratatui_textarea::TextArea;
+use ratatui_textarea::{CursorMove, TextArea};
 
 use crate::ui::widgets::raw_table::{RawTableRow, RawTableStateExt};
 
@@ -85,8 +85,8 @@ impl SqlExecutorState {
         self.input.set_cursor_line_style(Style::default());
         self.input.set_cursor_style(Style::default());
         self.input.set_max_histories(0);
-        self.input.move_cursor(ratatui_textarea::CursorMove::Bottom);
-        self.input.move_cursor(ratatui_textarea::CursorMove::End);
+        self.input.move_cursor(CursorMove::Bottom);
+        self.input.move_cursor(CursorMove::End);
         self.selected_statement = None;
     }
 
@@ -95,7 +95,7 @@ impl SqlExecutorState {
         self.input.lines().join("\n")
     }
 
-    pub fn set_selected_statement(&mut self, statement: impl Into<String>) {
+    pub fn set_selected_statement<S: Into<String>>(&mut self, statement: S) {
         self.selected_statement = Some(statement.into());
     }
 

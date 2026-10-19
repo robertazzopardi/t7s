@@ -1,10 +1,12 @@
 //! TLS settings for server connections, read from the connection URL query:
 //! `sslmode=` (Postgres) / `ssl-mode=` (MySQL) and `sslrootcert=` (CA bundle path).
 
-use std::{
-    io,
-    sync::{Arc, OnceLock},
+use alloc::sync::Arc;
+use core::{
+    fmt::{self, Display, Formatter},
+    str::FromStr,
 };
+use std::{io, sync::OnceLock};
 
 use rustls::{
     ClientConfig, DigitallySignedStruct, Error as TlsError, RootCertStore,
@@ -12,9 +14,13 @@ use rustls::{
     client::danger::{
         HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
     },
-    crypto::{CryptoProvider, aws_lc_rs},
+    crypto::{
+        CryptoProvider, aws_lc_rs, verify_tls12_signature,
+        verify_tls13_signature,
+    },
     pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject},
 };
+use url::Url;
 // Loaded once: reading the OS store on every query-time connect is slow.
 static NATIVE: OnceLock<Vec<CertificateDer<'static>>> = OnceLock::new();
 
@@ -31,26 +37,29 @@ pub enum TlsMode {
     VerifyFull,
 }
 
-impl TlsMode {
-    fn parse(s: &str) -> Option<Self> {
-        Some(match s.to_lowercase().replace('_', "-").as_str() {
+impl Display for TlsMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Disable => "disable",
+            Self::Prefer => "prefer",
+            Self::Require => "require",
+            Self::VerifyFull => "verify-full",
+        })
+    }
+}
+
+impl FromStr for TlsMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().replace('_', "-").as_str() {
             "disable" | "disabled" => Self::Disable,
             "prefer" | "preferred" => Self::Prefer,
             "require" | "required" => Self::Require,
             // rustls always checks the host name, so verify-ca is as strict as verify-full.
             "verify-ca" | "verify-full" | "verify-identity" => Self::VerifyFull,
-            _ => return None,
+            _ => return Err(()),
         })
-    }
-
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Disable => "disable",
-            Self::Prefer => "prefer",
-            Self::Require => "require",
-            Self::VerifyFull => "verify-full",
-        }
     }
 }
 
@@ -67,13 +76,13 @@ impl TlsConfig {
     #[must_use]
     pub fn from_url(url: &str) -> Self {
         let mut cfg = Self::default();
-        let Ok(url) = url::Url::parse(url) else {
+        let Ok(url) = Url::parse(url) else {
             return cfg;
         };
         for (k, v) in url.query_pairs() {
             match k.as_ref() {
                 "sslmode" | "ssl-mode" | "ssl_mode" => {
-                    if let Some(mode) = TlsMode::parse(&v) {
+                    if let Ok(mode) = v.parse::<TlsMode>() {
                         cfg.mode = mode;
                         cfg.invalid_mode = None;
                     } else {
@@ -166,7 +175,7 @@ impl ServerCertVerifier for NoVerify {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, TlsError> {
-        rustls::crypto::verify_tls12_signature(
+        verify_tls12_signature(
             msg,
             cert,
             dss,
@@ -180,7 +189,7 @@ impl ServerCertVerifier for NoVerify {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, TlsError> {
-        rustls::crypto::verify_tls13_signature(
+        verify_tls13_signature(
             msg,
             cert,
             dss,

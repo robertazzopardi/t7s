@@ -1,3 +1,4 @@
+use crossterm::event::KeyCode;
 use k9tui::widgets::{
     navigation::TableNavigationHandler,
     table::{TableData, TableDataState},
@@ -42,7 +43,7 @@ impl<T: TableData + Clone> FilteredData<T> {
     }
 
     /// Navigate the table using a key event
-    pub fn navigate(&mut self, key: crossterm::event::KeyCode) {
+    pub fn navigate(&mut self, key: KeyCode) {
         TableNavigationHandler::navigate_table(
             &self.table.model,
             &mut self.table.view,

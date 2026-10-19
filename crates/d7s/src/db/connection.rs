@@ -1,9 +1,14 @@
-use std::{
+use alloc::string::ToString;
+use core::{
+    fmt,
     fmt::{Display, Formatter},
     str::FromStr,
 };
+use std::env::var;
 
+use ratatui::style::{Color, Style};
 use serde::{Deserialize, Serialize};
+use url::{Url, form_urlencoded::Serializer};
 
 use crate::{
     db::{
@@ -34,7 +39,7 @@ impl ConnectionType {
 }
 
 impl Display for ConnectionType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Postgres => write!(f, "postgres"),
             Self::Sqlite => write!(f, "sqlite"),
@@ -69,7 +74,7 @@ pub enum Environment {
 }
 
 impl Display for Environment {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Dev => write!(f, "dev"),
             Self::Staging => write!(f, "staging"),
@@ -126,19 +131,18 @@ pub enum ConnectionStatus {
     Down,
 }
 
-impl ConnectionStatus {
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
+impl Display for ConnectionStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
             Self::Unknown => "",
             Self::Up => "● up",
             Self::Down => "● down",
-        }
+        })
     }
 }
 
 impl Display for Connection {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.r#type {
             ConnectionType::Postgres | ConnectionType::Mysql => {
                 let (host, port, user, database_from_url) =
@@ -155,7 +159,7 @@ impl Display for Connection {
                     host,
                     port,
                     user,
-                    TlsConfig::from_url(&self.url).mode.label(),
+                    TlsConfig::from_url(&self.url).mode,
                     database,
                     self.schema.clone().unwrap_or_default(),
                     self.table.clone().unwrap_or_default(),
@@ -189,7 +193,7 @@ impl TableData for Connection {
             ),
             self.environment.to_string(),
             self.auth_badge().to_string(),
-            self.status.label().to_string(),
+            self.status.to_string(),
         ]
     }
 
@@ -201,19 +205,13 @@ impl TableData for Connection {
         vec!["Name", "Type", "Url", "Env", "Auth", "Status"]
     }
 
-    fn cell_style(&self, column: usize) -> Option<ratatui::style::Style> {
+    fn cell_style(&self, column: usize) -> Option<Style> {
         if column == Self::ENV_COLUMN {
             Some(theme::env_style(self.environment))
         } else if column == Self::STATUS_COLUMN {
             match self.status {
-                ConnectionStatus::Up => Some(
-                    ratatui::style::Style::default()
-                        .fg(ratatui::style::Color::Green),
-                ),
-                ConnectionStatus::Down => Some(
-                    ratatui::style::Style::default()
-                        .fg(ratatui::style::Color::Red),
-                ),
+                ConnectionStatus::Up => Some(Style::default().fg(Color::Green)),
+                ConnectionStatus::Down => Some(Style::default().fg(Color::Red)),
                 ConnectionStatus::Unknown => None,
             }
         } else {
@@ -224,7 +222,7 @@ impl TableData for Connection {
 
 /// Redact password in a URL for display (e.g. <postgres://user:xxx@host/db>)
 fn redact_password_in_url(url: &str) -> String {
-    url::Url::parse(url).map_or_else(
+    Url::parse(url).map_or_else(
         |_| url.to_string(),
         |mut parsed| {
             if parsed.password().is_some()
@@ -241,7 +239,7 @@ fn redact_password_in_url(url: &str) -> String {
 }
 
 pub fn shorten_home_path(path: &str) -> String {
-    if let Ok(home) = std::env::var("HOME")
+    if let Ok(home) = var("HOME")
         && let Some(rest) = path.strip_prefix(home.as_str())
     {
         return format!("~{rest}");
@@ -318,9 +316,9 @@ mod tests {
 
     #[test]
     fn status_labels_and_column() {
-        assert_eq!(ConnectionStatus::Unknown.label(), "");
-        assert_eq!(ConnectionStatus::Up.label(), "● up");
-        assert_eq!(ConnectionStatus::Down.label(), "● down");
+        assert_eq!(ConnectionStatus::Unknown.to_string(), "");
+        assert_eq!(ConnectionStatus::Up.to_string(), "● up");
+        assert_eq!(ConnectionStatus::Down.to_string(), "● down");
 
         let c = Connection {
             status: ConnectionStatus::Down,
@@ -443,7 +441,7 @@ impl Connection {
     #[must_use]
     pub fn user_display(&self) -> String {
         if self.r#type != ConnectionType::Sqlite
-            && let Ok(u) = url::Url::parse(&self.url)
+            && let Ok(u) = Url::parse(&self.url)
         {
             return u.username().to_string();
         }
@@ -466,7 +464,7 @@ impl Connection {
                 lines.push(format!("User: {user}"));
                 lines.push(format!(
                     "TLS: {}",
-                    TlsConfig::from_url(&self.url).mode.label()
+                    TlsConfig::from_url(&self.url).mode
                 ));
                 lines.push(format!("Database: {database}"));
                 if let Some(schema) =
@@ -559,7 +557,7 @@ pub fn with_tls_query(
     } else {
         "sslmode"
     };
-    let mut q = url::form_urlencoded::Serializer::new(String::new());
+    let mut q = Serializer::new(String::new());
     q.append_pair(key, mode);
     if !ca_path.is_empty() {
         q.append_pair("sslrootcert", ca_path);
@@ -595,12 +593,12 @@ pub fn parse_server_url(
     let default_user = String::new();
     let default_db = default_database(connection_type).to_string();
 
-    let Ok(url) = url::Url::parse(url_str) else {
+    let Ok(url) = Url::parse(url_str) else {
         return (default_host, default_port, default_user, default_db);
     };
     let host = url
         .host_str()
-        .map(std::string::ToString::to_string)
+        .map(ToString::to_string)
         .unwrap_or(default_host);
     let port = url.port().map(|p| p.to_string()).unwrap_or(default_port);
     let user = url.username().to_string();

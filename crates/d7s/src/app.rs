@@ -1,10 +1,14 @@
+use core::time::Duration;
 use std::{
+    env::{current_dir, temp_dir, var},
+    fs::{read_to_string, write},
+    io::stdout,
     path::Path,
-    process::Command,
-    time::{Duration, Instant},
+    process::{Command, id},
+    time::Instant,
 };
 
-use color_eyre::Result;
+use color_eyre::{Result, eyre::Error};
 use crossterm::{
     ExecutableCommand, clipboard,
     event::{DisableBracketedPaste, EnableBracketedPaste},
@@ -23,10 +27,12 @@ use ratatui::DefaultTerminal;
 use ratatui_textarea::TextArea;
 
 use crate::{
+    app,
     app_state::{AppState, DatabaseExplorerState},
     database_explorer_state::DatabaseExplorer,
     db::{
         RowDeleteSpec,
+        connection::{Connection, Environment, shorten_home_path},
         query_log::{QueryLog, QueryLogEntry},
         sqlite::init_db,
     },
@@ -221,22 +227,22 @@ impl App<'_> {
     async fn handle_external_terminal(
         &mut self,
         terminal: &mut DefaultTerminal,
-    ) -> Result<(), color_eyre::eyre::Error> {
+    ) -> Result<(), Error> {
         if self.open_editor_requested {
             self.open_editor_requested = false;
-            let new_sql = if std::env::var("D7S_DEMO").is_ok() {
-                std::env::var("D7S_DEMO_SQL")
+            let new_sql = if var("D7S_DEMO").is_ok() {
+                var("D7S_DEMO_SQL")
                     .ok()
-                    .and_then(|path| std::fs::read_to_string(path).ok())
+                    .and_then(|path| read_to_string(path).ok())
                     .unwrap_or_default()
             } else {
-                let temp_path = std::env::temp_dir()
-                    .join(format!("d7s_sql_{}.sql", std::process::id()));
+                let temp_path =
+                    temp_dir().join(format!("d7s_sql_{}.sql", id()));
                 let current_sql =
                     self.database_explorer.sql_executor.sql_input();
-                std::fs::write(&temp_path, &current_sql)?;
+                write(&temp_path, &current_sql)?;
                 Self::run_editor(terminal, &temp_path)?;
-                std::fs::read_to_string(&temp_path).unwrap_or_default()
+                read_to_string(&temp_path).unwrap_or_default()
             };
             self.apply_editor_sql(new_sql).await;
         }
@@ -355,7 +361,7 @@ impl App<'_> {
         })();
         if let Some(value) = value
             && execute!(
-                std::io::stdout(),
+                stdout(),
                 clipboard::CopyToClipboard {
                     content: value.clone(),
                     destination: clipboard::ClipboardSelection(vec![
@@ -550,7 +556,7 @@ impl App<'_> {
         if let Some(values) = values {
             let tsv = values.join("\t");
             if execute!(
-                std::io::stdout(),
+                stdout(),
                 clipboard::CopyToClipboard {
                     content: tsv,
                     destination: clipboard::ClipboardSelection(vec![
@@ -584,9 +590,8 @@ impl App<'_> {
             out.push_str(&row.values.join("\t"));
             out.push('\n');
         }
-        let path = std::env::temp_dir()
-            .join(format!("d7s_results_{}.tsv", std::process::id()));
-        match std::fs::write(&path, out) {
+        let path = temp_dir().join(format!("d7s_results_{}.tsv", id()));
+        match write(&path, out) {
             Ok(()) => self.set_status(format!("Wrote {}", path.display())),
             Err(e) => self.set_status(format!("Export failed: {e}")),
         }
@@ -598,7 +603,7 @@ impl App<'_> {
     }
 
     /// Set the status line message
-    pub fn set_status(&mut self, message: impl Into<String>) {
+    pub fn set_status<S: Into<String>>(&mut self, message: S) {
         self.status_line.set_message(message);
     }
 
@@ -610,7 +615,7 @@ impl App<'_> {
     pub(crate) fn connect_status_message(
         &mut self,
         name: &str,
-        env: crate::db::connection::Environment,
+        env: Environment,
     ) -> String {
         if self.showed_help_hint {
             format!("Connected to {name} ({env})")
@@ -621,20 +626,20 @@ impl App<'_> {
     }
 
     fn run_editor(terminal: &mut DefaultTerminal, path: &Path) -> Result<()> {
-        let editor = std::env::var("VISUAL")
-            .or_else(|_| std::env::var("EDITOR"))
+        let editor = var("VISUAL")
+            .or_else(|_| var("EDITOR"))
             .unwrap_or_else(|_| "vim".to_string());
         let (program, args) = Self::parse_editor_command(&editor);
 
-        execute!(std::io::stdout(), DisableBracketedPaste)?;
-        std::io::stdout().execute(LeaveAlternateScreen)?;
+        execute!(stdout(), DisableBracketedPaste)?;
+        stdout().execute(LeaveAlternateScreen)?;
         disable_raw_mode()?;
         let mut cmd = Command::new(&program);
         cmd.args(args);
         cmd.arg(path).status()?;
-        std::io::stdout().execute(EnterAlternateScreen)?;
+        stdout().execute(EnterAlternateScreen)?;
         enable_raw_mode()?;
-        execute!(std::io::stdout(), EnableBracketedPaste)?;
+        execute!(stdout(), EnableBracketedPaste)?;
         terminal.clear()?;
         Ok(())
     }
@@ -709,9 +714,7 @@ impl App<'_> {
 
 /// Turn a connection's existing `Display` output ("` Field: value`" per line)
 /// into describe rows, reusing the formatting already defined for it.
-fn connection_describe_rows(
-    conn: &crate::db::connection::Connection,
-) -> Vec<DescribeRow> {
+fn connection_describe_rows(conn: &Connection) -> Vec<DescribeRow> {
     let mut rows = vec![DescribeRow::section("Connection")];
     for line in conn.to_string().lines() {
         if let Some((field, value)) = line.trim().split_once(':') {
@@ -735,31 +738,42 @@ FROM pg_stat_activity ORDER BY query_start DESC NULLS LAST";
 /// Info related to the program
 fn build_info() -> Result<String> {
     let mut lines = vec![
-        format!("Name: {}", crate::app::PKG_NAME),
-        format!("Version: {}", crate::app::PKG_VERSION),
+        format!("Name: {}", app::PKG_NAME),
+        format!("Version: {}", app::PKG_VERSION),
     ];
-    if std::env::var("D7S_DEMO").is_err() {
-        let path_buf = std::env::current_dir()?;
+    if var("D7S_DEMO").is_err() {
+        let path_buf = current_dir()?;
         let cwd = path_buf.as_path().to_str().unwrap_or(".");
-        lines.push(format!(
-            "Path: {}",
-            crate::db::connection::shorten_home_path(cwd)
-        ));
+        lines.push(format!("Path: {}", shorten_home_path(cwd)));
     }
     Ok(lines.join("\n"))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
+    use std::{
+        fs::{remove_file, write},
+        net::TcpListener,
+        path,
+        time::SystemTime,
+    };
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{
+        Terminal, backend::TestBackend, buffer::Cell, style::Modifier,
+    };
+    use rusqlite::Connection as RusqliteConnection;
 
     use super::*;
-    use crate::db::{
-        connection::{Connection, ConnectionStatus, ConnectionType},
-        query_log::{QueryLogEntry, QueryOrigin, tests::temp_sqlite},
+    use crate::{
+        db::{
+            Table,
+            connection::{Connection, ConnectionStatus, ConnectionType},
+            postgres::Postgres,
+            query_log::{QueryLogEntry, QueryOrigin, tests::temp_sqlite},
+            tls::TlsConfig,
+        },
+        ui::widgets::hotkeys::DATABASE_HOTKEYS,
     };
 
     fn key(c: char) -> KeyEvent {
@@ -769,7 +783,7 @@ mod tests {
     /// App connected to a throwaway `SQLite` file, wired through the log.
     fn sqlite_app<'a>(tag: &str) -> App<'a> {
         let sqlite = temp_sqlite(tag);
-        rusqlite::Connection::open(&sqlite.path)
+        RusqliteConnection::open(&sqlite.path)
             .unwrap()
             .execute_batch("CREATE TABLE t(a); INSERT INTO t VALUES (7);")
             .unwrap();
@@ -798,11 +812,7 @@ mod tests {
         let buf = terminal.backend().buffer();
         buf.content()
             .chunks(usize::from(buf.area.width))
-            .map(|row| {
-                row.iter()
-                    .map(ratatui::buffer::Cell::symbol)
-                    .collect::<String>()
-            })
+            .map(|row| row.iter().map(Cell::symbol).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -895,7 +905,7 @@ mod tests {
         let has_activity = |t| {
             database_hotkeys(t)
                 .iter()
-                .any(|h| h.keycode == crossterm::event::KeyCode::Char('A'))
+                .any(|h| h.keycode == KeyCode::Char('A'))
         };
         assert!(has_activity(ConnectionType::Postgres));
         assert!(!has_activity(ConnectionType::Sqlite));
@@ -967,7 +977,7 @@ mod tests {
 
     async fn tables_app<'a>(tag: &str) -> App<'a> {
         let mut app = sqlite_app(tag);
-        rusqlite::Connection::open(&app.database_explorer.connection.url)
+        RusqliteConnection::open(&app.database_explorer.connection.url)
             .unwrap()
             .execute_batch(
                 "CREATE TABLE users(id); CREATE TABLE orders(id);
@@ -1002,11 +1012,11 @@ mod tests {
     #[tokio::test]
     async fn p_pings_all_connections_and_statuses_survive_filter_clear() {
         let present = temp_sqlite("ping-present");
-        std::fs::write(&present.path, b"").unwrap();
+        write(&present.path, b"").unwrap();
         let missing = temp_sqlite("ping-missing");
         // A port that was just free, so nothing is listening on it.
         let closed_port = {
-            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
             l.local_addr().unwrap().port()
         };
         let pg = Connection {
@@ -1038,7 +1048,7 @@ mod tests {
             ]
         );
         assert!(
-            !std::path::Path::new(&missing.path).exists(),
+            !path::Path::new(&missing.path).exists(),
             "ping must not create a missing sqlite file"
         );
 
@@ -1047,7 +1057,7 @@ mod tests {
         assert!(text.contains("Status"));
         assert!(text.contains("● up"));
         assert_eq!(text.matches("● down").count(), 2);
-        let _ = std::fs::remove_file(&present.path);
+        let _ = remove_file(&present.path);
     }
 
     #[tokio::test]
@@ -1060,7 +1070,7 @@ mod tests {
     #[tokio::test]
     async fn ping_if_any_sets_statuses() {
         let present = temp_sqlite("launch-ping-present");
-        std::fs::write(&present.path, b"").unwrap();
+        write(&present.path, b"").unwrap();
         let missing = temp_sqlite("launch-ping-missing");
 
         let mut app = App::default();
@@ -1089,7 +1099,7 @@ mod tests {
             statuses,
             vec![ConnectionStatus::Up, ConnectionStatus::Down]
         );
-        let _ = std::fs::remove_file(&present.path);
+        let _ = remove_file(&present.path);
     }
 
     #[tokio::test]
@@ -1097,7 +1107,7 @@ mod tests {
         // refresh_connections replaces rows from disk (Unknown status). Simulate
         // that wipe, then the same reprobe refresh ends with.
         let present = temp_sqlite("refresh-ping-present");
-        std::fs::write(&present.path, b"").unwrap();
+        write(&present.path, b"").unwrap();
         let mut app = App::default();
         app.database_explorer.connections =
             FilteredData::new(vec![sqlite_conn("present", &present.path)]);
@@ -1116,7 +1126,7 @@ mod tests {
         assert_eq!(status(&app), Some(ConnectionStatus::Unknown));
         app.ping_connections_if_any().await;
         assert_eq!(status(&app), Some(ConnectionStatus::Up));
-        let _ = std::fs::remove_file(&present.path);
+        let _ = remove_file(&present.path);
     }
 
     fn esc() -> KeyEvent {
@@ -1180,13 +1190,13 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|f| app.render(f)).unwrap();
         let buf = terminal.backend().buffer();
-        let rows: Vec<&[ratatui::buffer::Cell]> =
+        let rows: Vec<&[Cell]> =
             buf.content().chunks(usize::from(buf.area.width)).collect();
         let title = rows
             .iter()
             .position(|r| {
                 r.iter()
-                    .map(ratatui::buffer::Cell::symbol)
+                    .map(Cell::symbol)
                     .collect::<String>()
                     .contains("┌ Command ")
             })
@@ -1200,11 +1210,7 @@ mod tests {
         assert_eq!(after(1).symbol(), "t", "first char right after ':'");
         assert_eq!(after(7).symbol(), "u", "last typed char");
         assert_eq!(after(8).symbol(), "s", "ghost right after typed text");
-        assert!(
-            after(8)
-                .modifier
-                .contains(ratatui::style::Modifier::REVERSED)
-        );
+        assert!(after(8).modifier.contains(Modifier::REVERSED));
     }
 
     #[tokio::test]
@@ -1338,11 +1344,7 @@ mod tests {
         let buf = terminal.backend().buffer();
         buf.content()
             .chunks(usize::from(buf.area.width))
-            .map(|row| {
-                row.iter()
-                    .map(ratatui::buffer::Cell::symbol)
-                    .collect::<String>()
-            })
+            .map(|row| row.iter().map(Cell::symbol).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -1352,7 +1354,7 @@ mod tests {
         app.database_explorer.tables = Some(FilteredData::new(
             tables
                 .iter()
-                .map(|n| crate::db::Table {
+                .map(|n| Table {
                     name: (*n).to_string(),
                     schema: "sqlite_schema".into(),
                     size: None,
@@ -1369,7 +1371,7 @@ mod tests {
     #[tokio::test]
     async fn table_command_args_errors_and_verb_named_tables() {
         let mut app = tables_app("cmd_table_arg").await;
-        rusqlite::Connection::open(&app.database_explorer.connection.url)
+        RusqliteConnection::open(&app.database_explorer.connection.url)
             .unwrap()
             .execute_batch(
                 "CREATE TABLE log(id); CREATE TABLE act(id);
@@ -1722,7 +1724,7 @@ mod tests {
     #[tokio::test]
     async fn hotkey_bar_shows_command_hint_at_120_cols() {
         let mut app = tables_app("cmd_hotkeys").await;
-        app.hotkeys = crate::ui::widgets::hotkeys::DATABASE_HOTKEYS.to_vec();
+        app.hotkeys = DATABASE_HOTKEYS.to_vec();
         let text = render_sized(&mut app, 120, 30);
         assert!(text.contains("<:> Command"), "{text}");
         assert!(text.contains("Query log"), "{text}");
@@ -1733,14 +1735,14 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires docker compose Postgres"]
     async fn pg_command_schemas_and_activity() {
-        let pg = crate::db::postgres::Postgres {
+        let pg = Postgres {
             name: "it".into(),
             host: Some("localhost".into()),
             port: Some("5432".into()),
             user: "d7s_user".into(),
             database: "d7s_test".into(),
             password: "d7s_password".into(),
-            tls: crate::db::tls::TlsConfig::default(),
+            tls: TlsConfig::default(),
         };
         let mut app = App::default();
         app.database_explorer = DatabaseExplorer::new(

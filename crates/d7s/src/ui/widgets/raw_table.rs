@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use k9tui::widgets::table::{TableData, TableDataState};
 

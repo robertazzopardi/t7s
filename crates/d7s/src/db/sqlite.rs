@@ -1,13 +1,15 @@
-use std::{collections::HashMap, fmt::Write};
+use core::{error::Error, fmt::Write};
+use std::collections::HashMap;
 
 use color_eyre::Result;
-use rusqlite::{Connection as SqliteConnection, params};
+use rusqlite::{Connection as SqliteConnection, params, types};
 use rusqlite_migration::{M, Migrations};
+use serde_json::{Map, Value as SerdeJsonValue};
 
 use crate::db::{
     Column, Database, DatabaseInfo, DbRowId, Schema, Table, TableData,
     TableDataPage, TableRow,
-    connection::{Connection, ConnectionType, Environment},
+    connection::{Connection, ConnectionStatus, ConnectionType, Environment},
     get_db_path,
     query_log::report_sql,
     should_omit_for_insert_default,
@@ -23,10 +25,10 @@ fn prep<'c>(
 }
 
 /// `execute` that reports the SQL text (placeholders only) to the query log.
-fn exec(
+fn exec<P: rusqlite::Params>(
     conn: &SqliteConnection,
     sql: &str,
-    params: impl rusqlite::Params,
+    params: P,
 ) -> rusqlite::Result<usize> {
     report_sql(sql);
     conn.execute(sql, params)
@@ -105,9 +107,7 @@ pub struct Sqlite {
 }
 
 impl Sqlite {
-    fn open_conn(
-        &self,
-    ) -> Result<SqliteConnection, Box<dyn std::error::Error>> {
+    fn open_conn(&self) -> Result<SqliteConnection, Box<dyn Error>> {
         Ok(SqliteConnection::open(&self.path)?)
     }
 }
@@ -139,7 +139,7 @@ impl Database for Sqlite {
     async fn execute_sql(
         &self,
         sql: &str,
-    ) -> Result<Vec<TableRow>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<TableRow>, Box<dyn Error>> {
         // rusqlite is synchronous, so we just run it in the async context
         let client = self.open_conn()?;
 
@@ -177,9 +177,7 @@ impl Database for Sqlite {
         Ok(result)
     }
 
-    async fn get_schemas(
-        &self,
-    ) -> Result<Vec<Schema>, Box<dyn std::error::Error>> {
+    async fn get_schemas(&self) -> Result<Vec<Schema>, Box<dyn Error>> {
         Ok(vec![Schema {
             name: "sqlite_schema".to_string(),
             owner: String::new(),
@@ -189,7 +187,7 @@ impl Database for Sqlite {
     async fn get_tables(
         &self,
         schema_name: &str,
-    ) -> Result<Vec<Table>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Table>, Box<dyn Error>> {
         let conn = self.open_conn()?;
 
         let mut sizes_by_name: HashMap<String, u64> = HashMap::new();
@@ -227,7 +225,7 @@ impl Database for Sqlite {
         &self,
         _schema_name: &str,
         table_name: &str,
-    ) -> Result<Vec<Column>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Column>, Box<dyn Error>> {
         let conn = self.open_conn()?;
 
         let mut stmt =
@@ -257,7 +255,7 @@ impl Database for Sqlite {
         table_name: &str,
         offset: u64,
         limit: u32,
-    ) -> Result<TableDataPage, Box<dyn std::error::Error>> {
+    ) -> Result<TableDataPage, Box<dyn Error>> {
         let columns: Vec<String> = self
             .get_columns(schema_name, table_name)
             .await?
@@ -319,7 +317,7 @@ impl Database for Sqlite {
         &self,
         _schema_name: &str,
         table_name: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>, Box<dyn Error>> {
         let conn = self.open_conn()?;
         let mut stmt =
             prep(&conn, &pragma_for_table("table_info", table_name))?;
@@ -343,7 +341,7 @@ impl Database for Sqlite {
         new_value: &str,
         primary_key: &[(String, String)],
         row_id_fallback: Option<DbRowId>,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    ) -> Result<u64, Box<dyn Error>> {
         let conn = self.open_conn()?;
         let decls = sqlite_table_decltypes(&conn, table_name)?;
         let set_kw =
@@ -396,7 +394,7 @@ impl Database for Sqlite {
         _schema_name: &str,
         table_name: &str,
         values: &[String],
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    ) -> Result<u64, Box<dyn Error>> {
         let columns = self.get_columns("sqlite_schema", table_name).await?;
         if values.len() != columns.len() {
             return Err("INSERT column count does not match table.".into());
@@ -410,7 +408,7 @@ impl Database for Sqlite {
         let tq = sqlite_quote_ident(table_name);
         let mut col_list: Vec<String> = Vec::new();
         let mut val_parts: Vec<String> = Vec::new();
-        let mut refs: Vec<rusqlite::types::Value> = Vec::new();
+        let mut refs: Vec<types::Value> = Vec::new();
         for (i, c) in columns.iter().enumerate() {
             let raw = values.get(i).map_or("", String::as_str);
             let sqlite_rowid_pk_omit =
@@ -441,7 +439,7 @@ impl Database for Sqlite {
                 let kw =
                     sqlite_cast_keyword(sqlite_resolve_decl(&decls, &c.name));
                 val_parts.push(format!("CAST(? AS {kw})"));
-                refs.push(rusqlite::types::Value::Text(raw.to_string()));
+                refs.push(types::Value::Text(raw.to_string()));
             }
         }
         if col_list.is_empty() {
@@ -467,7 +465,7 @@ impl Database for Sqlite {
         table_name: &str,
         primary_key: &[(String, String)],
         row_id_fallback: Option<DbRowId>,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    ) -> Result<u64, Box<dyn Error>> {
         let conn = self.open_conn()?;
         let decls = sqlite_table_decltypes(&conn, table_name)?;
         let tq = sqlite_quote_ident(table_name);
@@ -506,7 +504,7 @@ impl Database for Sqlite {
         &self,
         _schema_name: &str,
         table_name: &str,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    ) -> Result<u64, Box<dyn Error>> {
         let conn = self.open_conn()?;
         let sql = format!("SELECT COUNT(*) FROM {table_name}");
         report_sql(&sql);
@@ -518,7 +516,7 @@ impl Database for Sqlite {
         &self,
         _schema_name: &str,
         table_name: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>, Box<dyn Error>> {
         let conn = self.open_conn()?;
         let mut stmt =
             prep(&conn, &pragma_for_table("index_list", table_name))?;
@@ -532,14 +530,12 @@ impl Database for Sqlite {
         &self,
         _schema_name: &str,
         _table_name: &str,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<String>, Box<dyn Error>> {
         // No cheap per-table size query in SQLite; skip rather than fabricate.
         Ok(None)
     }
 
-    async fn get_databases(
-        &self,
-    ) -> Result<Vec<DatabaseInfo>, Box<dyn std::error::Error>> {
+    async fn get_databases(&self) -> Result<Vec<DatabaseInfo>, Box<dyn Error>> {
         // SQLite doesn't have multiple databases per connection
         // Return a single database with the path as the name
         Ok(vec![DatabaseInfo {
@@ -619,20 +615,20 @@ fn migrations() -> Migrations<'static> {
 /// Build metadata JSON for storage (includes `password_storage` if set).
 fn metadata_for_save(connection: &Connection) -> String {
     let mut obj = match &connection.metadata {
-        serde_json::Value::Object(m) => m.clone(),
-        serde_json::Value::Null
-        | serde_json::Value::Bool(_)
-        | serde_json::Value::Number(_)
-        | serde_json::Value::String(_)
-        | serde_json::Value::Array(_) => serde_json::Map::new(),
+        SerdeJsonValue::Object(m) => m.clone(),
+        SerdeJsonValue::Null
+        | SerdeJsonValue::Bool(_)
+        | SerdeJsonValue::Number(_)
+        | SerdeJsonValue::String(_)
+        | SerdeJsonValue::Array(_) => Map::new(),
     };
-    if let Some(ref ps) = connection.password_storage {
+    if let Some(ps) = &connection.password_storage {
         obj.insert(
             "password_storage".to_string(),
-            serde_json::Value::String(ps.clone()),
+            SerdeJsonValue::String(ps.clone()),
         );
     }
-    serde_json::Value::Object(obj).to_string()
+    SerdeJsonValue::Object(obj).to_string()
 }
 
 /// Parse metadata from DB and extract `password_storage`.
@@ -643,7 +639,7 @@ fn metadata_from_row(
     let value = metadata_json
         .as_ref()
         .and_then(|s| serde_json::from_str(s).ok())
-        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+        .unwrap_or_else(|| SerdeJsonValue::Object(Map::new()));
 
     if let Some(obj) = value.as_object()
         && let Some(ps) = obj.get("password_storage").and_then(|v| v.as_str())
@@ -658,9 +654,7 @@ fn metadata_from_row(
 /// # Errors
 ///
 /// This function will return an error if the database cannot be opened or if the query fails.
-pub fn save_connection(
-    connection: &Connection,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn save_connection(connection: &Connection) -> Result<(), Box<dyn Error>> {
     let db_path = get_db_path()?;
     let conn = SqliteConnection::open(db_path)?;
 
@@ -716,7 +710,7 @@ pub fn get_connections() -> Result<Vec<Connection>> {
                 table: None,
                 password: None,
                 password_storage,
-                status: crate::db::connection::ConnectionStatus::default(),
+                status: ConnectionStatus::default(),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -732,7 +726,7 @@ pub fn get_connections() -> Result<Vec<Connection>> {
 pub fn update_connection(
     old_name: &str,
     connection: &Connection,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let db_path = get_db_path()?;
     let conn = SqliteConnection::open(db_path)?;
 
@@ -758,9 +752,7 @@ pub fn update_connection(
 /// # Errors
 ///
 /// This function will return an error if the database cannot be opened or if the query fails.
-pub fn delete_connection(
-    connection_name: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn delete_connection(connection_name: &str) -> Result<(), Box<dyn Error>> {
     let db_path = get_db_path()?;
     let conn = SqliteConnection::open(db_path)?;
 
@@ -824,6 +816,9 @@ mod pragma_tests {
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use std::{env::temp_dir, fs::remove_file, process::id};
+
     use super::*;
 
     #[test]
@@ -862,12 +857,10 @@ mod tests {
     }
 
     fn db() -> ((), Sqlite) {
-        static N: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
-        let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let path = std::env::temp_dir()
-            .join(format!("d7s-test-{}-{n}.sqlite", std::process::id()));
-        let _ = std::fs::remove_file(&path);
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let n = N.fetch_add(1, Ordering::SeqCst);
+        let path = temp_dir().join(format!("d7s-test-{}-{n}.sqlite", id()));
+        let _ = remove_file(&path);
         (
             (),
             Sqlite {

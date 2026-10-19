@@ -1,11 +1,14 @@
-use std::collections::BTreeSet;
+use alloc::{collections::BTreeSet, sync::Arc};
+use core::{fmt, marker::PhantomData};
 
 use ratatui::{
+    buffer::Buffer,
     layout::{Constraint, Rect},
     style::{Modifier, Style},
     text::Text,
     widgets::{Cell, HighlightSpacing, Row, StatefulWidget, Table, TableState},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::theme;
 
@@ -49,7 +52,7 @@ pub struct TableModel<T: TableData + Clone> {
     pub items: Vec<T>,
     pub longest_item_lens: Vec<usize>,
     // For RawTableRow, we store column names here
-    pub dynamic_column_names: Option<std::sync::Arc<Vec<String>>>,
+    pub dynamic_column_names: Option<Arc<Vec<String>>>,
 }
 
 /// View state for the table (UI state like selection, scrolling)
@@ -70,11 +73,11 @@ pub struct TableDataState<T: TableData + Clone> {
 
 /// Pure stateless table widget - all state is managed externally
 #[derive(Clone, Debug)]
-pub struct DataTable<T: TableData + Clone>(std::marker::PhantomData<T>);
+pub struct DataTable<T: TableData + Clone>(PhantomData<T>);
 
 impl<T: TableData + Clone> Default for DataTable<T> {
     fn default() -> Self {
-        Self(std::marker::PhantomData)
+        Self(PhantomData)
     }
 }
 
@@ -136,7 +139,7 @@ const FILL_MIN_LEN: usize = 10;
 /// Truncate to `width` display columns, ending in `…` when cut.
 fn truncate_ellipsis(s: &str, width: usize) -> String {
     use unicode_width::UnicodeWidthChar;
-    if unicode_width::UnicodeWidthStr::width(s) <= width {
+    if UnicodeWidthStr::width(s) <= width {
         return s.to_string();
     }
     let mut out = String::new();
@@ -296,16 +299,11 @@ fn calculate_visible_columns_for_table(
     (vis_cols, rel, start)
 }
 
-impl<T: TableData + std::fmt::Debug + Clone> StatefulWidget for DataTable<T> {
+impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
     type State = TableDataState<T>;
 
     #[allow(clippy::too_many_lines)]
-    fn render(
-        self,
-        area: Rect,
-        buf: &mut ratatui::buffer::Buffer,
-        state: &mut Self::State,
-    ) {
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         if state.model.longest_item_lens.is_empty() {
             return;
         }
@@ -506,7 +504,9 @@ fn format_display_cell<T: TableData>(
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{Terminal, backend::TestBackend};
+    use core::fmt;
+
+    use ratatui::{Terminal, backend::TestBackend, buffer};
 
     use super::*;
 
@@ -600,7 +600,7 @@ mod tests {
             .buffer()
             .content
             .iter()
-            .map(ratatui::buffer::Cell::symbol)
+            .map(buffer::Cell::symbol)
             .collect();
 
         assert!(content.contains("Name"));
@@ -608,7 +608,7 @@ mod tests {
         assert!(content.contains("beta"));
     }
 
-    fn render_lines<T: TableData + std::fmt::Debug + Clone>(
+    fn render_lines<T: TableData + fmt::Debug + Clone>(
         items: Vec<T>,
         width: u16,
         height: u16,
@@ -628,11 +628,7 @@ mod tests {
         let buf = terminal.backend().buffer();
         buf.content()
             .chunks(usize::from(width.max(1)))
-            .map(|row| {
-                row.iter()
-                    .map(ratatui::buffer::Cell::symbol)
-                    .collect::<String>()
-            })
+            .map(|row| row.iter().map(buffer::Cell::symbol).collect::<String>())
             .collect()
     }
 

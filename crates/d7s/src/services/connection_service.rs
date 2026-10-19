@@ -1,7 +1,10 @@
+use core::time::Duration;
+
 use color_eyre::{Result, eyre::eyre};
+use tokio::{fs::metadata, net::TcpStream, time::timeout};
 
 use crate::db::{
-    connection::{Connection, ConnectionType},
+    connection::{Connection, ConnectionType, parse_server_url},
     sqlite::{
         delete_connection, get_connections, save_connection, update_connection,
     },
@@ -11,7 +14,7 @@ use crate::db::{
 pub struct ConnectionService;
 
 /// Per-connection bound for the list health check.
-const PING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+const PING_TIMEOUT: Duration = Duration::from_secs(3);
 
 impl ConnectionService {
     /// Get all connections from the database
@@ -62,29 +65,25 @@ impl ConnectionService {
         match connection.r#type {
             ConnectionType::Postgres | ConnectionType::Mysql => {
                 let (host, port, _, _) =
-                    crate::db::connection::parse_server_url(
-                        connection.r#type,
-                        &connection.url,
-                    );
+                    parse_server_url(connection.r#type, &connection.url);
                 let Ok(port) = port.parse::<u16>() else {
                     return false;
                 };
-                tokio::time::timeout(
-                    PING_TIMEOUT,
-                    tokio::net::TcpStream::connect((host.as_str(), port)),
-                )
-                .await
-                .is_ok_and(|r| r.is_ok())
+                timeout(PING_TIMEOUT, TcpStream::connect((host.as_str(), port)))
+                    .await
+                    .is_ok_and(|r| r.is_ok())
             }
-            ConnectionType::Sqlite => tokio::fs::metadata(&connection.url)
-                .await
-                .is_ok_and(|m| m.is_file()),
+            ConnectionType::Sqlite => {
+                metadata(&connection.url).await.is_ok_and(|m| m.is_file())
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::net::TcpListener;
+
     use super::*;
 
     fn pg(url: &str) -> Connection {
@@ -97,7 +96,7 @@ mod tests {
 
     #[tokio::test]
     async fn ping_postgres_is_a_credential_free_tcp_connect() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         assert!(
             ConnectionService::ping(&pg(&format!(

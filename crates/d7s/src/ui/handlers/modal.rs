@@ -1,9 +1,12 @@
-use std::str::FromStr;
+use core::str::FromStr;
 
 use crate::{
     auth::Keyring,
-    db::connection::Connection,
-    ui::widgets::connection_modal::{PasswordStorageType, TestResult},
+    db::{
+        connection::Connection,
+        sqlite::{save_connection, update_connection},
+    },
+    ui::widgets::connection_modal::{Mode, PasswordStorageType, TestResult},
 };
 
 /// Handles saving a connection from the modal
@@ -19,7 +22,7 @@ use crate::{
 pub fn handle_save_connection(
     #[allow(unused_variables)] keyring: &Option<Keyring>,
     connection: &Connection,
-    mode: crate::ui::widgets::connection_modal::Mode,
+    mode: Mode,
     original_name: Option<String>,
 ) -> Result<(), String> {
     // Handle password storage based on connection's storage preference
@@ -75,13 +78,13 @@ pub fn handle_save_connection(
         }
     }
 
-    if matches!(mode, crate::ui::widgets::connection_modal::Mode::New) {
-        crate::db::sqlite::save_connection(connection)
+    if matches!(mode, Mode::New) {
+        save_connection(connection)
             .map_err(|e| format!("Failed to save connection: {e}"))?;
-    } else if matches!(mode, crate::ui::widgets::connection_modal::Mode::Edit)
+    } else if matches!(mode, Mode::Edit)
         && let Some(original_name) = original_name
     {
-        crate::db::sqlite::update_connection(&original_name, connection)
+        update_connection(&original_name, connection)
             .map_err(|e| format!("Failed to update connection: {e}"))?;
 
         // Delete the old credential if the name has changed

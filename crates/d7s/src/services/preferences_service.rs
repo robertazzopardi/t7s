@@ -1,3 +1,5 @@
+use std::env::var;
+
 use color_eyre::Result;
 use rusqlite::{Connection as SqliteConnection, params};
 use serde::{Deserialize, Serialize};
@@ -100,7 +102,7 @@ impl PreferencesService {
 
     /// `D7S_PAGE_SIZE` env wins, then stored pref, then default 200.
     pub fn effective_page_size() -> u32 {
-        if let Ok(env) = std::env::var("D7S_PAGE_SIZE")
+        if let Ok(env) = var("D7S_PAGE_SIZE")
             && let Ok(n) = env.parse::<u32>()
             && n > 0
         {
