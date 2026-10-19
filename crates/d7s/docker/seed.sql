@@ -50,6 +50,22 @@ INSERT INTO public.big_seed (payload)
 SELECT 'row_' || gs.i::text
 FROM generate_series(1, 10000) AS gs(i);
 
+-- Short | very long | short — open this and press W to see Fit vs Content.
+CREATE TABLE public.wide_cols (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(8) NOT NULL,
+    payload TEXT NOT NULL,
+    tag VARCHAR(8) NOT NULL
+);
+
+INSERT INTO public.wide_cols (code, payload, tag) VALUES
+    ('A1', repeat('lorem-ipsum-dolor-sit-amet-', 12), 'alpha'),
+    ('B2', repeat('https://example.com/path/to/resource?id=', 8) || 'zzzz', 'beta'),
+    ('C3', 'short-enough', 'gamma'),
+    ('D4', repeat('WIDE_COLUMN_PAYLOAD_', 20), 'delta');
+
+COMMENT ON TABLE public.wide_cols IS 'Column-width demo: fat middle column; toggle with W';
+
 INSERT INTO public.products (name, description, price, quantity, is_available, category_id, tags) VALUES
     ('Laptop', 'High-performance laptop', 1299.99, 50, true, 1, ARRAY['electronics', 'computers']),
     ('Phone', 'Latest smartphone', 799.99, 100, true, 1, ARRAY['electronics', 'mobile']),
@@ -201,7 +217,9 @@ $$ LANGUAGE plpgsql;
 INSERT INTO edge_cases.long_text (title, content, metadata) VALUES
     ('Short post', 'This is a short post.', '{"length": "short"}'),
     ('Medium post', 'This is a medium-length post with some more content but still not too long. It has multiple sentences and provides a decent amount of text.', '{"length": "medium"}'),
-    ('Long post', repeat_string('This is a very long post. ', 50), '{"length": "long", "estimated_words": 300}');
+    ('Long post', repeat_string('This is a very long post. ', 50), '{"length": "long", "estimated_words": 300}'),
+    -- Mid-column overflow with short neighbors (same exercise as public.wide_cols).
+    ('Wide mid', repeat_string('column-overflow-demo-', 15), 'tail');
 
 -- Schema: complex_types - tables with advanced Postgres data types
 CREATE SCHEMA complex_types;

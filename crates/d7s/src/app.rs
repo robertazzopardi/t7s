@@ -151,6 +151,10 @@ impl App<'_> {
     pub(crate) fn toggle_column_width_mode(&mut self) {
         self.column_width_mode = self.column_width_mode.toggle();
         self.sync_column_width_mode();
+        self.set_status(format!(
+            "Column width: {}",
+            self.column_width_mode.label()
+        ));
     }
 
     /// Push the session width mode onto every table the app owns, so tables
@@ -2321,6 +2325,7 @@ mod tests {
         assert_eq!(app.column_width_mode, ColumnWidthMode::Fit);
         app.toggle_column_width_mode();
         assert_eq!(app.column_width_mode, ColumnWidthMode::Content);
+        assert_eq!(app.status_line.message(), "Column width: Content");
         assert_eq!(
             app.help_table.view.column_width_mode,
             ColumnWidthMode::Content

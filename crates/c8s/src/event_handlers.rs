@@ -807,6 +807,7 @@ mod tests {
         let w = KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT);
         app.on_key_event(w, &mut t).await.unwrap();
         assert_eq!(app.column_width_mode, Content);
+        assert_eq!(app.status_line.message(), "Column width: Content");
         assert_eq!(app.networks.view.column_width_mode, Content);
         assert_eq!(app.processes.view.column_width_mode, Content);
         // Processes are recreated on open; render re-syncs them.
