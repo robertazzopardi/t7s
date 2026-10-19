@@ -5,7 +5,6 @@ use std::{
     io::stdout,
     path::Path,
     process::{Command, id},
-    sync::Arc,
     time::Instant,
 };
 
@@ -118,6 +117,7 @@ pub struct App<'a> {
     pub(crate) query_log_table: TableDataState<QueryLogEntry>,
     pub(crate) cell_edit: Option<CellEditSession>,
     pub(crate) in_flight: InFlight,
+    #[allow(dead_code)] // wired in Tasks 9–12
     pub(crate) bg_tx: UnboundedSender<BgEvent>,
     pub(crate) bg_rx: UnboundedReceiver<BgEvent>,
 }
@@ -788,6 +788,7 @@ mod tests {
         fs::{remove_file, write},
         net::TcpListener,
         path,
+        sync::Arc,
         time::SystemTime,
     };
 

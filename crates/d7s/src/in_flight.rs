@@ -6,6 +6,7 @@ pub struct InFlight {
 }
 
 impl InFlight {
+    #[allow(dead_code)] // callers in Tasks 9–12
     pub fn try_begin(&mut self, key: impl Into<String>) -> bool {
         self.keys.insert(key.into())
     }
@@ -14,23 +15,28 @@ impl InFlight {
         self.keys.remove(key);
     }
 
+    #[allow(dead_code)] // callers in Tasks 9–12
     pub fn contains(&self, key: &str) -> bool {
         self.keys.contains(key)
     }
 }
 
+#[allow(dead_code)] // callers in Tasks 9–12
 pub fn connection_key(id: &str) -> String {
     format!("connection:{id}")
 }
 
+#[allow(dead_code)]
 pub fn database_key(name: &str) -> String {
     format!("database:{name}")
 }
 
+#[allow(dead_code)]
 pub fn table_key(schema: &str, table: &str) -> String {
     format!("table:{schema}.{table}")
 }
 
+#[allow(dead_code)]
 pub fn sql_key(connection_id: &str) -> String {
     format!("sql:{connection_id}")
 }
