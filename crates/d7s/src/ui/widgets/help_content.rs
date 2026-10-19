@@ -145,12 +145,16 @@ const DATABASE_HELP: &[HelpEntry] = &[
 
 const TABLE_DATA_HELP: &[HelpEntry] = &[
     HelpEntry {
-        key: "r",
-        desc: "Refresh",
+        key: "n",
+        desc: "New row (blank draft)",
     },
     HelpEntry {
         key: "a",
-        desc: "New row (draft)",
+        desc: "Alias for n (blank draft)",
+    },
+    HelpEntry {
+        key: "N",
+        desc: "New row (column defaults)",
     },
     HelpEntry {
         key: "c",
@@ -165,20 +169,35 @@ const TABLE_DATA_HELP: &[HelpEntry] = &[
         desc: "Delete row(s)",
     },
     HelpEntry {
-        key: "Space",
-        desc: "Toggle multi-select",
+        key: "i",
+        desc: "Edit selected cell",
+    },
+    HelpEntry {
+        key: "r",
+        desc: "Refresh",
+    },
+];
+
+const TABLE_DATA_CELL_EDIT_HELP: &[HelpEntry] = &[
+    HelpEntry {
+        key: "Esc",
+        desc: "Cancel edit (revert cell)",
     },
     HelpEntry {
         key: "Enter",
-        desc: "Edit cell",
+        desc: "Commit cell",
     },
     HelpEntry {
-        key: "Y",
-        desc: "Copy row (TSV)",
+        key: "Tab / Shift+Tab",
+        desc: "Next / previous editable column",
     },
     HelpEntry {
-        key: ": / #",
-        desc: "Jump to row number",
+        key: "Ctrl+e",
+        desc: "Multiline editor (modal)",
+    },
+    HelpEntry {
+        key: "Backspace",
+        desc: "Delete character in buffer",
     },
 ];
 
@@ -267,6 +286,7 @@ fn help_sections(
         ) => {
             sections.push(("Database", DATABASE_HELP));
             sections.push(("Table data", TABLE_DATA_HELP));
+            sections.push(("Cell edit", TABLE_DATA_CELL_EDIT_HELP));
             sections.push(("Not in top bar", TABLE_DATA_HIDDEN_BAR));
             sections.push(("Filter", FILTER_NOTE));
         }
@@ -309,4 +329,28 @@ pub fn help_rows(
         }
     }
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn table_data_help_lists_inline_edit_keys() {
+        let rows = help_rows(
+            AppState::DatabaseConnected,
+            &DatabaseExplorerState::TableData("public".into(), "users".into()),
+        );
+        let body = rows
+            .iter()
+            .filter(|r| !r.section_header)
+            .map(|r| format!("{} {}", r.key, r.desc))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(body.contains("n New row (blank draft)"));
+        assert!(body.contains("N New row (column defaults)"));
+        assert!(body.contains("i Edit selected cell"));
+        assert!(body.contains("Tab / Shift+Tab"));
+        assert!(body.contains("Ctrl+e Multiline editor (modal)"));
+    }
 }

@@ -10,7 +10,8 @@ use mysql_async::{
 
 use crate::db::{
     Column, Database, DatabaseInfo, DbRowId, Schema, Table, TableData,
-    TableDataPage, TableRow, should_omit_for_insert_default,
+    TableDataPage, TableRow, cell_clears_to_sql_null,
+    should_omit_for_insert_default,
     tls::{TlsConfig, TlsMode},
 };
 
@@ -374,10 +375,7 @@ impl Database for Mysql {
             .await?
             .iter()
             .any(|c| c.name == set_column && c.is_nullable);
-        let new_value = if nullable
-            && (new_value.trim().is_empty()
-                || new_value.eq_ignore_ascii_case("null"))
-        {
+        let new_value = if cell_clears_to_sql_null(new_value, nullable) {
             Value::NULL
         } else {
             Value::from(new_value)

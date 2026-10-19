@@ -30,6 +30,8 @@ impl HotkeyDescription {
 pub struct Hotkey {
     pub keycode: KeyCode,
     pub description: HotkeyDescription,
+    /// When set, shown instead of the `KeyCode` label (e.g. `Ctrl+e`).
+    pub key_display: Option<&'static str>,
 }
 
 impl Display for Hotkey {
@@ -44,6 +46,7 @@ impl Hotkey {
         Self {
             keycode: KeyCode::Char(c),
             description: HotkeyDescription::Static(description),
+            key_display: None,
         }
     }
 
@@ -52,12 +55,30 @@ impl Hotkey {
         Self {
             keycode,
             description: HotkeyDescription::Static(description),
+            key_display: None,
+        }
+    }
+
+    /// Custom key label for chords the `KeyCode` alone cannot show (e.g. `Ctrl+e`).
+    #[must_use]
+    pub const fn labeled(
+        display: &'static str,
+        keycode: KeyCode,
+        description: &'static str,
+    ) -> Self {
+        Self {
+            keycode,
+            description: HotkeyDescription::Static(description),
+            key_display: Some(display),
         }
     }
 
     #[must_use]
     #[allow(clippy::wildcard_enum_match_arm)] // KeyCode is crossterm's; only label keys we show
     pub fn key_label(&self) -> String {
+        if let Some(label) = self.key_display {
+            return label.to_string();
+        }
         match self.keycode {
             KeyCode::Char(c) => c.to_string(),
             KeyCode::Esc => "Esc".to_string(),

@@ -10,6 +10,7 @@ use color_eyre::eyre::eyre;
 mod app;
 mod app_state;
 mod auth;
+mod cell_edit;
 mod command;
 mod command_bar;
 mod connection_manager;

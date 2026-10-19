@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::db::{
     Column, Database, DatabaseInfo, DbRowId, Schema, Table, TableData,
-    TableDataPage, TableRow,
+    TableDataPage, TableRow, cell_clears_to_sql_null,
     query_log::report_sql,
     should_omit_for_insert_default,
     tls::{TlsConfig, TlsMode},
@@ -530,7 +530,8 @@ impl Database for Postgres {
                 c.data_type,
                 c.is_nullable,
                 c.column_default,
-                pgd.description
+                pgd.description,
+                c.is_identity
             FROM information_schema.columns c
             LEFT JOIN pg_catalog.pg_statio_all_tables st ON (c.table_schema = st.schemaname AND c.table_name = st.relname)
             LEFT JOIN pg_catalog.pg_description pgd ON (pgd.objoid = st.relid AND pgd.objsubid = c.ordinal_position)
@@ -547,7 +548,10 @@ impl Database for Postgres {
                 name: row.get(0),
                 data_type: row.get(1),
                 is_nullable: row.get::<_, String>(2) == "YES",
-                default_value: row.get(3),
+                default_value: row.get::<_, Option<String>>(3).or_else(|| {
+                    (row.get::<_, String>(5) == "YES")
+                        .then(|| "GENERATED AS IDENTITY".to_string())
+                }),
                 description: row.get(4),
             })
             .collect();
@@ -654,24 +658,40 @@ impl Database for Postgres {
             pg_quote_ident(schema_name),
             pg_quote_ident(table_name),
         );
+        let nullable = self
+            .get_columns(schema_name, table_name)
+            .await?
+            .iter()
+            .any(|c| c.name == set_column && c.is_nullable);
+        let write_null = cell_clears_to_sql_null(new_value, nullable);
 
         if !primary_key.is_empty() {
             // Bind every value as text on the wire (`$n::text`), then cast to the column type.
             // Otherwise PostgreSQL infers `$n` as the target type (e.g. int4) and tokio-postgres
-            // rejects `&str` for that OID.
-            let mut sql = format!(
-                "UPDATE {tgt} SET {set_q} = CAST($1::text AS {set_ty}) WHERE "
-            );
-            let mut owned: Vec<String> =
-                Vec::with_capacity(1 + primary_key.len());
-            owned.push(
-                pg_coerce_typed_text_input(new_value, &set_ty).into_owned(),
-            );
+            // rejects `&str` for that OID. Blank/null on nullable columns uses SQL NULL.
+            let mut sql = if write_null {
+                format!("UPDATE {tgt} SET {set_q} = NULL WHERE ")
+            } else {
+                format!(
+                    "UPDATE {tgt} SET {set_q} = CAST($1::text AS {set_ty}) WHERE "
+                )
+            };
+            let mut owned: Vec<String> = Vec::with_capacity(if write_null {
+                primary_key.len()
+            } else {
+                1 + primary_key.len()
+            });
+            if !write_null {
+                owned.push(
+                    pg_coerce_typed_text_input(new_value, &set_ty).into_owned(),
+                );
+            }
+            let param_base = if write_null { 1 } else { 2 };
             for (i, (k, v)) in primary_key.iter().enumerate() {
                 if i > 0 {
                     sql.push_str(" AND ");
                 }
-                let param_num = i + 2;
+                let param_num = i + param_base;
                 let pk_ty = pg_resolve_format_type(&col_types, k);
                 let _ = write!(
                     sql,
@@ -691,6 +711,14 @@ impl Database for Postgres {
         }
 
         if let Some(DbRowId::PostgresCtid(ctid)) = row_id_fallback {
+            if write_null {
+                let sql = format!(
+                    "UPDATE {tgt} SET {set_q} = NULL WHERE ctid = $1::text::tid"
+                );
+                let p0: &(dyn ToSql + Sync) = &ctid;
+                let n = pg_execute(&client, &sql, &[p0]).await?;
+                return Ok(n);
+            }
             let sql = format!(
                 "UPDATE {tgt} SET {set_q} = CAST($1::text AS {set_ty}) WHERE ctid = $2::text::tid"
             );

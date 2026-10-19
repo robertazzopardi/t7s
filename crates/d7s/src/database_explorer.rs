@@ -10,7 +10,7 @@ use crate::{
     app::{ACTIVITY_QUERY, App},
     app_state::DatabaseExplorerState,
     db::{
-        Database, DbRowId, TableDataPage, connection::ConnectionType,
+        Database, TableDataPage, connection::ConnectionType,
         query_log::QueryOrigin,
     },
     filtered_data::FilteredData,
@@ -24,11 +24,25 @@ use crate::{
 const STATUS_DB_NOT_CONNECTED: &str = "Not connected to database.";
 const STATUS_CONNECT_FAILED: &str = "Failed to connect to database.";
 
-fn column_index_for_name(names: &[String], name: &str) -> Option<usize> {
+pub fn column_index_for_name(names: &[String], name: &str) -> Option<usize> {
     names
         .iter()
         .position(|c| c == name)
         .or_else(|| names.iter().position(|c| c.eq_ignore_ascii_case(name)))
+}
+
+pub fn pk_value_pairs(
+    col_names: &[String],
+    row_values: &[String],
+    pk_names: &[String],
+) -> Vec<(String, String)> {
+    pk_names
+        .iter()
+        .filter_map(|pk| {
+            let idx = column_index_for_name(col_names, pk)?;
+            Some((pk.clone(), row_values.get(idx)?.clone()))
+        })
+        .collect()
 }
 
 macro_rules! explorer_selected_row_name {
@@ -216,26 +230,33 @@ impl App<'_> {
             .ok();
         let page_size = self.page_size;
 
-        match database
+        // Bind the page (or return) before further awaits so `Box<dyn Error>`
+        // from the page Result is not held across `.await` (clippy::future_not_send).
+        let page = match database
             .get_table_data_page(schema_name, table_name, 0, page_size)
             .await
         {
-            Ok(page) => {
-                self.replace_explorer_table_page(
-                    page, 0, page_size, total_rows,
-                );
-                let explorer = &mut self.database_explorer;
-                explorer.state = DatabaseExplorerState::TableData(
-                    schema_name.to_string(),
-                    table_name.to_string(),
-                );
-                explorer.record_recent_table_open(schema_name, table_name);
-            }
+            Ok(page) => page,
             Err(e) => {
                 self.database_explorer.table_data_virtual = None;
                 self.status_load_failed("table data", e);
+                return Ok(());
             }
-        }
+        };
+        let col_meta = database.get_columns(schema_name, table_name).await.ok();
+        let pk_meta = database
+            .get_primary_key_columns(schema_name, table_name)
+            .await
+            .ok();
+        self.replace_explorer_table_page(page, 0, page_size, total_rows);
+        let explorer = &mut self.database_explorer;
+        explorer.table_columns = col_meta;
+        explorer.table_pk_names = pk_meta;
+        explorer.state = DatabaseExplorerState::TableData(
+            schema_name.to_string(),
+            table_name.to_string(),
+        );
+        explorer.record_recent_table_open(schema_name, table_name);
 
         Ok(())
     }
@@ -509,55 +530,8 @@ impl App<'_> {
                 self.load_table_data(&schema_name, &table_name).await?;
                 self.set_status(format!("Opened {schema_name}.{table_name}"));
             }
-            DatabaseExplorerState::TableData(schema_name, table_name) => {
-                if let Some((column_name, cell_value, row_idx, col_idx, snap)) =
-                    self.get_selected_cell_for_modal()
-                {
-                    let schema = schema_name.clone();
-                    let table = table_name.clone();
-                    let db_row_id = self.get_selected_row_db_id();
-                    let is_draft = self.table_data_selected_is_draft();
-                    let Some(database) =
-                        self.database_explorer.database.as_ref()
-                    else {
-                        return Ok(());
-                    };
-                    let pk_names = if is_draft {
-                        Vec::new()
-                    } else {
-                        database
-                            .get_primary_key_columns(&schema, &table)
-                            .await
-                            .unwrap_or_default()
-                    };
-                    let col_names: &[String] = self
-                        .database_explorer
-                        .table_data
-                        .as_ref()
-                        .and_then(|t| {
-                            t.table.model.dynamic_column_names.as_ref()
-                        })
-                        .map_or(&[][..], |names| names.as_slice());
-                    let primary_key: Vec<(String, String)> = pk_names
-                        .into_iter()
-                        .filter_map(|pk| {
-                            let idx = column_index_for_name(col_names, &pk)?;
-                            let val = snap.get(idx)?.clone();
-                            Some((pk, val))
-                        })
-                        .collect();
-                    self.modal_manager.open_cell_value_modal(
-                        column_name,
-                        &cell_value,
-                        row_idx,
-                        col_idx,
-                        snap,
-                        schema,
-                        table,
-                        primary_key,
-                        db_row_id,
-                    );
-                }
+            DatabaseExplorerState::TableData(_, _) => {
+                self.begin_cell_edit(None);
             }
             DatabaseExplorerState::SqlResults(_) => {
                 // Enter should not re-run SQL in results mode.
@@ -579,7 +553,7 @@ impl App<'_> {
     }
 
     /// Selected cell plus row index, column index, and full row snapshot (for syncing filtered data).
-    fn get_selected_cell_for_modal(
+    pub(crate) fn get_selected_cell_for_modal(
         &self,
     ) -> Option<(String, String, usize, usize, Vec<String>)> {
         let explorer = &self.database_explorer;
@@ -603,33 +577,20 @@ impl App<'_> {
         Some((column_name, cell_value, selected_row, selected_col, snap))
     }
 
-    fn get_selected_row_db_id(&self) -> Option<DbRowId> {
-        let explorer = &self.database_explorer;
-        let fd = explorer.table_data.as_ref()?;
-        let selected = fd.table.view.state.selected()?;
-        let row = fd.table.model.items.get(selected)?;
-        row.db_row_id.clone()
-    }
-
-    /// Persist a cell edit from the modal, then refresh the grid.
+    /// Persist a cell edit from the modal or inline editor.
+    /// Returns `true` when the edit was applied (clear inline session).
     pub async fn apply_cell_value_edit(
         &mut self,
         apply: CellValueApply,
-    ) -> Result<()> {
-        let is_draft = self
-            .database_explorer
-            .table_data
-            .as_ref()
-            .and_then(|fd| fd.table.model.items.get(apply.row_index))
-            .is_some_and(|r| r.is_draft);
-        if is_draft {
+    ) -> Result<bool> {
+        if self.row_is_draft_at(apply.row_index) {
             self.apply_cell_value_edit_in_memory(&apply);
             self.set_status("Draft cell updated — commit with s when ready.");
-            return Ok(());
+            return Ok(true);
         }
         let Some(database) = self.database_explorer.database.as_ref() else {
             self.set_status(STATUS_DB_NOT_CONNECTED);
-            return Ok(());
+            return Ok(false);
         };
         match database
             .update_table_cell(
@@ -646,14 +607,115 @@ impl App<'_> {
                 self.set_status(
                     "No row was updated (it may have changed in the database).",
                 );
+                Ok(false)
             }
             Ok(_) => {
                 self.apply_cell_value_edit_in_memory(&apply);
-                self.set_status("Cell updated.");
+                self.set_status(format!("UPDATED {}", apply.set_column));
+                Ok(true)
             }
-            Err(e) => self.status_action_failed("Update", e),
+            Err(e) => {
+                self.status_action_failed("Update", e);
+                Ok(false)
+            }
+        }
+    }
+
+    pub async fn finish_cell_edit(&mut self) -> Result<()> {
+        let DatabaseExplorerState::TableData(schema, table) =
+            self.database_explorer.state.clone()
+        else {
+            return Ok(());
+        };
+        let unchanged = self.cell_edit.as_ref().is_some_and(|s| {
+            s.buffer == s.pre_edit_value
+                // Enter on a NULL display starts with an empty buffer; leaving
+                // without typing must not write '' over SQL NULL.
+                || (s.pre_edit_value == "NULL" && s.buffer.is_empty())
+        });
+        if unchanged {
+            // Unchanged: leave edit mode without a write (NULL cells render as "NULL").
+            self.cell_edit = None;
+            return Ok(());
+        }
+        let Some(new_value) = self.cell_edit.as_ref().map(|s| s.buffer.clone())
+        else {
+            return Ok(());
+        };
+        let Some(apply) =
+            self.cell_value_apply_from_session(schema, table, &new_value)
+        else {
+            return Ok(());
+        };
+        self.sync_cell_edit_buffer_to_grid();
+        if self.apply_cell_value_edit(apply).await? {
+            self.cell_edit = None;
         }
         Ok(())
+    }
+
+    /// Build a `CellValueApply` from the active inline edit session.
+    /// Uses cached `table_pk_names` (filled on table load) instead of re-fetching.
+    pub(crate) fn cell_value_apply_from_session(
+        &self,
+        schema: String,
+        table: String,
+        new_value: &str,
+    ) -> Option<CellValueApply> {
+        let session = self.cell_edit.as_ref()?;
+        let col_names = self.table_data_column_names();
+        let set_column = col_names.get(session.col_index)?.clone();
+        let row_snapshot = session.row_snapshot.clone();
+        let is_draft = self.row_is_draft_at(session.row_index);
+        let db_row_id = self.row_db_id_at(session.row_index);
+        let pk_names: &[String] = if is_draft {
+            &[]
+        } else {
+            self.database_explorer
+                .table_pk_names
+                .as_deref()
+                .unwrap_or(&[])
+        };
+        let primary_key = pk_value_pairs(&col_names, &row_snapshot, pk_names);
+        Some(CellValueApply {
+            schema_name: schema,
+            table_name: table,
+            set_column,
+            row_snapshot,
+            row_index: session.row_index,
+            col_index: session.col_index,
+            new_value: new_value.to_string(),
+            primary_key,
+            db_row_id,
+        })
+    }
+
+    pub(crate) fn table_data_column_names(&self) -> Vec<String> {
+        self.database_explorer
+            .table_data
+            .as_ref()
+            .and_then(|fd| fd.table.model.dynamic_column_names.as_ref())
+            .map(|names| names.to_vec())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn row_is_draft_at(&self, row_index: usize) -> bool {
+        self.database_explorer
+            .table_data
+            .as_ref()
+            .and_then(|fd| fd.table.model.items.get(row_index))
+            .is_some_and(|r| r.is_draft)
+    }
+
+    pub(crate) fn row_db_id_at(
+        &self,
+        row_index: usize,
+    ) -> Option<crate::db::DbRowId> {
+        self.database_explorer
+            .table_data
+            .as_ref()
+            .and_then(|fd| fd.table.model.items.get(row_index))
+            .and_then(|r| r.db_row_id.clone())
     }
 
     fn apply_cell_value_edit_in_memory(&mut self, apply: &CellValueApply) {
@@ -665,6 +727,8 @@ impl App<'_> {
         {
             cell.clone_from(&apply.new_value);
         }
+        // ponytail: full-row equality scan of the page; store original_index in
+        // the apply payload if pages grow past VIRTUAL_TABLE_PAGE_SIZE cost.
         if let Some(ix) = fd
             .original
             .iter()
@@ -676,6 +740,8 @@ impl App<'_> {
         {
             cell.clone_from(&apply.new_value);
         }
+        // ponytail: full-page width scan per cell; bump only the edited column
+        // (or skip when new width ≤ current) if Tab on wide pages feels laggy.
         fd.table.recompute_column_widths();
     }
 
