@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use tokio::task::JoinSet;
 
@@ -6,8 +6,11 @@ use crate::{
     app::App,
     app_state::{AppState, DatabaseExplorerState},
     database_explorer_state::DatabaseExplorer,
-    db::connection::{
-        Connection, ConnectionStatus, ConnectionType, parse_server_url,
+    db::{
+        Database,
+        connection::{
+            Connection, ConnectionStatus, ConnectionType, parse_server_url,
+        },
     },
     error::Result,
     services::{ConnectionService, PreferencesService},
@@ -64,7 +67,8 @@ impl App<'_> {
         &mut self,
         connection: Connection,
     ) -> Result<()> {
-        let sqlite = self.query_log.wrap(connection.to_sqlite());
+        let sqlite: Arc<dyn Database> =
+            Arc::from(self.query_log.wrap(connection.to_sqlite()));
         if !sqlite.test().await {
             self.set_status(format!(
                 "Failed to connect to database: {}",
@@ -111,7 +115,8 @@ impl App<'_> {
         // Create a temporary connection to the default database
         let mut temp_connection = connection_with_password.clone();
         temp_connection.selected_database.clone_from(&default_db);
-        let db = self.query_log.wrap(temp_connection.to_database());
+        let db: Arc<dyn Database> =
+            Arc::from(self.query_log.wrap(temp_connection.to_database()));
 
         if db.test().await {
             // Connection successful; keep selected_database so the explorer shows it

@@ -5,7 +5,12 @@ use std::{
     io::stdout,
     path::Path,
     process::{Command, id},
+    sync::Arc,
     time::Instant,
+};
+
+use tokio::sync::mpsc::{
+    UnboundedReceiver, UnboundedSender, unbounded_channel,
 };
 
 use crossterm::{
@@ -28,6 +33,8 @@ use ratatui_textarea::TextArea;
 use crate::{
     app,
     app_state::{AppState, DatabaseExplorerState},
+    bg::BgEvent,
+    in_flight::InFlight,
     cell_edit::CellEditSession,
     database_explorer_state::DatabaseExplorer,
     db::{
@@ -110,10 +117,14 @@ pub struct App<'a> {
     pub(crate) show_query_log: bool,
     pub(crate) query_log_table: TableDataState<QueryLogEntry>,
     pub(crate) cell_edit: Option<CellEditSession>,
+    pub(crate) in_flight: InFlight,
+    pub(crate) bg_tx: UnboundedSender<BgEvent>,
+    pub(crate) bg_rx: UnboundedReceiver<BgEvent>,
 }
 
 impl Default for App<'_> {
     fn default() -> Self {
+        let (bg_tx, bg_rx) = unbounded_channel();
         Self {
             running: false,
             modal_manager: ModalManager::new(),
@@ -140,6 +151,9 @@ impl Default for App<'_> {
             show_query_log: false,
             query_log_table: TableDataState::new(Vec::new()),
             cell_edit: None,
+            in_flight: InFlight::default(),
+            bg_tx,
+            bg_rx,
         }
     }
 }
@@ -167,6 +181,7 @@ impl App<'_> {
         self.ping_connections_if_any().await;
         while self.running {
             terminal.draw(|frame| self.render(frame))?;
+            self.drain_bg_events();
             self.tick_watch().await;
             self.handle_crossterm_events().await?;
 
@@ -174,6 +189,21 @@ impl App<'_> {
         }
         self.save_session_preferences();
         Ok(())
+    }
+
+    pub(crate) fn drain_bg_events(&mut self) {
+        while let Ok(event) = self.bg_rx.try_recv() {
+            match event {
+                BgEvent::ActionDone { key, message } => {
+                    self.in_flight.end(&key);
+                    self.set_status(message);
+                }
+                BgEvent::ActionFailed { key, message } => {
+                    self.in_flight.end(&key);
+                    self.set_status(message);
+                }
+            }
+        }
     }
 
     /// Re-run the SQL results query if watch mode is on and the interval
@@ -797,7 +827,7 @@ mod tests {
             url: sqlite.path.clone(),
             ..Connection::default()
         };
-        let db = app.query_log.wrap(Box::new(sqlite));
+        let db = Arc::from(app.query_log.wrap(Box::new(sqlite)));
         app.database_explorer = DatabaseExplorer::new(conn, Some(db));
         app.state = AppState::DatabaseConnected;
         app.database_explorer.state =
@@ -2259,7 +2289,7 @@ mod tests {
                 r#type: ConnectionType::Postgres,
                 ..Connection::default()
             },
-            Some(app.query_log.wrap(Box::new(pg))),
+            Some(Arc::from(app.query_log.wrap(Box::new(pg)))),
         );
         app.state = AppState::DatabaseConnected;
         app.database_explorer.state = DatabaseExplorerState::Databases;

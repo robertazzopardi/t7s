@@ -1,4 +1,5 @@
 use core::fmt;
+use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use k9tui::widgets::{
@@ -104,7 +105,7 @@ impl App<'_> {
     pub async fn load_databases(&mut self) -> Result<()> {
         let explorer = &mut self.database_explorer;
 
-        let Some(database) = explorer.database.as_mut() else {
+        let Some(database) = explorer.database.as_ref() else {
             self.set_status(STATUS_DB_NOT_CONNECTED);
             return Ok(());
         };
@@ -132,7 +133,7 @@ impl App<'_> {
             let db: Box<dyn Database> = explorer.connection.to_database();
 
             if db.test().await {
-                explorer.database = Some(log.wrap(db));
+                explorer.database = Some(Arc::from(log.wrap(db)));
                 self.load_schemas().await?;
             } else {
                 self.set_status(STATUS_CONNECT_FAILED);
@@ -145,7 +146,7 @@ impl App<'_> {
     /// Load schemas from the database
     pub async fn load_schemas(&mut self) -> Result<()> {
         let explorer = &mut self.database_explorer;
-        let Some(database) = explorer.database.as_mut() else {
+        let Some(database) = explorer.database.as_ref() else {
             self.set_status(STATUS_DB_NOT_CONNECTED);
             return Ok(());
         };
@@ -170,7 +171,7 @@ impl App<'_> {
     /// Load tables for a schema
     pub async fn load_tables(&mut self, schema_name: &str) -> Result<()> {
         let explorer = &mut self.database_explorer;
-        let Some(database) = explorer.database.as_mut() else {
+        let Some(database) = explorer.database.as_ref() else {
             self.set_status(STATUS_DB_NOT_CONNECTED);
             return Ok(());
         };
@@ -194,7 +195,7 @@ impl App<'_> {
         table_name: &str,
     ) -> Result<()> {
         let explorer = &mut self.database_explorer;
-        let Some(database) = explorer.database.as_mut() else {
+        let Some(database) = explorer.database.as_ref() else {
             self.set_status(STATUS_DB_NOT_CONNECTED);
             return Ok(());
         };
