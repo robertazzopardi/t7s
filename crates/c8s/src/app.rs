@@ -36,9 +36,10 @@ use crate::{
     app_state::{AppState, ResourceKind},
     docker::{
         ContainerRow, ImageRow, NetworkRow, ProcessRow, VolumeRow,
-        client::DockerClient,
+        client::{DaemonHealth, DockerClient},
     },
     error::{Result, err},
+    in_flight::InFlight,
     log_dedup::DedupMode,
     ui::widgets::hotkeys::LIST_HOTKEYS,
 };
@@ -76,6 +77,13 @@ pub enum BackgroundEvent {
     ProcessError(String),
     /// Message for the status line from a background task.
     Status(String),
+    /// Lifecycle action finished (start/stop/restart/remove/describe prep, etc.).
+    ActionDone { key: String, message: String },
+    ActionFailed { key: String, message: String },
+    /// Daemon connect succeeded.
+    Connected(DockerClient),
+    ConnectFailed(String),
+    DaemonHealthOk(DaemonHealth),
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -135,6 +143,7 @@ pub struct App {
     /// Height of the last-rendered describe viewport, used to clamp scrolling.
     pub(crate) describe_viewport_height: usize,
     pub(crate) build_info: String,
+    pub(crate) in_flight: InFlight,
 
     pub(crate) bg_tx: UnboundedSender<BackgroundEvent>,
     pub(crate) bg_rx: UnboundedReceiver<BackgroundEvent>,
@@ -183,6 +192,7 @@ impl App {
             describe_scroll: 0,
             describe_viewport_height: 0,
             build_info: format!("Name: {PKG_NAME}\nVersion: {PKG_VERSION}"),
+            in_flight: InFlight::default(),
             bg_tx,
             bg_rx,
             log_task: None,
@@ -325,7 +335,7 @@ impl App {
         Ok(())
     }
 
-    fn drain_background_events(&mut self) {
+    pub(crate) fn drain_background_events(&mut self) {
         while let Ok(event) = self.bg_rx.try_recv() {
             match event {
                 BackgroundEvent::Containers(mut rows) => {
@@ -377,6 +387,29 @@ impl App {
                         self.log_lines.drain(..drop);
                         self.log_scroll = self.log_scroll.saturating_sub(drop);
                     }
+                }
+                BackgroundEvent::ActionDone { key, message } => {
+                    self.in_flight.end(&key);
+                    self.set_status(message);
+                }
+                BackgroundEvent::ActionFailed { key, message } => {
+                    self.in_flight.end(&key);
+                    self.set_status(message);
+                }
+                BackgroundEvent::Connected(client) => {
+                    self.in_flight.end(crate::in_flight::DAEMON_KEY);
+                    self.docker = Some(client);
+                    self.state = AppState::List;
+                    self.start_polling();
+                    self.set_status("Connected to Docker");
+                }
+                BackgroundEvent::ConnectFailed(msg) => {
+                    self.in_flight.end(crate::in_flight::DAEMON_KEY);
+                    self.state = AppState::ConnectError(msg);
+                }
+                BackgroundEvent::DaemonHealthOk(health) => {
+                    self.in_flight.end(crate::in_flight::DAEMON_KEY);
+                    self.state = AppState::Info(health);
                 }
             }
         }

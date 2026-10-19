@@ -1016,6 +1016,23 @@ mod tests {
         let out = screen(&mut app, &mut t);
         assert!(out.contains("command"), "{out}");
     }
+
+    #[tokio::test]
+    async fn action_done_clears_in_flight_and_sets_status() {
+        use crate::app::BackgroundEvent;
+
+        let mut app = App::new();
+        let key = crate::in_flight::container_key("c1");
+        assert!(app.in_flight.try_begin(key.clone()));
+        app.bg_tx
+            .send(BackgroundEvent::ActionDone {
+                key: key.clone(),
+                message: "Restarted".into(),
+            })
+            .unwrap();
+        app.drain_background_events();
+        assert!(!app.in_flight.contains(&key));
+    }
 }
 
 #[cfg(test)]
