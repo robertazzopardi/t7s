@@ -55,11 +55,58 @@ pub struct TableModel<T: TableData + Clone> {
     pub dynamic_column_names: Option<Arc<Vec<String>>>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColumnWidthMode {
+    #[default]
+    Fit,
+    Content,
+}
+
+impl ColumnWidthMode {
+    #[must_use]
+    pub const fn toggle(self) -> Self {
+        match self {
+            Self::Fit => Self::Content,
+            Self::Content => Self::Fit,
+        }
+    }
+}
+
+// ponytail: dead until Task 2 render uses these for Fit/Content layout.
+#[allow(dead_code)]
+const PEEK_COLS: usize = 2;
+
+#[allow(dead_code)]
+const fn fit_soft_cap(area_width: usize) -> usize {
+    let soft = area_width / 3;
+    if soft == 0 { 1 } else { soft }
+}
+
+#[allow(dead_code)]
+fn capped_lens_for_mode(
+    content_lens: &[usize],
+    area_width: usize,
+    mode: ColumnWidthMode,
+) -> Vec<usize> {
+    match mode {
+        ColumnWidthMode::Content => content_lens.to_vec(),
+        ColumnWidthMode::Fit => {
+            let hard = area_width.max(1);
+            let soft = fit_soft_cap(area_width);
+            content_lens
+                .iter()
+                .map(|&len| len.min(hard).min(soft))
+                .collect()
+        }
+    }
+}
+
 /// View state for the table (UI state like selection, scrolling)
 #[derive(Clone, Debug, Default)]
 pub struct TableViewState {
     pub state: TableState,
     pub column_offset: usize,
+    pub column_width_mode: ColumnWidthMode,
 }
 
 /// Combined state that holds both model and view state
@@ -95,6 +142,7 @@ impl<T: TableData + Clone> TableDataState<T> {
             view: TableViewState {
                 state: TableState::default().with_selected(0),
                 column_offset: 0,
+                column_width_mode: ColumnWidthMode::Fit,
             },
             multi_row_selection: BTreeSet::new(),
         }
@@ -754,6 +802,46 @@ mod tests {
                 let _ = render_lines(vec![Filled(String::new())], w, h);
             }
         }
+    }
+
+    #[test]
+    fn column_width_mode_defaults_to_fit_and_toggles() {
+        assert_eq!(ColumnWidthMode::default(), ColumnWidthMode::Fit);
+        assert_eq!(ColumnWidthMode::Fit.toggle(), ColumnWidthMode::Content);
+        assert_eq!(ColumnWidthMode::Content.toggle(), ColumnWidthMode::Fit);
+    }
+
+    #[test]
+    fn capped_lens_fit_hard_and_soft_caps() {
+        // area 30 → soft = 10; hard = 30
+        let content = vec![5usize, 100, 8];
+        let capped = capped_lens_for_mode(&content, 30, ColumnWidthMode::Fit);
+        assert_eq!(capped, vec![5, 10, 8]);
+    }
+
+    #[test]
+    fn capped_lens_fit_never_exceeds_viewport() {
+        let content = vec![500usize];
+        let capped = capped_lens_for_mode(&content, 20, ColumnWidthMode::Fit);
+        assert!(capped[0] <= 20);
+        assert_eq!(capped[0], fit_soft_cap(20)); // 20/3 = 6
+    }
+
+    #[test]
+    fn capped_lens_content_is_identity() {
+        let content = vec![5usize, 100, 8];
+        assert_eq!(
+            capped_lens_for_mode(&content, 30, ColumnWidthMode::Content),
+            content
+        );
+    }
+
+    #[test]
+    fn table_view_state_defaults_to_fit() {
+        assert_eq!(
+            TableViewState::default().column_width_mode,
+            ColumnWidthMode::Fit
+        );
     }
 }
 
