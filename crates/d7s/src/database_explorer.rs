@@ -146,6 +146,8 @@ impl App<'_> {
                     let _ = tx.send(BgEvent::ExplorerLoadFailed {
                         key,
                         resource: "databases".into(),
+                        schema: None,
+                        table: None,
                         message: e.to_string(),
                     });
                 }
@@ -200,6 +202,8 @@ impl App<'_> {
                     let _ = tx.send(BgEvent::ExplorerLoadFailed {
                         key,
                         resource: "schemas".into(),
+                        schema: None,
+                        table: None,
                         message: e.to_string(),
                     });
                 }
@@ -228,6 +232,8 @@ impl App<'_> {
                     let _ = tx.send(BgEvent::ExplorerLoadFailed {
                         key,
                         resource: "tables".into(),
+                        schema: Some(schema),
+                        table: None,
                         message: e.to_string(),
                     });
                 }
@@ -262,6 +268,8 @@ impl App<'_> {
                     let _ = tx.send(BgEvent::ExplorerLoadFailed {
                         key,
                         resource: "columns".into(),
+                        schema: Some(schema),
+                        table: Some(table),
                         message: e.to_string(),
                     });
                 }
@@ -323,6 +331,9 @@ impl App<'_> {
                 Err(e) => {
                     let _ = tx.send(BgEvent::TablePageLoaded {
                         key,
+                        schema,
+                        table,
+                        record_recent,
                         result: Err(e.to_string()),
                     });
                     return;
@@ -340,6 +351,9 @@ impl App<'_> {
             };
             let _ = tx.send(BgEvent::TablePageLoaded {
                 key,
+                schema: schema.clone(),
+                table: table.clone(),
+                record_recent,
                 result: Ok(TablePageLoadOk {
                     schema,
                     table,
@@ -886,6 +900,44 @@ impl App<'_> {
         });
     }
 
+    fn should_apply_explorer_load_failed(
+        state: &DatabaseExplorerState,
+        resource: &str,
+        schema: Option<&str>,
+        table: Option<&str>,
+    ) -> bool {
+        match resource {
+            "databases" => {
+                matches!(state, DatabaseExplorerState::Databases)
+            }
+            "schemas" => matches!(
+                state,
+                DatabaseExplorerState::Databases | DatabaseExplorerState::Schemas
+            ),
+            "tables" => match state {
+                DatabaseExplorerState::Schemas => true,
+                DatabaseExplorerState::Tables(s)
+                | DatabaseExplorerState::Columns(s, _)
+                | DatabaseExplorerState::TableData(s, _) => {
+                    schema.is_some_and(|sch| s == sch)
+                }
+                DatabaseExplorerState::Connections
+                | DatabaseExplorerState::Databases
+                | DatabaseExplorerState::SqlResults(_) => false,
+            },
+            "columns" => match (schema, table) {
+                (Some(schema), Some(table)) => Self::should_apply_table_page(
+                    state,
+                    schema,
+                    table,
+                    true,
+                ),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     fn should_apply_table_page(
         state: &DatabaseExplorerState,
         schema: &str,
@@ -979,19 +1031,23 @@ impl App<'_> {
 
     pub(crate) fn apply_table_page_loaded(
         &mut self,
+        schema: &str,
+        table: &str,
+        record_recent: bool,
         result: Result<TablePageLoadOk, String>,
     ) {
         match result {
             Err(e) => {
-                if matches!(
-                    self.database_explorer.state,
-                    DatabaseExplorerState::TableData(_, _)
-                        | DatabaseExplorerState::Columns(_, _)
-                        | DatabaseExplorerState::Tables(_)
+                if !Self::should_apply_table_page(
+                    &self.database_explorer.state,
+                    schema,
+                    table,
+                    record_recent,
                 ) {
-                    self.database_explorer.table_data_virtual = None;
-                    self.status_load_failed("table data", e);
+                    return;
                 }
+                self.database_explorer.table_data_virtual = None;
+                self.status_load_failed("table data", e);
             }
             Ok(payload) => {
                 if !Self::should_apply_table_page(
@@ -1052,8 +1108,18 @@ impl App<'_> {
     pub(crate) fn apply_explorer_load_failed(
         &mut self,
         resource: &str,
+        schema: Option<&str>,
+        table: Option<&str>,
         message: &str,
     ) {
+        if !Self::should_apply_explorer_load_failed(
+            &self.database_explorer.state,
+            resource,
+            schema,
+            table,
+        ) {
+            return;
+        }
         self.set_status(format!("Failed to load {resource}: {message}"));
     }
 

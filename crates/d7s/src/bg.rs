@@ -59,11 +59,16 @@ pub enum BgEvent {
     },
     TablePageLoaded {
         key: String,
+        schema: String,
+        table: String,
+        record_recent: bool,
         result: Result<TablePageLoadOk, String>,
     },
     ExplorerLoadFailed {
         key: String,
         resource: String,
+        schema: Option<String>,
+        table: Option<String>,
         message: String,
     },
 }

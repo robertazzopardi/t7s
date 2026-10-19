@@ -257,17 +257,35 @@ impl App<'_> {
                     self.in_flight.end(&key);
                     self.apply_columns_loaded(&schema, &table, columns);
                 }
-                BgEvent::TablePageLoaded { key, result } => {
+                BgEvent::TablePageLoaded {
+                    key,
+                    schema,
+                    table,
+                    record_recent,
+                    result,
+                } => {
                     self.in_flight.end(&key);
-                    self.apply_table_page_loaded(result);
+                    self.apply_table_page_loaded(
+                        &schema,
+                        &table,
+                        record_recent,
+                        result,
+                    );
                 }
                 BgEvent::ExplorerLoadFailed {
                     key,
                     resource,
+                    schema,
+                    table,
                     message,
                 } => {
                     self.in_flight.end(&key);
-                    self.apply_explorer_load_failed(&resource, &message);
+                    self.apply_explorer_load_failed(
+                        &resource,
+                        schema.as_deref(),
+                        table.as_deref(),
+                        &message,
+                    );
                 }
             }
         }
@@ -1302,6 +1320,29 @@ mod tests {
         assert!(app.in_flight.try_begin(key.clone()));
         app.load_table_data("sqlite_schema", "users");
         assert!(app.in_flight.contains(&key));
+        assert_eq!(
+            app.status_line.message(),
+            "Already loading this table"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_table_page_load_error_is_discarded() {
+        let mut app = tables_app("tbl_stale_err").await;
+        app.load_table_data("sqlite_schema", "users");
+        app.database_explorer.state = DatabaseExplorerState::TableData(
+            "sqlite_schema".into(),
+            "orders".into(),
+        );
+        app.set_status("viewing orders");
+        app.apply_table_page_loaded(
+            "sqlite_schema",
+            "users",
+            true,
+            Err("late error".into()),
+        );
+        assert_eq!(app.status_line.message(), "viewing orders");
+        assert!(app.database_explorer.table_data.is_none());
     }
 
     #[tokio::test]
