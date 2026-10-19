@@ -5,7 +5,12 @@ use std::{
     io::stdout,
     path::Path,
     process::{Command, id},
+    sync::Arc,
     time::Instant,
+};
+
+use tokio::sync::mpsc::{
+    UnboundedReceiver, UnboundedSender, unbounded_channel,
 };
 
 use crossterm::{
@@ -28,10 +33,13 @@ use ratatui_textarea::TextArea;
 use crate::{
     app,
     app_state::{AppState, DatabaseExplorerState},
+    database_explorer::STATUS_CONNECT_FAILED,
+    bg::{BgEvent, DescribeTarget, SqlExecuteOk},
+    in_flight::{InFlight, describe_key, sql_key},
     cell_edit::CellEditSession,
     database_explorer_state::DatabaseExplorer,
     db::{
-        RowDeleteSpec,
+        Column, Database, RowDeleteSpec, Table,
         connection::{Connection, Environment, shorten_home_path},
         query_log::{QueryLog, QueryLogEntry},
         sqlite::init_db,
@@ -98,6 +106,8 @@ pub struct App<'a> {
     pub(crate) page_size: u32,
     /// First Esc warns before dropping draft rows; second Esc discards.
     pub(crate) draft_discard_pending: bool,
+    /// Shift+N without cached column meta: create defaults draft when meta loads.
+    pub(crate) pending_defaults_draft: bool,
     /// One-shot hint after first connect in a session.
     pub(crate) showed_help_hint: bool,
     /// SQL results: when true, the current statement re-runs on
@@ -110,10 +120,14 @@ pub struct App<'a> {
     pub(crate) show_query_log: bool,
     pub(crate) query_log_table: TableDataState<QueryLogEntry>,
     pub(crate) cell_edit: Option<CellEditSession>,
+    pub(crate) in_flight: InFlight,
+    pub(crate) bg_tx: UnboundedSender<BgEvent>,
+    pub(crate) bg_rx: UnboundedReceiver<BgEvent>,
 }
 
 impl Default for App<'_> {
     fn default() -> Self {
+        let (bg_tx, bg_rx) = unbounded_channel();
         Self {
             running: false,
             modal_manager: ModalManager::new(),
@@ -133,6 +147,7 @@ impl Default for App<'_> {
             describe_table: TableDataState::new(Vec::new()),
             page_size: VIRTUAL_TABLE_PAGE_SIZE,
             draft_discard_pending: false,
+            pending_defaults_draft: false,
             showed_help_hint: false,
             watch_active: false,
             watch_last_tick: Instant::now(),
@@ -140,6 +155,9 @@ impl Default for App<'_> {
             show_query_log: false,
             query_log_table: TableDataState::new(Vec::new()),
             cell_edit: None,
+            in_flight: InFlight::default(),
+            bg_tx,
+            bg_rx,
         }
     }
 }
@@ -164,9 +182,10 @@ impl App<'_> {
     #[allow(clippy::future_not_send)]
     pub async fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
-        self.ping_connections_if_any().await;
+        self.ping_connections_if_any();
         while self.running {
             terminal.draw(|frame| self.render(frame))?;
+            self.drain_bg_events();
             self.tick_watch().await;
             self.handle_crossterm_events().await?;
 
@@ -174,6 +193,210 @@ impl App<'_> {
         }
         self.save_session_preferences();
         Ok(())
+    }
+
+    pub(crate) fn drain_bg_events(&mut self) {
+        while let Ok(event) = self.bg_rx.try_recv() {
+            match event {
+                BgEvent::ActionDone {
+                    key,
+                    message,
+                    reload_table,
+                } => {
+                    self.in_flight.end(&key);
+                    self.set_status(message);
+                    if let Some(r) = reload_table {
+                        let on_table = matches!(
+                            &self.database_explorer.state,
+                            DatabaseExplorerState::TableData(s, t)
+                                if *s == r.schema && *t == r.table
+                        );
+                        if on_table {
+                            self.reload_current_table_data(r.success_status);
+                        }
+                    }
+                }
+                BgEvent::ActionFailed { key, message } => {
+                    self.in_flight.end(&key);
+                    self.set_status(message);
+                }
+                BgEvent::SqlFinished {
+                    key,
+                    sql,
+                    record_history,
+                    result,
+                } => {
+                    self.in_flight.end(&key);
+                    let still_sql_view = sql_key(&self.database_explorer.connection.name)
+                        == key
+                        && matches!(
+                            self.database_explorer.state,
+                            DatabaseExplorerState::SqlResults(_)
+                        );
+                    match result {
+                        Ok(SqlExecuteOk { cols, rows }) => {
+                            if still_sql_view {
+                                self.database_explorer
+                                    .sql_executor
+                                    .set_results(rows, &cols);
+                            }
+                            if record_history {
+                                let _ = PreferencesService::push_sql_history(&sql);
+                            }
+                        }
+                        Err(message) => {
+                            if message
+                                == "Query executed successfully but returned no data"
+                            {
+                                self.set_status(message);
+                            } else {
+                                self.set_status(format!("SQL error: {message}"));
+                            }
+                        }
+                    }
+                }
+                BgEvent::DatabasesLoaded { key, databases } => {
+                    self.in_flight.end(&key);
+                    self.apply_databases_loaded(databases);
+                }
+                BgEvent::SchemasLoaded { key, schemas } => {
+                    self.in_flight.end(&key);
+                    self.apply_schemas_loaded(schemas);
+                }
+                BgEvent::TablesLoaded { key, schema, tables } => {
+                    self.in_flight.end(&key);
+                    self.apply_tables_loaded(&schema, tables);
+                }
+                BgEvent::ColumnsLoaded {
+                    key,
+                    schema,
+                    table,
+                    columns,
+                } => {
+                    self.in_flight.end(&key);
+                    self.apply_columns_loaded(&schema, &table, columns);
+                }
+                BgEvent::TableColumnMetaLoaded {
+                    key,
+                    schema,
+                    table,
+                    result,
+                } => {
+                    self.in_flight.end(&key);
+                    self.apply_table_column_meta_loaded(&schema, &table, result);
+                }
+                BgEvent::TablePageLoaded {
+                    key,
+                    schema,
+                    table,
+                    record_recent,
+                    result,
+                } => {
+                    self.in_flight.end(&key);
+                    self.apply_table_page_loaded(
+                        &schema,
+                        &table,
+                        record_recent,
+                        result,
+                    );
+                }
+                BgEvent::ExplorerLoadFailed {
+                    key,
+                    resource,
+                    schema,
+                    table,
+                    message,
+                } => {
+                    self.in_flight.end(&key);
+                    self.apply_explorer_load_failed(
+                        &resource,
+                        schema.as_deref(),
+                        table.as_deref(),
+                        &message,
+                    );
+                }
+                BgEvent::Connected {
+                    key,
+                    connection,
+                    database,
+                } => {
+                    self.in_flight.end(&key);
+                    let from_password_modal = self
+                        .modal_manager
+                        .password_connection()
+                        .is_some_and(|c| c.name == connection.name);
+                    let modal_password = from_password_modal.then(|| {
+                        self.modal_manager
+                            .get_password_modal_mut()
+                            .map(|m| m.input_value())
+                    }).flatten();
+                    let conn_for_session = connection.clone();
+                    self.apply_connected(connection, database);
+                    if let Some(password) = modal_password {
+                        self.password_service.store_session_password(
+                            &conn_for_session,
+                            password,
+                        );
+                        if let Some(password_modal) =
+                            self.modal_manager.get_password_modal_mut()
+                        {
+                            password_modal.close();
+                        }
+                    }
+                }
+                BgEvent::ConnectFailed { key, message } => {
+                    self.in_flight.end(&key);
+                    self.set_status(message);
+                    if let Some(modal_conn) =
+                        self.modal_manager.password_connection().cloned()
+                    {
+                        self.password_service.remove_session_password(&modal_conn);
+                        if let Some(password_modal) =
+                            self.modal_manager.get_password_modal_mut()
+                        {
+                            password_modal.clear_input();
+                        }
+                    }
+                }
+                BgEvent::ConnectPasswordRequired {
+                    key,
+                    connection,
+                    prompt,
+                } => {
+                    self.in_flight.end(&key);
+                    self.modal_manager
+                        .open_password_modal(connection, prompt);
+                }
+                BgEvent::ConnectionStatus { key, name, status } => {
+                    self.in_flight.end(&key);
+                    self.apply_connection_status(&name, status);
+                }
+                BgEvent::DatabaseSelected {
+                    key,
+                    database_name,
+                    database,
+                } => {
+                    self.in_flight.end(&key);
+                    self.apply_database_selected(&database_name, database);
+                }
+                BgEvent::DatabaseSelectFailed { key } => {
+                    self.in_flight.end(&key);
+                    self.set_status(STATUS_CONNECT_FAILED);
+                }
+                BgEvent::DescribeRowsLoaded { key, target, rows } => {
+                    self.in_flight.end(&key);
+                    self.apply_describe_rows_loaded(&target, rows);
+                }
+                BgEvent::ConnectionTestResult {
+                    key,
+                    success,
+                    message,
+                } => {
+                    self.in_flight.end(&key);
+                    self.apply_connection_test_result(success, message);
+                }
+            }
+        }
     }
 
     /// Re-run the SQL results query if watch mode is on and the interval
@@ -194,7 +417,7 @@ impl App<'_> {
             return;
         }
         self.watch_last_tick = Instant::now();
-        self.execute_sql_query_watch_tick().await;
+        self.execute_sql_query_watch_tick();
     }
 
     /// Toggle SQL-results watch mode (`w`).
@@ -290,7 +513,7 @@ impl App<'_> {
                 self.apply_filter();
             }
         }
-        self.ping_connections_if_any().await;
+        self.ping_connections_if_any();
     }
 
     /// Copy the value under the cursor to the clipboard
@@ -378,13 +601,62 @@ impl App<'_> {
         }
     }
 
-    /// Build the field/value rows describing whatever object is currently
-    /// selected (connection, table, column, or table-data row).
-    ///
-    /// Never spawned onto another task, so the returned future not being
-    /// `Send` (due to interior-mutability fields on `App`) is harmless.
-    #[allow(clippy::future_not_send, clippy::too_many_lines)]
-    pub(crate) async fn build_describe_rows(&self) -> Vec<DescribeRow> {
+    /// Queue describe for the current selection (off the UI thread).
+    pub(crate) fn spawn_describe_rows(&mut self) -> bool {
+        let Some((target, work)) = self.describe_work_for_selection() else {
+            return false;
+        };
+        let key = describe_key();
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status("Already loading describe…");
+            return true;
+        }
+        let database = self.database_explorer.database.clone();
+        let tx = self.bg_tx.clone();
+        self.set_status("Loading describe…");
+        tokio::spawn(async move {
+            let rows = build_describe_rows_async(work, database).await;
+            let _ = tx.send(BgEvent::DescribeRowsLoaded { key, target, rows });
+        });
+        true
+    }
+
+    pub(crate) fn apply_describe_rows_loaded(
+        &mut self,
+        target: &DescribeTarget,
+        rows: Vec<DescribeRow>,
+    ) {
+        if !self.describe_target_matches(target) || rows.is_empty() {
+            return;
+        }
+        self.describe_table = TableDataState::new(rows);
+        self.show_describe = true;
+    }
+
+    pub(crate) fn apply_connection_test_result(
+        &mut self,
+        success: bool,
+        message: String,
+    ) {
+        use crate::ui::widgets::connection_modal::TestResult;
+        let Some(modal) = self.modal_manager.get_connection_modal_mut() else {
+            return;
+        };
+        if !matches!(modal.test_result, TestResult::Testing) {
+            return;
+        }
+        modal.test_result = if success {
+            TestResult::Success
+        } else {
+            TestResult::Failed(message)
+        };
+    }
+
+    fn describe_target_matches(&self, target: &DescribeTarget) -> bool {
+        self.describe_target_for_selection().as_ref() == Some(target)
+    }
+
+    fn describe_target_for_selection(&self) -> Option<DescribeTarget> {
         let explorer = &self.database_explorer;
         match &explorer.state {
             DatabaseExplorerState::Connections => explorer
@@ -394,135 +666,105 @@ impl App<'_> {
                 .state
                 .selected()
                 .and_then(|i| explorer.connections.table.model.items.get(i))
-                .map_or_else(Vec::new, connection_describe_rows),
-            DatabaseExplorerState::Tables(_) => {
-                let Some(table) = explorer.tables.as_ref().and_then(|t| {
-                    let i = t.table.view.state.selected()?;
-                    t.table.model.items.get(i).cloned()
-                }) else {
-                    return Vec::new();
-                };
-                let mut rows = vec![
-                    DescribeRow::section("Table"),
-                    DescribeRow::new("Name", &table.name),
-                    DescribeRow::new("Schema", &table.schema),
-                ];
-                if let Some(db) = explorer.database.as_ref() {
-                    let (count_res, cols_res, pk_res, indexes_res, size_res) = tokio::join!(
-                        db.get_table_row_count(&table.schema, &table.name),
-                        db.get_columns(&table.schema, &table.name),
-                        db.get_primary_key_columns(&table.schema, &table.name),
-                        db.get_table_index_names(&table.schema, &table.name),
-                        db.get_table_size(&table.schema, &table.name),
-                    );
-                    if let Ok(count) = count_res {
-                        rows.push(DescribeRow::new(
-                            "Row count",
-                            count.to_string(),
-                        ));
-                    }
-                    if let Ok(cols) = cols_res {
-                        rows.push(DescribeRow::new(
-                            "Columns",
-                            cols.len().to_string(),
-                        ));
-                    }
-                    if let Ok(pk) = pk_res
-                        && !pk.is_empty()
-                    {
-                        rows.push(DescribeRow::new(
-                            "Primary key",
-                            pk.join(", "),
-                        ));
-                    }
-                    if let Ok(indexes) = indexes_res
-                        && !indexes.is_empty()
-                    {
-                        rows.push(DescribeRow::new(
-                            "Indexes",
-                            indexes.join(", "),
-                        ));
-                    }
-                    let size =
-                        size_res.ok().flatten().or_else(|| table.size.clone());
-                    if let Some(size) = size {
-                        rows.push(DescribeRow::new("Size", size));
-                    }
-                } else if let Some(size) = table.size.clone() {
-                    rows.push(DescribeRow::new("Size", size));
-                }
-                rows
-            }
+                .map(|c| DescribeTarget::Connection {
+                    name: c.name.clone(),
+                }),
+            DatabaseExplorerState::Tables(_) => explorer.tables.as_ref().and_then(|t| {
+                let i = t.table.view.state.selected()?;
+                let table = t.table.model.items.get(i)?;
+                Some(DescribeTarget::Table {
+                    schema: table.schema.clone(),
+                    name: table.name.clone(),
+                })
+            }),
             DatabaseExplorerState::Columns(schema, table_name) => {
-                let Some(col) = explorer.columns.as_ref().and_then(|c| {
+                explorer.columns.as_ref().and_then(|c| {
                     let i = c.table.view.state.selected()?;
-                    c.table.model.items.get(i).cloned()
-                }) else {
-                    return Vec::new();
-                };
-                let mut rows = vec![
-                    DescribeRow::section("Column"),
-                    DescribeRow::new("Table", format!("{schema}.{table_name}")),
-                    DescribeRow::new("Name", &col.name),
-                    DescribeRow::new("Type", &col.data_type),
-                    DescribeRow::new(
-                        "Nullable",
-                        if col.is_nullable { "YES" } else { "NO" },
-                    ),
-                    DescribeRow::new(
-                        "Default",
-                        col.default_value.clone().unwrap_or_default(),
-                    ),
-                ];
-                if let Some(db) = explorer.database.as_ref()
-                    && let Ok(pk) =
-                        db.get_primary_key_columns(schema, table_name).await
-                {
-                    rows.push(DescribeRow::new(
-                        "Part of key",
-                        if pk.iter().any(|k| k == &col.name) {
-                            "YES"
-                        } else {
-                            "NO"
-                        },
-                    ));
-                }
-                rows.push(DescribeRow::new(
-                    "Description",
-                    col.description.clone().unwrap_or_default(),
-                ));
-                rows
+                    let col = c.table.model.items.get(i)?;
+                    Some(DescribeTarget::Column {
+                        schema: schema.clone(),
+                        table: table_name.clone(),
+                        column: col.name.clone(),
+                    })
+                })
             }
             DatabaseExplorerState::TableData(schema, table_name) => explorer
                 .table_data
                 .as_ref()
                 .and_then(|t| {
                     let i = t.table.view.state.selected()?;
-                    let row = t.table.model.items.get(i)?;
-                    let names = t.table.model.dynamic_column_names.as_ref();
-                    Some((row, names))
-                })
-                .map_or_else(Vec::new, |(row, names)| {
-                    let mut rows = vec![
-                        DescribeRow::section("Row"),
-                        DescribeRow::new(
-                            "Table",
-                            format!("{schema}.{table_name}"),
-                        ),
-                    ];
-                    for (idx, value) in row.values.iter().enumerate() {
-                        let field = names
-                            .and_then(|n| n.get(idx))
-                            .cloned()
-                            .unwrap_or_else(|| format!("col{idx}"));
-                        rows.push(DescribeRow::new(field, value.clone()));
-                    }
-                    rows
+                    Some(DescribeTarget::TableDataRow {
+                        schema: schema.clone(),
+                        table: table_name.clone(),
+                        row_index: i,
+                    })
                 }),
             DatabaseExplorerState::Databases
             | DatabaseExplorerState::Schemas
-            | DatabaseExplorerState::SqlResults(_) => Vec::new(),
+            | DatabaseExplorerState::SqlResults(_) => None,
         }
+    }
+
+    fn describe_work_for_selection(&self) -> Option<(DescribeTarget, DescribeWork)> {
+        let target = self.describe_target_for_selection()?;
+        let explorer = &self.database_explorer;
+        let work = match &target {
+            DescribeTarget::Connection { name } => {
+                let conn = explorer
+                    .connections
+                    .table
+                    .model
+                    .items
+                    .iter()
+                    .find(|c| c.name == *name)?
+                    .clone();
+                DescribeWork::Connection(conn)
+            }
+            DescribeTarget::Table { schema, name } => {
+                let table = explorer.tables.as_ref().and_then(|t| {
+                    t.table.model.items.iter().find(|tbl| {
+                        tbl.schema == *schema && tbl.name == *name
+                    })
+                })?;
+                DescribeWork::Table(table.clone())
+            }
+            DescribeTarget::Column {
+                schema,
+                table,
+                column,
+            } => {
+                let col = explorer.columns.as_ref().and_then(|c| {
+                    c.table.model.items.iter().find(|col| col.name == *column)
+                })?;
+                DescribeWork::Column {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                    column: col.clone(),
+                }
+            }
+            DescribeTarget::TableDataRow {
+                schema,
+                table,
+                row_index,
+            } => {
+                let table_data = explorer.table_data.as_ref()?;
+                let row = table_data.table.model.items.get(*row_index)?;
+                let names = table_data
+                    .table
+                    .model
+                    .dynamic_column_names
+                    .as_ref()
+                    .map(|n| n.to_vec())
+                    .unwrap_or_default();
+                DescribeWork::TableDataRow {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                    values: row.values.clone(),
+                    field_names: names,
+                }
+            }
+        };
+        Some((target, work))
     }
 
     /// Copy the full selected row as tab-separated values.
@@ -691,7 +933,7 @@ impl App<'_> {
         self.database_explorer
             .sql_executor
             .set_selected_statement(statement);
-        self.execute_sql_query().await;
+        self.execute_sql_query();
     }
 
     /// `L`: show every query d7s ran this session, newest first.
@@ -712,6 +954,131 @@ impl App<'_> {
         }
         self.execute_sql_statement_now(ACTIVITY_QUERY.to_string())
             .await;
+    }
+}
+
+enum DescribeWork {
+    Connection(Connection),
+    Table(Table),
+    Column {
+        schema: String,
+        table: String,
+        column: Column,
+    },
+    TableDataRow {
+        schema: String,
+        table: String,
+        values: Vec<String>,
+        field_names: Vec<String>,
+    },
+}
+
+async fn build_describe_rows_async(
+    work: DescribeWork,
+    database: Option<Arc<dyn Database>>,
+) -> Vec<DescribeRow> {
+    match work {
+        DescribeWork::Connection(conn) => connection_describe_rows(&conn),
+        DescribeWork::Table(table) => {
+            let mut rows = vec![
+                DescribeRow::section("Table"),
+                DescribeRow::new("Name", &table.name),
+                DescribeRow::new("Schema", &table.schema),
+            ];
+            if let Some(db) = database.as_ref() {
+                if let Ok(count) = db
+                    .get_table_row_count(&table.schema, &table.name)
+                    .await
+                {
+                    rows.push(DescribeRow::new("Row count", count.to_string()));
+                }
+                if let Ok(cols) = db.get_columns(&table.schema, &table.name).await {
+                    rows.push(DescribeRow::new("Columns", cols.len().to_string()));
+                }
+                if let Ok(pk) = db
+                    .get_primary_key_columns(&table.schema, &table.name)
+                    .await
+                    && !pk.is_empty()
+                {
+                    rows.push(DescribeRow::new("Primary key", pk.join(", ")));
+                }
+                if let Ok(indexes) = db
+                    .get_table_index_names(&table.schema, &table.name)
+                    .await
+                    && !indexes.is_empty()
+                {
+                    rows.push(DescribeRow::new("Indexes", indexes.join(", ")));
+                }
+                let size = db
+                    .get_table_size(&table.schema, &table.name)
+                    .await
+                    .ok()
+                    .flatten()
+                    .or_else(|| table.size.clone());
+                if let Some(size) = size {
+                    rows.push(DescribeRow::new("Size", size));
+                }
+            } else if let Some(size) = table.size.clone() {
+                rows.push(DescribeRow::new("Size", size));
+            }
+            rows
+        }
+        DescribeWork::Column {
+            schema,
+            table,
+            column: col,
+        } => {
+            let mut rows = vec![
+                DescribeRow::section("Column"),
+                DescribeRow::new("Table", format!("{schema}.{table}")),
+                DescribeRow::new("Name", &col.name),
+                DescribeRow::new("Type", &col.data_type),
+                DescribeRow::new(
+                    "Nullable",
+                    if col.is_nullable { "YES" } else { "NO" },
+                ),
+                DescribeRow::new(
+                    "Default",
+                    col.default_value.clone().unwrap_or_default(),
+                ),
+            ];
+            if let Some(db) = database.as_ref()
+                && let Ok(pk) = db.get_primary_key_columns(&schema, &table).await
+            {
+                rows.push(DescribeRow::new(
+                    "Part of key",
+                    if pk.iter().any(|k| k == &col.name) {
+                        "YES"
+                    } else {
+                        "NO"
+                    },
+                ));
+            }
+            rows.push(DescribeRow::new(
+                "Description",
+                col.description.clone().unwrap_or_default(),
+            ));
+            rows
+        }
+        DescribeWork::TableDataRow {
+            schema,
+            table,
+            values,
+            field_names,
+        } => {
+            let mut rows = vec![
+                DescribeRow::section("Row"),
+                DescribeRow::new("Table", format!("{schema}.{table}")),
+            ];
+            for (idx, value) in values.iter().enumerate() {
+                let field = field_names
+                    .get(idx)
+                    .cloned()
+                    .unwrap_or_else(|| format!("col{idx}"));
+                rows.push(DescribeRow::new(field, value.clone()));
+            }
+            rows
+        }
     }
 }
 
@@ -758,6 +1125,7 @@ mod tests {
         fs::{remove_file, write},
         net::TcpListener,
         path,
+        sync::Arc,
         time::SystemTime,
     };
 
@@ -766,6 +1134,7 @@ mod tests {
         Terminal, backend::TestBackend, buffer::Cell, style::Modifier,
     };
     use rusqlite::Connection as RusqliteConnection;
+    use tokio::task::yield_now;
 
     use super::*;
     use crate::{
@@ -776,6 +1145,7 @@ mod tests {
             query_log::{QueryLogEntry, QueryOrigin, tests::temp_sqlite},
             tls::TlsConfig,
         },
+        in_flight::table_key,
         ui::widgets::hotkeys::DATABASE_HOTKEYS,
     };
 
@@ -797,7 +1167,7 @@ mod tests {
             url: sqlite.path.clone(),
             ..Connection::default()
         };
-        let db = app.query_log.wrap(Box::new(sqlite));
+        let db = Arc::from(app.query_log.wrap(Box::new(sqlite)));
         app.database_explorer = DatabaseExplorer::new(conn, Some(db));
         app.state = AppState::DatabaseConnected;
         app.database_explorer.state =
@@ -959,6 +1329,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sql_execute_refuses_when_sql_key_busy() {
+        let mut app = sqlite_app("conn");
+        app.database_explorer
+            .sql_executor
+            .set_selected_statement("SELECT a FROM t");
+        let key = sql_key(&app.database_explorer.connection.name);
+        assert!(app.in_flight.try_begin(key.clone()));
+        app.execute_sql_query();
+        assert!(app.in_flight.contains(&key));
+    }
+
+    #[tokio::test]
     async fn watch_tick_is_logged_but_not_added_to_sql_history() {
         let mut app = sqlite_app("watchtick");
         app.enter_sql_results_state("SELECT a FROM t".into());
@@ -967,7 +1349,8 @@ mod tests {
             .set_selected_statement("SELECT a FROM t");
         let history_before = PreferencesService::load_sql_history();
 
-        app.execute_sql_query_watch_tick().await;
+        app.execute_sql_query_watch_tick();
+        drain_bg_work(&mut app).await;
 
         assert_eq!(PreferencesService::load_sql_history(), history_before);
         let snap = app.query_log.snapshot();
@@ -988,7 +1371,8 @@ mod tests {
                  INSERT INTO users(id) VALUES (1),(2),(3);",
             )
             .unwrap();
-        app.load_tables("sqlite_schema").await.unwrap();
+        app.load_tables("sqlite_schema");
+        drain_bg_work(&mut app).await;
         app
     }
 
@@ -1038,6 +1422,7 @@ mod tests {
         // Filtered view shows only one row; the ping must still cover all.
         app.database_explorer.connections.apply_filter("present");
         app.on_key_event(key('p')).await.unwrap();
+        drain_bg_work(&mut app).await;
 
         let status = |c: &FilteredData<Connection>| {
             c.original.iter().map(|c| c.status).collect::<Vec<_>>()
@@ -1066,7 +1451,7 @@ mod tests {
     #[tokio::test]
     async fn ping_if_any_skips_when_no_connections() {
         let mut app = App::default();
-        app.ping_connections_if_any().await;
+        app.ping_connections_if_any();
         assert!(app.database_explorer.connections.original.is_empty());
     }
 
@@ -1089,7 +1474,8 @@ mod tests {
                 .all(|c| c.status == ConnectionStatus::Unknown)
         );
 
-        app.ping_connections_if_any().await;
+        app.ping_connections_if_any();
+        drain_bg_work(&mut app).await;
 
         let statuses: Vec<_> = app
             .database_explorer
@@ -1114,7 +1500,8 @@ mod tests {
         let mut app = App::default();
         app.database_explorer.connections =
             FilteredData::new(vec![sqlite_conn("present", &present.path)]);
-        app.ping_connections_if_any().await;
+        app.ping_connections_if_any();
+        drain_bg_work(&mut app).await;
         let status = |app: &App<'_>| {
             app.database_explorer
                 .connections
@@ -1127,7 +1514,8 @@ mod tests {
         app.database_explorer.connections =
             FilteredData::new(vec![sqlite_conn("present", &present.path)]);
         assert_eq!(status(&app), Some(ConnectionStatus::Unknown));
-        app.ping_connections_if_any().await;
+        app.ping_connections_if_any();
+        drain_bg_work(&mut app).await;
         assert_eq!(status(&app), Some(ConnectionStatus::Up));
         let _ = remove_file(&present.path);
     }
@@ -1136,11 +1524,22 @@ mod tests {
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
     }
 
+    async fn drain_bg_work(app: &mut App<'_>) {
+        for _ in 0..500 {
+            app.drain_bg_events();
+            if app.in_flight.is_empty() {
+                return;
+            }
+            yield_now().await;
+        }
+    }
+
     #[allow(clippy::future_not_send)]
     async fn run_cmd(app: &mut App<'_>, cmd: &str) {
         app.on_key_event(key(':')).await.unwrap();
         type_str(app, cmd).await;
         app.on_key_event(enter()).await.unwrap();
+        drain_bg_work(app).await;
     }
 
     #[tokio::test]
@@ -1159,6 +1558,7 @@ mod tests {
         app.on_key_event(tab()).await.unwrap();
         assert_eq!(app.command_text(), "table users");
         app.on_key_event(enter()).await.unwrap();
+        drain_bg_work(&mut app).await;
         assert!(!app.command_mode && app.search_filter.is_none());
         assert_eq!(
             app.database_explorer.state,
@@ -1167,6 +1567,79 @@ mod tests {
                 "users".into()
             )
         );
+    }
+
+    #[tokio::test]
+    async fn load_table_data_refuses_when_table_key_busy() {
+        let mut app = tables_app("tbl_busy").await;
+        let key = table_key("sqlite_schema", "users");
+        assert!(app.in_flight.try_begin(key.clone()));
+        app.load_table_data("sqlite_schema", "users");
+        assert!(app.in_flight.contains(&key));
+        assert_eq!(
+            app.status_line.message(),
+            "Already loading this table"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_table_page_load_error_is_discarded() {
+        let mut app = tables_app("tbl_stale_err").await;
+        app.load_table_data("sqlite_schema", "users");
+        app.database_explorer.state = DatabaseExplorerState::TableData(
+            "sqlite_schema".into(),
+            "orders".into(),
+        );
+        app.set_status("viewing orders");
+        app.apply_table_page_loaded(
+            "sqlite_schema",
+            "users",
+            true,
+            Err("late error".into()),
+        );
+        assert_eq!(app.status_line.message(), "viewing orders");
+        assert!(app.database_explorer.table_data.is_none());
+    }
+
+    #[tokio::test]
+    async fn stale_describe_load_is_discarded() {
+        let mut app = tables_app("desc_stale").await;
+        app.on_key_event(key('d')).await.unwrap();
+        app.database_explorer.state = DatabaseExplorerState::TableData(
+            "sqlite_schema".into(),
+            "orders".into(),
+        );
+        drain_bg_work(&mut app).await;
+        assert!(!app.show_describe);
+    }
+
+    #[tokio::test]
+    async fn describe_refuses_when_describe_key_busy() {
+        let mut app = tables_app("desc_busy").await;
+        let key = describe_key();
+        assert!(app.in_flight.try_begin(key.clone()));
+        assert!(app.spawn_describe_rows());
+        assert!(app.in_flight.contains(&key));
+        assert_eq!(
+            app.status_line.message(),
+            "Already loading describe…"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_table_page_load_is_discarded() {
+        let mut app = tables_app("tbl_stale").await;
+        app.load_table_data("sqlite_schema", "users");
+        app.database_explorer.state = DatabaseExplorerState::TableData(
+            "sqlite_schema".into(),
+            "orders".into(),
+        );
+        drain_bg_work(&mut app).await;
+        assert_eq!(
+            app.database_explorer.state,
+            DatabaseExplorerState::TableData("sqlite_schema".into(), "orders".into())
+        );
+        assert!(app.database_explorer.table_data.is_none());
     }
 
     #[tokio::test]
@@ -1384,8 +1857,28 @@ mod tests {
                 "CREATE TABLE def_row(id INTEGER PRIMARY KEY, name TEXT DEFAULT 'x', note TEXT);",
             )
             .unwrap();
-        app.load_tables("sqlite_schema").await.unwrap();
+        app.load_tables("sqlite_schema");
+        drain_bg_work(&mut app).await;
         app
+    }
+
+    #[tokio::test]
+    async fn n_draft_spawns_column_meta_when_uncached() {
+        let mut app = defaults_draft_table_app("draft_defaults_spawn").await;
+        run_cmd(&mut app, "table def_row").await;
+        app.database_explorer.table_columns = None;
+        app.database_explorer.table_pk_names = None;
+        app.on_key_event(KeyEvent::new(
+            KeyCode::Char('N'),
+            KeyModifiers::SHIFT,
+        ))
+        .await
+        .unwrap();
+        assert!(app.pending_defaults_draft);
+        assert!(!app.has_table_draft_rows());
+        drain_bg_work(&mut app).await;
+        assert!(!app.pending_defaults_draft);
+        assert!(app.has_table_draft_rows());
     }
 
     #[tokio::test]
@@ -1427,7 +1920,9 @@ mod tests {
         type_str(&mut app, "hi").await;
         assert_eq!(app.cell_edit.as_ref().unwrap().buffer, "hi");
         app.on_key_event(enter()).await.unwrap();
+        drain_bg_work(&mut app).await;
         app.on_key_event(key('s')).await.unwrap();
+        drain_bg_work(&mut app).await;
         assert!(!app.has_table_draft_rows());
         let db_path = app.database_explorer.connection.url.clone();
         let name: String = rusqlite::Connection::open(&db_path)
@@ -1484,7 +1979,8 @@ mod tests {
                  INSERT INTO cell_edit_row VALUES (1, 'old');",
             )
             .unwrap();
-        app.load_tables("sqlite_schema").await.unwrap();
+        app.load_tables("sqlite_schema");
+        drain_bg_work(&mut app).await;
         app
     }
 
@@ -1646,6 +2142,7 @@ mod tests {
         }
         type_str(&mut app, "nix").await;
         app.on_key_event(enter()).await.unwrap();
+        drain_bg_work(&mut app).await;
         assert!(!app.is_cell_editing());
         assert!(!app.has_table_draft_rows());
         let db_path = app.database_explorer.connection.url.clone();
@@ -1785,6 +2282,7 @@ mod tests {
         assert!(app.is_cell_editing());
         assert_eq!(app.cell_edit.as_ref().unwrap().buffer, "");
         app.on_key_event(enter()).await.unwrap();
+        drain_bg_work(&mut app).await;
         assert!(!app.is_cell_editing());
         assert_eq!(db_name(&app, 1), None, "cleared cell is SQL NULL");
     }
@@ -1885,7 +2383,8 @@ mod tests {
                  CREATE TABLE \"tables\"(id); CREATE TABLE \"my data\"(id);",
             )
             .unwrap();
-        app.load_tables("sqlite_schema").await.unwrap();
+        app.load_tables("sqlite_schema");
+        drain_bg_work(&mut app).await;
         let open = |t: &str| {
             DatabaseExplorerState::TableData("sqlite_schema".into(), t.into())
         };
@@ -2259,7 +2758,7 @@ mod tests {
                 r#type: ConnectionType::Postgres,
                 ..Connection::default()
             },
-            Some(app.query_log.wrap(Box::new(pg))),
+            Some(Arc::from(app.query_log.wrap(Box::new(pg)))),
         );
         app.state = AppState::DatabaseConnected;
         app.database_explorer.state = DatabaseExplorerState::Databases;

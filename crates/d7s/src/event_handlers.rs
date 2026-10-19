@@ -5,7 +5,7 @@ use crossterm::event::{
 };
 use k9tui::{
     theme,
-    widgets::{navigation::TableNavigationHandler, table::TableDataState},
+    widgets::navigation::TableNavigationHandler,
 };
 use ratatui::{
     style::{Color, Style},
@@ -16,8 +16,10 @@ use ratatui_textarea::TextArea;
 use crate::{
     app::App,
     app_state::{AppState, DatabaseExplorerState},
+    bg::BgEvent,
     db::connection::ConnectionType,
     error::Result,
+    in_flight::connection_test_key,
     services::{ConnectionService, PasswordService, PreferencesService},
     sql::safety::split_statements,
     ui::widgets::connection_modal::{ModalAction, TestResult},
@@ -200,7 +202,7 @@ impl App<'_> {
         }
 
         // Handle application shortcuts (q, n, d, e, t, s, Esc, Enter)
-        if self.handle_table_data_hotkeys(key).await? {
+        if self.handle_table_data_hotkeys(key)? {
             return Ok(());
         }
         if self.handle_hotkeys(key).await? {
@@ -260,7 +262,7 @@ impl App<'_> {
                     if let Some((schema, table)) =
                         self.database_explorer.recent_tables.get(idx).cloned()
                     {
-                        self.load_table_data(&schema, &table).await?;
+                        self.load_table_data(&schema, &table);
                     }
                     Ok(true)
                 } else {
@@ -272,7 +274,7 @@ impl App<'_> {
                     self.database_explorer.state,
                     DatabaseExplorerState::Connections
                 ) {
-                    self.connect_to_database().await?;
+                    self.connect_to_database()?;
                 }
                 Ok(true)
             }
@@ -283,7 +285,7 @@ impl App<'_> {
                 ) {
                     if let Some(name) = PreferencesService::last_connection() {
                         let before = self.state;
-                        self.connect_to_named_connection(&name).await?;
+                        self.connect_to_named_connection(&name)?;
                         if self.state == AppState::DatabaseConnected
                             && before != AppState::DatabaseConnected
                         {
@@ -309,7 +311,7 @@ impl App<'_> {
                     self.database_explorer.state,
                     DatabaseExplorerState::Connections
                 ) {
-                    self.check_connections_health().await;
+                    self.check_connections_health();
                     Ok(true)
                 } else {
                     Ok(false)
@@ -336,16 +338,7 @@ impl App<'_> {
                 }
                 Ok(true)
             }
-            (_, KeyCode::Char('d')) => {
-                let rows = self.build_describe_rows().await;
-                if rows.is_empty() {
-                    Ok(false)
-                } else {
-                    self.describe_table = TableDataState::new(rows);
-                    self.show_describe = true;
-                    Ok(true)
-                }
-            }
+            (_, KeyCode::Char('d')) => Ok(self.spawn_describe_rows()),
             (_, KeyCode::Char('t')) => {
                 if self.state == AppState::DatabaseConnected {
                     self.handle_toggle_table_view().await?;
@@ -479,9 +472,9 @@ impl App<'_> {
                     self.database_explorer.state,
                     DatabaseExplorerState::Connections
                 ) {
-                    self.connect_to_database().await?;
+                    self.connect_to_database()?;
                 } else {
-                    self.handle_database_navigation().await?;
+                    self.handle_database_navigation()?;
                 }
                 Ok(true)
             }
@@ -589,18 +582,10 @@ impl App<'_> {
 
         match state {
             DatabaseExplorerState::TableData(schema_name, table_name) => {
-                if let Err(e) =
-                    self.load_columns(&schema_name, &table_name).await
-                {
-                    self.status_load_failed("columns", e);
-                }
+                self.load_columns(&schema_name, &table_name);
             }
             DatabaseExplorerState::Columns(schema_name, table_name) => {
-                if let Err(e) =
-                    self.load_table_data(&schema_name, &table_name).await
-                {
-                    self.status_load_failed("table data", e);
-                }
+                self.load_table_data(&schema_name, &table_name);
             }
             DatabaseExplorerState::Connections
             | DatabaseExplorerState::Databases
@@ -619,7 +604,7 @@ impl App<'_> {
             ModalAction::Save => {
                 if let Some(apply) = self.modal_manager.take_cell_value_apply()
                 {
-                    if self.apply_cell_value_edit(apply).await? {
+                    if self.spawn_cell_value_edit(apply) {
                         self.cell_edit = None;
                     }
                     self.modal_manager.cleanup_closed_modals();
@@ -629,11 +614,11 @@ impl App<'_> {
                     self.modal_manager.was_jump_to_row_confirmed()
                     && matches!(key.code, KeyCode::Enter)
                 {
-                    self.jump_to_table_row(row).await?;
+                    self.jump_to_table_row(row);
                     self.modal_manager.cleanup_closed_modals();
                     return Ok(());
                 }
-                if self.handle_password_modal_save().await? {
+                if self.handle_password_modal_save()? {
                     return Ok(());
                 }
                 if let Some(statement) =
@@ -651,7 +636,7 @@ impl App<'_> {
                         .is_some()
                     && matches!(key.code, KeyCode::Enter)
                 {
-                    self.execute_pending_row_deletes().await?;
+                    self.spawn_pending_row_deletes()?;
                     self.modal_manager.cleanup_closed_modals();
                     return Ok(());
                 }
@@ -672,7 +657,7 @@ impl App<'_> {
                 }
             }
             ModalAction::Test => {
-                self.handle_connection_modal_test().await;
+                self.spawn_connection_modal_test();
             }
             ModalAction::Cancel => {
                 if self.modal_manager.was_connection_modal_closed() {
@@ -710,62 +695,23 @@ impl App<'_> {
     }
 
     /// Handle password modal save action
-    async fn handle_password_modal_save(&mut self) -> Result<bool> {
-        // Extract data from modal before attempting connection
-        // This releases the mutable borrow so we can call connect_with_password
+    fn handle_password_modal_save(&mut self) -> Result<bool> {
         let Some(connection) =
             self.modal_manager.password_connection().cloned()
         else {
             return Ok(false);
         };
 
-        let (connection, password) = {
+        let password = {
             let Some(password_modal) =
                 self.modal_manager.get_password_modal_mut()
             else {
                 return Ok(false);
             };
-
-            (connection, password_modal.input_value())
+            password_modal.input_value()
         };
 
-        // Store the state before attempting connection to check if it changed
-        let state_before = self.state;
-
-        // Try to connect with the password (don't store in session yet)
-        let password_clone = password.clone();
-        let _ = self
-            .connect_with_password(connection.clone(), password_clone)
-            .await;
-
-        // Check if connection succeeded by checking if state changed to DatabaseConnected
-        if self.state == AppState::DatabaseConnected
-            && state_before != AppState::DatabaseConnected
-        {
-            self.password_service
-                .store_session_password(&connection, password);
-            if let Some(password_modal) =
-                self.modal_manager.get_password_modal_mut()
-            {
-                password_modal.close();
-            }
-            let msg = self.connect_status_message(
-                &connection.name,
-                connection.environment,
-            );
-            self.set_status(msg);
-        } else {
-            // Connection failed, keep modal open so user can retry
-            // Remove any password from session that might have been stored
-            self.password_service.remove_session_password(&connection);
-            // The error message is already set by connect_with_password
-            // Clear the password field so user can retry
-            if let Some(password_modal) =
-                self.modal_manager.get_password_modal_mut()
-            {
-                password_modal.clear_input();
-            }
-        }
+        self.spawn_connect(connection, Some(password))?;
         Ok(true)
     }
 
@@ -821,8 +767,8 @@ impl App<'_> {
         self.refresh_connections().await;
     }
 
-    /// Handle connection modal test action
-    async fn handle_connection_modal_test(&mut self) {
+    /// Handle connection modal test action (off the UI thread).
+    fn spawn_connection_modal_test(&mut self) {
         let Some(modal) = self.modal_manager.get_connection_modal_mut() else {
             return;
         };
@@ -833,13 +779,26 @@ impl App<'_> {
             return;
         };
 
+        let key = connection_test_key(&connection.name);
+        if !self.in_flight.try_begin(key.clone()) {
+            return;
+        }
+
         modal.test_result = TestResult::Testing;
-        let success = ConnectionService::test(&connection).await;
-        modal.test_result = if success {
-            TestResult::Success
-        } else {
-            TestResult::Failed("Connection failed".to_string())
-        };
+        let tx = self.bg_tx.clone();
+        tokio::spawn(async move {
+            let success = ConnectionService::test(&connection).await;
+            let message = if success {
+                String::new()
+            } else {
+                "Connection failed".into()
+            };
+            let _ = tx.send(BgEvent::ConnectionTestResult {
+                key,
+                success,
+                message,
+            });
+        });
     }
 }
 

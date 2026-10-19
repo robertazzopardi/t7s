@@ -7,6 +7,7 @@ mod command;
 mod docker;
 mod error;
 mod event_handlers;
+mod in_flight;
 mod log_dedup;
 mod rendering;
 mod ui;

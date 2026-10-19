@@ -9,6 +9,7 @@ use std::{
 mod app;
 mod app_state;
 mod auth;
+mod bg;
 mod cell_edit;
 mod command;
 mod command_bar;
@@ -20,6 +21,7 @@ mod error;
 mod event_handlers;
 mod filtered_data;
 mod filtering;
+mod in_flight;
 mod rendering;
 mod services;
 mod sql;
@@ -93,7 +95,7 @@ async fn main() -> error::Result<()> {
     }));
     let mut app = App::default().init()?;
     if let Some(name) = launch_connection {
-        app.connect_to_named_connection(&name).await?;
+        app.connect_to_named_connection(&name)?;
     }
     let result = app.run(terminal).await;
     let _ = execute!(stdout(), DisableBracketedPaste);
