@@ -5,6 +5,7 @@ use std::{
     io::stdout,
     path::Path,
     process::{Command, id},
+    sync::Arc,
     time::Instant,
 };
 
@@ -32,12 +33,13 @@ use ratatui_textarea::TextArea;
 use crate::{
     app,
     app_state::{AppState, DatabaseExplorerState},
-    bg::{BgEvent, SqlExecuteOk},
-    in_flight::{InFlight, sql_key},
+    database_explorer::STATUS_CONNECT_FAILED,
+    bg::{BgEvent, DescribeTarget, SqlExecuteOk},
+    in_flight::{InFlight, describe_key, sql_key},
     cell_edit::CellEditSession,
     database_explorer_state::DatabaseExplorer,
     db::{
-        RowDeleteSpec,
+        Column, Database, RowDeleteSpec, Table,
         connection::{Connection, Environment, shorten_home_path},
         query_log::{QueryLog, QueryLogEntry},
         sqlite::init_db,
@@ -369,6 +371,30 @@ impl App<'_> {
                     self.in_flight.end(&key);
                     self.apply_connection_status(&name, status);
                 }
+                BgEvent::DatabaseSelected {
+                    key,
+                    database_name,
+                    database,
+                } => {
+                    self.in_flight.end(&key);
+                    self.apply_database_selected(&database_name, database);
+                }
+                BgEvent::DatabaseSelectFailed { key } => {
+                    self.in_flight.end(&key);
+                    self.set_status(STATUS_CONNECT_FAILED);
+                }
+                BgEvent::DescribeRowsLoaded { key, target, rows } => {
+                    self.in_flight.end(&key);
+                    self.apply_describe_rows_loaded(&target, rows);
+                }
+                BgEvent::ConnectionTestResult {
+                    key,
+                    success,
+                    message,
+                } => {
+                    self.in_flight.end(&key);
+                    self.apply_connection_test_result(success, message);
+                }
             }
         }
     }
@@ -575,13 +601,62 @@ impl App<'_> {
         }
     }
 
-    /// Build the field/value rows describing whatever object is currently
-    /// selected (connection, table, column, or table-data row).
-    ///
-    /// Never spawned onto another task, so the returned future not being
-    /// `Send` (due to interior-mutability fields on `App`) is harmless.
-    #[allow(clippy::future_not_send, clippy::too_many_lines)]
-    pub(crate) async fn build_describe_rows(&self) -> Vec<DescribeRow> {
+    /// Queue describe for the current selection (off the UI thread).
+    pub(crate) fn spawn_describe_rows(&mut self) -> bool {
+        let Some((target, work)) = self.describe_work_for_selection() else {
+            return false;
+        };
+        let key = describe_key();
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status("Already loading describe…");
+            return true;
+        }
+        let database = self.database_explorer.database.clone();
+        let tx = self.bg_tx.clone();
+        self.set_status("Loading describe…");
+        tokio::spawn(async move {
+            let rows = build_describe_rows_async(work, database).await;
+            let _ = tx.send(BgEvent::DescribeRowsLoaded { key, target, rows });
+        });
+        true
+    }
+
+    pub(crate) fn apply_describe_rows_loaded(
+        &mut self,
+        target: &DescribeTarget,
+        rows: Vec<DescribeRow>,
+    ) {
+        if !self.describe_target_matches(target) || rows.is_empty() {
+            return;
+        }
+        self.describe_table = TableDataState::new(rows);
+        self.show_describe = true;
+    }
+
+    pub(crate) fn apply_connection_test_result(
+        &mut self,
+        success: bool,
+        message: String,
+    ) {
+        use crate::ui::widgets::connection_modal::TestResult;
+        let Some(modal) = self.modal_manager.get_connection_modal_mut() else {
+            return;
+        };
+        if !matches!(modal.test_result, TestResult::Testing) {
+            return;
+        }
+        modal.test_result = if success {
+            TestResult::Success
+        } else {
+            TestResult::Failed(message)
+        };
+    }
+
+    fn describe_target_matches(&self, target: &DescribeTarget) -> bool {
+        self.describe_target_for_selection().as_ref() == Some(target)
+    }
+
+    fn describe_target_for_selection(&self) -> Option<DescribeTarget> {
         let explorer = &self.database_explorer;
         match &explorer.state {
             DatabaseExplorerState::Connections => explorer
@@ -591,135 +666,105 @@ impl App<'_> {
                 .state
                 .selected()
                 .and_then(|i| explorer.connections.table.model.items.get(i))
-                .map_or_else(Vec::new, connection_describe_rows),
-            DatabaseExplorerState::Tables(_) => {
-                let Some(table) = explorer.tables.as_ref().and_then(|t| {
-                    let i = t.table.view.state.selected()?;
-                    t.table.model.items.get(i).cloned()
-                }) else {
-                    return Vec::new();
-                };
-                let mut rows = vec![
-                    DescribeRow::section("Table"),
-                    DescribeRow::new("Name", &table.name),
-                    DescribeRow::new("Schema", &table.schema),
-                ];
-                if let Some(db) = explorer.database.as_ref() {
-                    let (count_res, cols_res, pk_res, indexes_res, size_res) = tokio::join!(
-                        db.get_table_row_count(&table.schema, &table.name),
-                        db.get_columns(&table.schema, &table.name),
-                        db.get_primary_key_columns(&table.schema, &table.name),
-                        db.get_table_index_names(&table.schema, &table.name),
-                        db.get_table_size(&table.schema, &table.name),
-                    );
-                    if let Ok(count) = count_res {
-                        rows.push(DescribeRow::new(
-                            "Row count",
-                            count.to_string(),
-                        ));
-                    }
-                    if let Ok(cols) = cols_res {
-                        rows.push(DescribeRow::new(
-                            "Columns",
-                            cols.len().to_string(),
-                        ));
-                    }
-                    if let Ok(pk) = pk_res
-                        && !pk.is_empty()
-                    {
-                        rows.push(DescribeRow::new(
-                            "Primary key",
-                            pk.join(", "),
-                        ));
-                    }
-                    if let Ok(indexes) = indexes_res
-                        && !indexes.is_empty()
-                    {
-                        rows.push(DescribeRow::new(
-                            "Indexes",
-                            indexes.join(", "),
-                        ));
-                    }
-                    let size =
-                        size_res.ok().flatten().or_else(|| table.size.clone());
-                    if let Some(size) = size {
-                        rows.push(DescribeRow::new("Size", size));
-                    }
-                } else if let Some(size) = table.size.clone() {
-                    rows.push(DescribeRow::new("Size", size));
-                }
-                rows
-            }
+                .map(|c| DescribeTarget::Connection {
+                    name: c.name.clone(),
+                }),
+            DatabaseExplorerState::Tables(_) => explorer.tables.as_ref().and_then(|t| {
+                let i = t.table.view.state.selected()?;
+                let table = t.table.model.items.get(i)?;
+                Some(DescribeTarget::Table {
+                    schema: table.schema.clone(),
+                    name: table.name.clone(),
+                })
+            }),
             DatabaseExplorerState::Columns(schema, table_name) => {
-                let Some(col) = explorer.columns.as_ref().and_then(|c| {
+                explorer.columns.as_ref().and_then(|c| {
                     let i = c.table.view.state.selected()?;
-                    c.table.model.items.get(i).cloned()
-                }) else {
-                    return Vec::new();
-                };
-                let mut rows = vec![
-                    DescribeRow::section("Column"),
-                    DescribeRow::new("Table", format!("{schema}.{table_name}")),
-                    DescribeRow::new("Name", &col.name),
-                    DescribeRow::new("Type", &col.data_type),
-                    DescribeRow::new(
-                        "Nullable",
-                        if col.is_nullable { "YES" } else { "NO" },
-                    ),
-                    DescribeRow::new(
-                        "Default",
-                        col.default_value.clone().unwrap_or_default(),
-                    ),
-                ];
-                if let Some(db) = explorer.database.as_ref()
-                    && let Ok(pk) =
-                        db.get_primary_key_columns(schema, table_name).await
-                {
-                    rows.push(DescribeRow::new(
-                        "Part of key",
-                        if pk.iter().any(|k| k == &col.name) {
-                            "YES"
-                        } else {
-                            "NO"
-                        },
-                    ));
-                }
-                rows.push(DescribeRow::new(
-                    "Description",
-                    col.description.clone().unwrap_or_default(),
-                ));
-                rows
+                    let col = c.table.model.items.get(i)?;
+                    Some(DescribeTarget::Column {
+                        schema: schema.clone(),
+                        table: table_name.clone(),
+                        column: col.name.clone(),
+                    })
+                })
             }
             DatabaseExplorerState::TableData(schema, table_name) => explorer
                 .table_data
                 .as_ref()
                 .and_then(|t| {
                     let i = t.table.view.state.selected()?;
-                    let row = t.table.model.items.get(i)?;
-                    let names = t.table.model.dynamic_column_names.as_ref();
-                    Some((row, names))
-                })
-                .map_or_else(Vec::new, |(row, names)| {
-                    let mut rows = vec![
-                        DescribeRow::section("Row"),
-                        DescribeRow::new(
-                            "Table",
-                            format!("{schema}.{table_name}"),
-                        ),
-                    ];
-                    for (idx, value) in row.values.iter().enumerate() {
-                        let field = names
-                            .and_then(|n| n.get(idx))
-                            .cloned()
-                            .unwrap_or_else(|| format!("col{idx}"));
-                        rows.push(DescribeRow::new(field, value.clone()));
-                    }
-                    rows
+                    Some(DescribeTarget::TableDataRow {
+                        schema: schema.clone(),
+                        table: table_name.clone(),
+                        row_index: i,
+                    })
                 }),
             DatabaseExplorerState::Databases
             | DatabaseExplorerState::Schemas
-            | DatabaseExplorerState::SqlResults(_) => Vec::new(),
+            | DatabaseExplorerState::SqlResults(_) => None,
         }
+    }
+
+    fn describe_work_for_selection(&self) -> Option<(DescribeTarget, DescribeWork)> {
+        let target = self.describe_target_for_selection()?;
+        let explorer = &self.database_explorer;
+        let work = match &target {
+            DescribeTarget::Connection { name } => {
+                let conn = explorer
+                    .connections
+                    .table
+                    .model
+                    .items
+                    .iter()
+                    .find(|c| c.name == *name)?
+                    .clone();
+                DescribeWork::Connection(conn)
+            }
+            DescribeTarget::Table { schema, name } => {
+                let table = explorer.tables.as_ref().and_then(|t| {
+                    t.table.model.items.iter().find(|tbl| {
+                        tbl.schema == *schema && tbl.name == *name
+                    })
+                })?;
+                DescribeWork::Table(table.clone())
+            }
+            DescribeTarget::Column {
+                schema,
+                table,
+                column,
+            } => {
+                let col = explorer.columns.as_ref().and_then(|c| {
+                    c.table.model.items.iter().find(|col| col.name == *column)
+                })?;
+                DescribeWork::Column {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                    column: col.clone(),
+                }
+            }
+            DescribeTarget::TableDataRow {
+                schema,
+                table,
+                row_index,
+            } => {
+                let table_data = explorer.table_data.as_ref()?;
+                let row = table_data.table.model.items.get(*row_index)?;
+                let names = table_data
+                    .table
+                    .model
+                    .dynamic_column_names
+                    .as_ref()
+                    .map(|n| n.to_vec())
+                    .unwrap_or_default();
+                DescribeWork::TableDataRow {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                    values: row.values.clone(),
+                    field_names: names,
+                }
+            }
+        };
+        Some((target, work))
     }
 
     /// Copy the full selected row as tab-separated values.
@@ -909,6 +954,131 @@ impl App<'_> {
         }
         self.execute_sql_statement_now(ACTIVITY_QUERY.to_string())
             .await;
+    }
+}
+
+enum DescribeWork {
+    Connection(Connection),
+    Table(Table),
+    Column {
+        schema: String,
+        table: String,
+        column: Column,
+    },
+    TableDataRow {
+        schema: String,
+        table: String,
+        values: Vec<String>,
+        field_names: Vec<String>,
+    },
+}
+
+async fn build_describe_rows_async(
+    work: DescribeWork,
+    database: Option<Arc<dyn Database>>,
+) -> Vec<DescribeRow> {
+    match work {
+        DescribeWork::Connection(conn) => connection_describe_rows(&conn),
+        DescribeWork::Table(table) => {
+            let mut rows = vec![
+                DescribeRow::section("Table"),
+                DescribeRow::new("Name", &table.name),
+                DescribeRow::new("Schema", &table.schema),
+            ];
+            if let Some(db) = database.as_ref() {
+                if let Ok(count) = db
+                    .get_table_row_count(&table.schema, &table.name)
+                    .await
+                {
+                    rows.push(DescribeRow::new("Row count", count.to_string()));
+                }
+                if let Ok(cols) = db.get_columns(&table.schema, &table.name).await {
+                    rows.push(DescribeRow::new("Columns", cols.len().to_string()));
+                }
+                if let Ok(pk) = db
+                    .get_primary_key_columns(&table.schema, &table.name)
+                    .await
+                    && !pk.is_empty()
+                {
+                    rows.push(DescribeRow::new("Primary key", pk.join(", ")));
+                }
+                if let Ok(indexes) = db
+                    .get_table_index_names(&table.schema, &table.name)
+                    .await
+                    && !indexes.is_empty()
+                {
+                    rows.push(DescribeRow::new("Indexes", indexes.join(", ")));
+                }
+                let size = db
+                    .get_table_size(&table.schema, &table.name)
+                    .await
+                    .ok()
+                    .flatten()
+                    .or_else(|| table.size.clone());
+                if let Some(size) = size {
+                    rows.push(DescribeRow::new("Size", size));
+                }
+            } else if let Some(size) = table.size.clone() {
+                rows.push(DescribeRow::new("Size", size));
+            }
+            rows
+        }
+        DescribeWork::Column {
+            schema,
+            table,
+            column: col,
+        } => {
+            let mut rows = vec![
+                DescribeRow::section("Column"),
+                DescribeRow::new("Table", format!("{schema}.{table}")),
+                DescribeRow::new("Name", &col.name),
+                DescribeRow::new("Type", &col.data_type),
+                DescribeRow::new(
+                    "Nullable",
+                    if col.is_nullable { "YES" } else { "NO" },
+                ),
+                DescribeRow::new(
+                    "Default",
+                    col.default_value.clone().unwrap_or_default(),
+                ),
+            ];
+            if let Some(db) = database.as_ref()
+                && let Ok(pk) = db.get_primary_key_columns(&schema, &table).await
+            {
+                rows.push(DescribeRow::new(
+                    "Part of key",
+                    if pk.iter().any(|k| k == &col.name) {
+                        "YES"
+                    } else {
+                        "NO"
+                    },
+                ));
+            }
+            rows.push(DescribeRow::new(
+                "Description",
+                col.description.clone().unwrap_or_default(),
+            ));
+            rows
+        }
+        DescribeWork::TableDataRow {
+            schema,
+            table,
+            values,
+            field_names,
+        } => {
+            let mut rows = vec![
+                DescribeRow::section("Row"),
+                DescribeRow::new("Table", format!("{schema}.{table}")),
+            ];
+            for (idx, value) in values.iter().enumerate() {
+                let field = field_names
+                    .get(idx)
+                    .cloned()
+                    .unwrap_or_else(|| format!("col{idx}"));
+                rows.push(DescribeRow::new(field, value.clone()));
+            }
+            rows
+        }
     }
 }
 
@@ -1429,6 +1599,31 @@ mod tests {
         );
         assert_eq!(app.status_line.message(), "viewing orders");
         assert!(app.database_explorer.table_data.is_none());
+    }
+
+    #[tokio::test]
+    async fn stale_describe_load_is_discarded() {
+        let mut app = tables_app("desc_stale").await;
+        app.on_key_event(key('d')).await.unwrap();
+        app.database_explorer.state = DatabaseExplorerState::TableData(
+            "sqlite_schema".into(),
+            "orders".into(),
+        );
+        drain_bg_work(&mut app).await;
+        assert!(!app.show_describe);
+    }
+
+    #[tokio::test]
+    async fn describe_refuses_when_describe_key_busy() {
+        let mut app = tables_app("desc_busy").await;
+        let key = describe_key();
+        assert!(app.in_flight.try_begin(key.clone()));
+        assert!(app.spawn_describe_rows());
+        assert!(app.in_flight.contains(&key));
+        assert_eq!(
+            app.status_line.message(),
+            "Already loading describe…"
+        );
     }
 
     #[tokio::test]

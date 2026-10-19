@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
-use crate::db::{
-    Column, Database, DatabaseInfo, Schema, Table, TableDataPage,
-    connection::{Connection, ConnectionStatus},
+use crate::{
+    db::{
+        Column, Database, DatabaseInfo, Schema, Table, TableDataPage,
+        connection::{Connection, ConnectionStatus},
+    },
+    ui::widgets::describe_content::DescribeRow,
 };
 
 /// Successful SQL execute payload for the UI thread.
@@ -118,5 +121,42 @@ pub enum BgEvent {
         key: String,
         name: String,
         status: ConnectionStatus,
+    },
+    /// User selected a database from the list; reconnect succeeded.
+    DatabaseSelected {
+        key: String,
+        database_name: String,
+        database: Arc<dyn Database>,
+    },
+    /// Reconnect to the chosen database failed.
+    DatabaseSelectFailed { key: String },
+    /// Describe panel rows built off the UI thread.
+    DescribeRowsLoaded {
+        key: String,
+        target: DescribeTarget,
+        rows: Vec<DescribeRow>,
+    },
+    /// Connection modal test finished.
+    ConnectionTestResult {
+        key: String,
+        success: bool,
+        message: String,
+    },
+}
+
+/// What the user had selected when describe was requested (stale guard).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DescribeTarget {
+    Connection { name: String },
+    Table { schema: String, name: String },
+    Column {
+        schema: String,
+        table: String,
+        column: String,
+    },
+    TableDataRow {
+        schema: String,
+        table: String,
+        row_index: usize,
     },
 }

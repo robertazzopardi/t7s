@@ -34,6 +34,18 @@ pub fn database_key(name: &str) -> String {
     format!("database:{name}")
 }
 
+pub fn select_database_key(connection_name: &str, database_name: &str) -> String {
+    format!("select_database:{connection_name}:{database_name}")
+}
+
+pub fn describe_key() -> String {
+    "describe".into()
+}
+
+pub fn connection_test_key(connection_name: &str) -> String {
+    format!("connection_test:{connection_name}")
+}
+
 pub fn schemas_key(connection_name: &str) -> String {
     format!("schemas:{connection_name}")
 }

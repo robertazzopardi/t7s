@@ -20,7 +20,8 @@ use crate::{
         TableDataPage, connection::ConnectionType, query_log::QueryOrigin,
     },
     in_flight::{
-        database_key, schema_key, schemas_key, sql_key, table_key,
+        database_key, schema_key, schemas_key, select_database_key, sql_key,
+        table_key,
     },
     error::Result,
     filtered_data::FilteredData,
@@ -31,7 +32,7 @@ use crate::{
 };
 
 const STATUS_DB_NOT_CONNECTED: &str = "Not connected to database.";
-const STATUS_CONNECT_FAILED: &str = "Failed to connect to database.";
+pub(crate) const STATUS_CONNECT_FAILED: &str = "Failed to connect to database.";
 
 pub fn column_index_for_name(names: &[String], name: &str) -> Option<usize> {
     names
@@ -334,26 +335,51 @@ impl App<'_> {
         });
     }
 
-    /// Select a database and reconnect to it
-    pub async fn select_database(&mut self, database_name: &str) -> Result<()> {
-        let log = self.query_log.clone();
+    /// Select a database and reconnect to it (off the UI thread).
+    pub fn spawn_select_database(&mut self, database_name: &str) -> Result<()> {
         let explorer = &mut self.database_explorer;
-        if explorer.database.is_some() {
-            // Update connection with selected database
-            explorer.connection.selected_database =
-                Some(database_name.to_string());
-
-            let db: Box<dyn Database> = explorer.connection.to_database();
-
-            if db.test().await {
-                explorer.database = Some(Arc::from(log.wrap(db)));
-                self.load_schemas();
-            } else {
-                self.set_status(STATUS_CONNECT_FAILED);
-            }
+        if explorer.database.is_none() {
+            return Ok(());
         }
-
+        let conn_name = explorer.connection.name.clone();
+        let key = select_database_key(&conn_name, database_name);
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status("Already opening database…");
+            return Ok(());
+        }
+        explorer.connection.selected_database =
+            Some(database_name.to_string());
+        let connection = explorer.connection.clone();
+        let db_name = database_name.to_string();
+        let query_log = self.query_log.clone();
+        let tx = self.bg_tx.clone();
+        self.set_status(format!("Opening database {database_name}…"));
+        tokio::spawn(async move {
+            let mut conn = connection;
+            conn.selected_database = Some(db_name.clone());
+            let db: Box<dyn Database> = conn.to_database();
+            let wrapped = query_log.wrap(db);
+            if wrapped.test().await {
+                let _ = tx.send(BgEvent::DatabaseSelected {
+                    key,
+                    database_name: db_name,
+                    database: Arc::from(wrapped),
+                });
+            } else {
+                let _ = tx.send(BgEvent::DatabaseSelectFailed { key });
+            }
+        });
         Ok(())
+    }
+
+    pub(crate) fn apply_database_selected(
+        &mut self,
+        database_name: &str,
+        database: Arc<dyn Database>,
+    ) {
+        self.database_explorer.database = Some(database);
+        self.load_schemas();
+        self.set_status(format!("Opened database {database_name}"));
     }
 
     /// Load schemas from the database
@@ -795,7 +821,7 @@ impl App<'_> {
     }
 
     /// Handle database navigation when Enter is pressed
-    pub async fn handle_database_navigation(&mut self) -> Result<()> {
+    pub fn handle_database_navigation(&mut self) -> Result<()> {
         let explorer_state = self.database_explorer.state.clone();
 
         match explorer_state {
@@ -804,8 +830,7 @@ impl App<'_> {
             }
             DatabaseExplorerState::Databases => {
                 if let Some(database_name) = self.get_selected_database_name() {
-                    self.select_database(&database_name).await?;
-                    self.set_status(format!("Opened database {database_name}"));
+                    self.spawn_select_database(&database_name)?;
                 }
             }
             DatabaseExplorerState::Schemas => {

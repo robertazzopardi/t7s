@@ -5,7 +5,7 @@ use crossterm::event::{
 };
 use k9tui::{
     theme,
-    widgets::{navigation::TableNavigationHandler, table::TableDataState},
+    widgets::navigation::TableNavigationHandler,
 };
 use ratatui::{
     style::{Color, Style},
@@ -16,8 +16,10 @@ use ratatui_textarea::TextArea;
 use crate::{
     app::App,
     app_state::{AppState, DatabaseExplorerState},
+    bg::BgEvent,
     db::connection::ConnectionType,
     error::Result,
+    in_flight::connection_test_key,
     services::{ConnectionService, PasswordService, PreferencesService},
     sql::safety::split_statements,
     ui::widgets::connection_modal::{ModalAction, TestResult},
@@ -336,16 +338,7 @@ impl App<'_> {
                 }
                 Ok(true)
             }
-            (_, KeyCode::Char('d')) => {
-                let rows = self.build_describe_rows().await;
-                if rows.is_empty() {
-                    Ok(false)
-                } else {
-                    self.describe_table = TableDataState::new(rows);
-                    self.show_describe = true;
-                    Ok(true)
-                }
-            }
+            (_, KeyCode::Char('d')) => Ok(self.spawn_describe_rows()),
             (_, KeyCode::Char('t')) => {
                 if self.state == AppState::DatabaseConnected {
                     self.handle_toggle_table_view().await?;
@@ -481,7 +474,7 @@ impl App<'_> {
                 ) {
                     self.connect_to_database()?;
                 } else {
-                    self.handle_database_navigation().await?;
+                    self.handle_database_navigation()?;
                 }
                 Ok(true)
             }
@@ -664,7 +657,7 @@ impl App<'_> {
                 }
             }
             ModalAction::Test => {
-                self.handle_connection_modal_test().await;
+                self.spawn_connection_modal_test();
             }
             ModalAction::Cancel => {
                 if self.modal_manager.was_connection_modal_closed() {
@@ -774,8 +767,8 @@ impl App<'_> {
         self.refresh_connections().await;
     }
 
-    /// Handle connection modal test action
-    async fn handle_connection_modal_test(&mut self) {
+    /// Handle connection modal test action (off the UI thread).
+    fn spawn_connection_modal_test(&mut self) {
         let Some(modal) = self.modal_manager.get_connection_modal_mut() else {
             return;
         };
@@ -786,13 +779,26 @@ impl App<'_> {
             return;
         };
 
+        let key = connection_test_key(&connection.name);
+        if !self.in_flight.try_begin(key.clone()) {
+            return;
+        }
+
         modal.test_result = TestResult::Testing;
-        let success = ConnectionService::test(&connection).await;
-        modal.test_result = if success {
-            TestResult::Success
-        } else {
-            TestResult::Failed("Connection failed".to_string())
-        };
+        let tx = self.bg_tx.clone();
+        tokio::spawn(async move {
+            let success = ConnectionService::test(&connection).await;
+            let message = if success {
+                String::new()
+            } else {
+                "Connection failed".into()
+            };
+            let _ = tx.send(BgEvent::ConnectionTestResult {
+                key,
+                success,
+                message,
+            });
+        });
     }
 }
 
