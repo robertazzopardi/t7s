@@ -305,7 +305,7 @@ impl App {
                 DialogAction::Submit => {
                     self.confirm_dialog = None;
                     if let Some((kind, id)) = self.pending_remove.take() {
-                        self.remove_resource(kind, &id).await;
+                        self.remove_resource(kind, &id);
                     }
                 }
                 DialogAction::Cancel => {
@@ -373,7 +373,7 @@ impl App {
                 }
             }
             (_, KeyCode::Char('d') | KeyCode::Enter) => {
-                self.describe_selected().await;
+                self.describe_selected();
             }
             (_, KeyCode::Char('e'))
                 if self.view == ResourceKind::Containers =>
@@ -431,11 +431,11 @@ impl App {
     }
 
     /// `d`/`Enter`: describe whatever is selected in the active view.
-    async fn describe_selected(&mut self) {
+    fn describe_selected(&mut self) {
         let Some((id, name)) = self.selected_target() else {
             return;
         };
-        self.open_describe(self.view, &id, &name).await;
+        self.open_describe(self.view, &id, &name);
     }
 
     /// (docker id-or-name, display label) of the selection in the active view.
@@ -565,20 +565,43 @@ impl App {
         });
     }
 
-    async fn remove_resource(&mut self, kind: ResourceKind, id: &str) {
+    fn remove_resource(&mut self, kind: ResourceKind, id: &str) {
+        use crate::{app::BackgroundEvent, in_flight::resource_key};
+
+        let key = resource_key(kind, id);
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status(format!(
+                "Already busy with this {}",
+                singular(kind).to_lowercase()
+            ));
+            return;
+        }
         let Some(docker) = self.docker.clone() else {
+            self.in_flight.end(&key);
             return;
         };
-        let result = match kind {
-            ResourceKind::Containers => docker.remove(id).await,
-            ResourceKind::Images => docker.remove_image(id).await,
-            ResourceKind::Volumes => docker.remove_volume(id).await,
-            ResourceKind::Networks => docker.remove_network(id).await,
-        };
-        match result {
-            Ok(()) => self.set_status(format!("{} removed", singular(kind))),
-            Err(e) => self.set_status(format!("Remove failed: {e}")),
-        }
+        self.set_status(format!("Removing {id}…"));
+        let tx = self.bg_tx.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            let result = match kind {
+                ResourceKind::Containers => docker.remove(&id).await,
+                ResourceKind::Images => docker.remove_image(&id).await,
+                ResourceKind::Volumes => docker.remove_volume(&id).await,
+                ResourceKind::Networks => docker.remove_network(&id).await,
+            };
+            let event = match result {
+                Ok(()) => BackgroundEvent::ActionDone {
+                    key,
+                    message: format!("{} removed", singular(kind)),
+                },
+                Err(e) => BackgroundEvent::ActionFailed {
+                    key,
+                    message: format!("Remove failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
     }
 }
 
@@ -657,6 +680,13 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    async fn flush_background(app: &mut App) {
+        for _ in 0..32 {
+            tokio::task::yield_now().await;
+            app.drain_background_events();
+        }
+    }
+
     fn screen(app: &mut App, term: &mut Term) -> String {
         term.draw(|f| app.render(f)).unwrap();
         let buf = term.backend().buffer();
@@ -721,6 +751,7 @@ mod tests {
                 let mut t = term();
                 app.switch_view(kind);
                 app.on_key_event(key(code), &mut t).await.unwrap();
+                flush_background(&mut app).await;
                 // Reached the inspect call (daemon unreachable) rather than
                 // the old "only available for containers" refusal.
                 let out = screen(&mut app, &mut t);
@@ -746,6 +777,7 @@ mod tests {
             app.on_key_event(key(KeyCode::Enter), &mut t).await.unwrap();
             assert!(app.confirm_dialog.is_none());
             assert!(app.pending_remove.is_none());
+            flush_background(&mut app).await;
             let out = screen(&mut app, &mut t);
             assert!(out.contains("Remove failed"), "{kind:?}: {out}");
         }
@@ -1075,6 +1107,16 @@ mod tests {
         app.on_key_event(key(KeyCode::Esc), &mut t).await.unwrap();
         let out = screen(&mut app, &mut t);
         assert!(out.contains("command"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn remove_refuses_when_resource_in_flight() {
+        let mut app = App::new();
+        app.docker = Some(DockerClient::unreachable());
+        let key = crate::in_flight::container_key("x");
+        assert!(app.in_flight.try_begin(key.clone()));
+        app.remove_resource(ResourceKind::Containers, "x");
+        assert!(app.in_flight.contains(&key));
     }
 
     #[tokio::test]

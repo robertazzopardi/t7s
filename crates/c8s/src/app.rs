@@ -77,9 +77,15 @@ pub enum BackgroundEvent {
     ProcessError(String),
     /// Message for the status line from a background task.
     Status(String),
-    /// Lifecycle action finished (start/stop/restart/remove/describe prep, etc.).
+    /// Lifecycle action finished (start/stop/restart/remove, etc.).
     ActionDone { key: String, message: String },
     ActionFailed { key: String, message: String },
+    /// Inspect finished; switch to the describe view.
+    DescribeReady {
+        key: String,
+        name: String,
+        text: String,
+    },
     /// Daemon connect succeeded.
     Connected(DockerClient),
     ConnectFailed(String),
@@ -396,6 +402,11 @@ impl App {
                     self.in_flight.end(&key);
                     self.set_status(message);
                 }
+                BackgroundEvent::DescribeReady { key, name, text } => {
+                    self.in_flight.end(&key);
+                    self.describe_scroll = 0;
+                    self.state = AppState::Describe { name, text };
+                }
                 BackgroundEvent::Connected(client) => {
                     self.in_flight.end(crate::in_flight::DAEMON_KEY);
                     self.docker = Some(client);
@@ -641,46 +652,52 @@ impl App {
     }
 
     /// Fetch and show full inspect details for a resource of any kind.
-    pub(crate) async fn open_describe(
-        &mut self,
-        kind: ResourceKind,
-        id: &str,
-        name: &str,
-    ) {
+    pub(crate) fn open_describe(&mut self, kind: ResourceKind, id: &str, name: &str) {
         use crate::docker::{
             describe_image_text, describe_network_text, describe_text,
             describe_volume_text,
         };
+        use crate::{app::BackgroundEvent, in_flight::resource_key};
+
+        let key = resource_key(kind, id);
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status("Already busy with this resource");
+            return;
+        }
         let Some(docker) = self.docker.clone() else {
+            self.in_flight.end(&key);
             return;
         };
-        let text = match kind {
-            ResourceKind::Containers => {
-                docker.inspect(id).await.map(|i| describe_text(&i))
-            }
-            ResourceKind::Images => docker
-                .inspect_image(id)
-                .await
-                .map(|i| describe_image_text(&i)),
-            ResourceKind::Volumes => docker
-                .inspect_volume(id)
-                .await
-                .map(|v| describe_volume_text(&v)),
-            ResourceKind::Networks => docker
-                .inspect_network(id)
-                .await
-                .map(|n| describe_network_text(&n)),
-        };
-        match text {
-            Ok(text) => {
-                self.describe_scroll = 0;
-                self.state = AppState::Describe {
-                    name: name.to_string(),
-                    text,
-                };
-            }
-            Err(e) => self.set_status(format!("Inspect failed: {e}")),
-        }
+        let tx = self.bg_tx.clone();
+        let id = id.to_string();
+        let name = name.to_string();
+        tokio::spawn(async move {
+            let text = match kind {
+                ResourceKind::Containers => {
+                    docker.inspect(&id).await.map(|i| describe_text(&i))
+                }
+                ResourceKind::Images => docker
+                    .inspect_image(&id)
+                    .await
+                    .map(|i| describe_image_text(&i)),
+                ResourceKind::Volumes => docker
+                    .inspect_volume(&id)
+                    .await
+                    .map(|v| describe_volume_text(&v)),
+                ResourceKind::Networks => docker
+                    .inspect_network(&id)
+                    .await
+                    .map(|n| describe_network_text(&n)),
+            };
+            let event = match text {
+                Ok(text) => BackgroundEvent::DescribeReady { key, name, text },
+                Err(e) => BackgroundEvent::ActionFailed {
+                    key,
+                    message: format!("Inspect failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
     }
 
     /// Leave the describe view.

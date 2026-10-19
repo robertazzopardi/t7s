@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use crate::app_state::ResourceKind;
+
 #[derive(Debug, Default)]
 pub struct InFlight {
     keys: HashSet<String>,
@@ -36,6 +38,15 @@ pub fn network_key(id: &str) -> String {
 }
 
 pub const DAEMON_KEY: &str = "daemon";
+
+pub fn resource_key(kind: ResourceKind, id: &str) -> String {
+    match kind {
+        ResourceKind::Containers => container_key(id),
+        ResourceKind::Images => image_key(id),
+        ResourceKind::Volumes => volume_key(id),
+        ResourceKind::Networks => network_key(id),
+    }
+}
 
 #[cfg(test)]
 mod tests {
