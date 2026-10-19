@@ -345,9 +345,9 @@ impl App {
             {
                 if let Some(row) = self.selected_container().cloned() {
                     if row.is_running() {
-                        self.stop_container(&row.id).await;
+                        self.stop_container(&row.id);
                     } else {
-                        self.start_container(&row.id).await;
+                        self.start_container(&row.id);
                     }
                 }
             }
@@ -355,7 +355,7 @@ impl App {
                 if self.view == ResourceKind::Containers =>
             {
                 if let Some(row) = self.selected_container().cloned() {
-                    self.restart_container(&row.id).await;
+                    self.restart_container(&row.id);
                 }
             }
             (_, KeyCode::Char('p'))
@@ -475,34 +475,94 @@ impl App {
         ));
     }
 
-    async fn start_container(&mut self, id: &str) {
+    fn start_container(&mut self, id: &str) {
+        use crate::{app::BackgroundEvent, in_flight::container_key};
+
+        let key = container_key(id);
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status("Already busy with this container");
+            return;
+        }
         let Some(docker) = self.docker.clone() else {
+            self.in_flight.end(&key);
             return;
         };
-        match docker.start(id).await {
-            Ok(()) => self.set_status("Starting container"),
-            Err(e) => self.set_status(format!("Start failed: {e}")),
-        }
+        self.set_status(format!("Starting {id}…"));
+        let tx = self.bg_tx.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            let event = match docker.start(&id).await {
+                Ok(()) => BackgroundEvent::ActionDone {
+                    key,
+                    message: "Container started".into(),
+                },
+                Err(e) => BackgroundEvent::ActionFailed {
+                    key,
+                    message: format!("Start failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
     }
 
-    async fn stop_container(&mut self, id: &str) {
+    fn stop_container(&mut self, id: &str) {
+        use crate::{app::BackgroundEvent, in_flight::container_key};
+
+        let key = container_key(id);
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status("Already busy with this container");
+            return;
+        }
         let Some(docker) = self.docker.clone() else {
+            self.in_flight.end(&key);
             return;
         };
-        match docker.stop(id).await {
-            Ok(()) => self.set_status("Stopping container"),
-            Err(e) => self.set_status(format!("Stop failed: {e}")),
-        }
+        self.set_status(format!("Stopping {id}…"));
+        let tx = self.bg_tx.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            let event = match docker.stop(&id).await {
+                Ok(()) => BackgroundEvent::ActionDone {
+                    key,
+                    message: "Container stopped".into(),
+                },
+                Err(e) => BackgroundEvent::ActionFailed {
+                    key,
+                    message: format!("Stop failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
     }
 
-    async fn restart_container(&mut self, id: &str) {
+    fn restart_container(&mut self, id: &str) {
+        use crate::{app::BackgroundEvent, in_flight::container_key};
+
+        let key = container_key(id);
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status("Already busy with this container");
+            return;
+        }
         let Some(docker) = self.docker.clone() else {
+            self.in_flight.end(&key);
             return;
         };
-        match docker.restart(id).await {
-            Ok(()) => self.set_status("Restarting container"),
-            Err(e) => self.set_status(format!("Restart failed: {e}")),
-        }
+        self.set_status(format!("Restarting {id}…"));
+        let tx = self.bg_tx.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            let event = match docker.restart(&id).await {
+                Ok(()) => BackgroundEvent::ActionDone {
+                    key,
+                    message: "Container restarted".into(),
+                },
+                Err(e) => BackgroundEvent::ActionFailed {
+                    key,
+                    message: format!("Restart failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
     }
 
     async fn remove_resource(&mut self, kind: ResourceKind, id: &str) {
@@ -1015,6 +1075,16 @@ mod tests {
         app.on_key_event(key(KeyCode::Esc), &mut t).await.unwrap();
         let out = screen(&mut app, &mut t);
         assert!(out.contains("command"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn restart_refuses_when_container_in_flight() {
+        let mut app = App::new();
+        app.docker = Some(DockerClient::unreachable());
+        let id = "abc123";
+        assert!(app.in_flight.try_begin(crate::in_flight::container_key(id)));
+        app.restart_container(id);
+        assert!(app.in_flight.contains(&crate::in_flight::container_key(id)));
     }
 
     #[tokio::test]
