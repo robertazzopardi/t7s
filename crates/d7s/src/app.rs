@@ -104,6 +104,8 @@ pub struct App<'a> {
     pub(crate) page_size: u32,
     /// First Esc warns before dropping draft rows; second Esc discards.
     pub(crate) draft_discard_pending: bool,
+    /// Shift+N without cached column meta: create defaults draft when meta loads.
+    pub(crate) pending_defaults_draft: bool,
     /// One-shot hint after first connect in a session.
     pub(crate) showed_help_hint: bool,
     /// SQL results: when true, the current statement re-runs on
@@ -143,6 +145,7 @@ impl Default for App<'_> {
             describe_table: TableDataState::new(Vec::new()),
             page_size: VIRTUAL_TABLE_PAGE_SIZE,
             draft_discard_pending: false,
+            pending_defaults_draft: false,
             showed_help_hint: false,
             watch_active: false,
             watch_last_tick: Instant::now(),
@@ -270,6 +273,15 @@ impl App<'_> {
                 } => {
                     self.in_flight.end(&key);
                     self.apply_columns_loaded(&schema, &table, columns);
+                }
+                BgEvent::TableColumnMetaLoaded {
+                    key,
+                    schema,
+                    table,
+                    result,
+                } => {
+                    self.in_flight.end(&key);
+                    self.apply_table_column_meta_loaded(&schema, &table, result);
                 }
                 BgEvent::TablePageLoaded {
                     key,
@@ -1653,6 +1665,25 @@ mod tests {
         app.load_tables("sqlite_schema");
         drain_bg_work(&mut app).await;
         app
+    }
+
+    #[tokio::test]
+    async fn n_draft_spawns_column_meta_when_uncached() {
+        let mut app = defaults_draft_table_app("draft_defaults_spawn").await;
+        run_cmd(&mut app, "table def_row").await;
+        app.database_explorer.table_columns = None;
+        app.database_explorer.table_pk_names = None;
+        app.on_key_event(KeyEvent::new(
+            KeyCode::Char('N'),
+            KeyModifiers::SHIFT,
+        ))
+        .await
+        .unwrap();
+        assert!(app.pending_defaults_draft);
+        assert!(!app.has_table_draft_rows());
+        drain_bg_work(&mut app).await;
+        assert!(!app.pending_defaults_draft);
+        assert!(app.has_table_draft_rows());
     }
 
     #[tokio::test]

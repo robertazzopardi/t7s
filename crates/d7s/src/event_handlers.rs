@@ -200,7 +200,7 @@ impl App<'_> {
         }
 
         // Handle application shortcuts (q, n, d, e, t, s, Esc, Enter)
-        if self.handle_table_data_hotkeys(key).await? {
+        if self.handle_table_data_hotkeys(key)? {
             return Ok(());
         }
         if self.handle_hotkeys(key).await? {

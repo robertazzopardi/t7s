@@ -112,28 +112,6 @@ impl App<'_> {
         }
     }
 
-    async fn refresh_table_column_meta(
-        &mut self,
-        schema: &str,
-        table: &str,
-    ) -> Result<()> {
-        let Some(db) = self.database_explorer.database.as_ref() else {
-            return Ok(());
-        };
-        let columns = db
-            .get_columns(schema, table)
-            .await
-            .map_err(|e| err(e.to_string()))?;
-        let pk = db
-            .get_primary_key_columns(schema, table)
-            .await
-            .unwrap_or_default();
-        let explorer = &mut self.database_explorer;
-        explorer.table_columns = Some(columns);
-        explorer.table_pk_names = Some(pk);
-        Ok(())
-    }
-
     pub(crate) const fn is_cell_editing(&self) -> bool {
         self.cell_edit.is_some()
     }
@@ -220,8 +198,8 @@ impl App<'_> {
         }
     }
 
-    // ponytail: Tab awaits a full cell UPDATE on the UI path; dirty-grid or
-    // background write if remote Postgres Tab latency becomes sticky.
+    // ponytail: Tab spawns cell UPDATE off the UI thread; batch or dirty-grid
+    // if rapid Tab on remote Postgres still feels sticky.
     fn finish_cell_edit_and_move_editable_column(
         &mut self,
         forward: bool,
@@ -378,7 +356,7 @@ impl App<'_> {
     }
 
     /// `Ok(Some(n))` = draft created with `n` columns using schema defaults.
-    pub(crate) async fn table_data_add_defaults_draft(
+    pub(crate) fn table_data_add_defaults_draft(
         &mut self,
     ) -> Result<Option<usize>> {
         let DatabaseExplorerState::TableData(schema, table) =
@@ -393,7 +371,20 @@ impl App<'_> {
             self.set_status("Clear filter before adding a row.");
             return Ok(None);
         }
-        self.refresh_table_column_meta(&schema, &table).await?;
+        if self.database_explorer.table_columns.is_some()
+            && self.database_explorer.table_pk_names.is_some()
+        {
+            return self.insert_defaults_draft_from_meta();
+        }
+        if self.spawn_table_column_meta(&schema, &table) {
+            self.pending_defaults_draft = true;
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn insert_defaults_draft_from_meta(
+        &mut self,
+    ) -> Result<Option<usize>> {
         let columns = self
             .database_explorer
             .table_columns
@@ -435,7 +426,7 @@ impl App<'_> {
         Ok(Some(defaults_n))
     }
 
-    fn begin_cell_edit_on_first_editable_column(&mut self) {
+    pub(crate) fn begin_cell_edit_on_first_editable_column(&mut self) {
         let cols = self.editable_columns_for_current_table();
         let col = cols.iter().find(|c| c.editable).map(|c| c.index);
         if let Some(col) = col
@@ -715,7 +706,7 @@ impl App<'_> {
     }
 
     #[allow(clippy::wildcard_enum_match_arm)]
-    pub(crate) async fn handle_table_data_hotkeys(
+    pub(crate) fn handle_table_data_hotkeys(
         &mut self,
         key: KeyEvent,
     ) -> Result<bool> {
@@ -774,7 +765,7 @@ impl App<'_> {
                 Ok(true)
             }
             KeyCode::Char('N') => {
-                if let Some(n) = self.table_data_add_defaults_draft().await? {
+                if let Some(n) = self.table_data_add_defaults_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                     // Set after begin so EDIT status does not clobber the count.
                     self.set_status(format!(

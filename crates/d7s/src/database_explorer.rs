@@ -11,7 +11,10 @@ use k9tui::widgets::{
 use crate::{
     app::{ACTIVITY_QUERY, App},
     app_state::DatabaseExplorerState,
-    bg::{BgEvent, SqlExecuteOk, TableMutationReload, TablePageLoadOk},
+    bg::{
+        BgEvent, SqlExecuteOk, TableColumnMetaOk, TableMutationReload,
+        TablePageLoadOk,
+    },
     db::{
         Column, Database, DatabaseInfo, DbRowId, RowDeleteSpec, Schema, Table,
         TableDataPage, connection::ConnectionType, query_log::QueryOrigin,
@@ -451,6 +454,49 @@ impl App<'_> {
                 }
             }
         });
+    }
+
+    /// Column + PK metadata for table-data edits (e.g. Shift+N defaults draft).
+    pub(crate) fn spawn_table_column_meta(
+        &mut self,
+        schema_name: &str,
+        table_name: &str,
+    ) -> bool {
+        let schema = schema_name.to_string();
+        let table = table_name.to_string();
+        let key = table_key(schema_name, table_name);
+        let Some((database, tx)) = self.spawn_explorer_load(
+            key.clone(),
+            "Already busy with this table",
+            "Loading columns…",
+        ) else {
+            return false;
+        };
+        tokio::spawn(async move {
+            let columns = match database.get_columns(&schema, &table).await {
+                Ok(columns) => columns,
+                Err(e) => {
+                    let _ = tx.send(BgEvent::TableColumnMetaLoaded {
+                        key,
+                        schema,
+                        table,
+                        result: Err(e.to_string()),
+                    });
+                    return;
+                }
+            };
+            let pk_names = database
+                .get_primary_key_columns(&schema, &table)
+                .await
+                .unwrap_or_default();
+            let _ = tx.send(BgEvent::TableColumnMetaLoaded {
+                key,
+                schema,
+                table,
+                result: Ok(TableColumnMetaOk { columns, pk_names }),
+            });
+        });
+        true
     }
 
     /// Load table data for a table (first page of a paged / virtual table).
@@ -1159,6 +1205,46 @@ impl App<'_> {
             schema.to_string(),
             table.to_string(),
         );
+    }
+
+    pub(crate) fn apply_table_column_meta_loaded(
+        &mut self,
+        schema: &str,
+        table: &str,
+        result: Result<TableColumnMetaOk, String>,
+    ) {
+        let on_table = matches!(
+            &self.database_explorer.state,
+            DatabaseExplorerState::TableData(s, t) if s == schema && t == table
+        );
+        if !on_table {
+            self.pending_defaults_draft = false;
+            return;
+        }
+        match result {
+            Err(e) => {
+                self.pending_defaults_draft = false;
+                self.status_load_failed("columns", e);
+            }
+            Ok(meta) => {
+                let explorer = &mut self.database_explorer;
+                explorer.table_columns = Some(meta.columns);
+                explorer.table_pk_names = Some(meta.pk_names);
+                if self.pending_defaults_draft {
+                    self.pending_defaults_draft = false;
+                    match self.insert_defaults_draft_from_meta() {
+                        Ok(Some(defaults_n)) => {
+                            self.begin_cell_edit_on_first_editable_column();
+                            self.set_status(format!(
+                                "Draft with defaults ({defaults_n} cols) · Ctrl+e modal"
+                            ));
+                        }
+                        Ok(None) => {}
+                        Err(e) => self.set_status(e.to_string()),
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn apply_table_page_loaded(

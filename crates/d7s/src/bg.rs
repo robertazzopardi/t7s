@@ -20,6 +20,13 @@ pub struct TableMutationReload {
     pub success_status: Option<String>,
 }
 
+/// Column + PK metadata for table data editing (off the UI thread).
+#[derive(Debug, Clone)]
+pub struct TableColumnMetaOk {
+    pub columns: Vec<Column>,
+    pub pk_names: Vec<String>,
+}
+
 /// Table page fetch completed off the UI thread.
 #[derive(Debug, Clone)]
 pub struct TablePageLoadOk {
@@ -71,6 +78,12 @@ pub enum BgEvent {
         schema: String,
         table: String,
         columns: Vec<Column>,
+    },
+    TableColumnMetaLoaded {
+        key: String,
+        schema: String,
+        table: String,
+        result: Result<TableColumnMetaOk, String>,
     },
     TablePageLoaded {
         key: String,
