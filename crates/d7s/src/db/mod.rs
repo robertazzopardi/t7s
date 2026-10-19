@@ -239,10 +239,20 @@ pub fn literal_default_display(col: &Column) -> Option<String> {
 }
 
 /// Cell value for a new `N` (defaults) draft row.
+///
+/// Literal defaults are shown; expression/generated defaults stay empty so
+/// INSERT omits the column. Only bare nullable columns (no DEFAULT) show `NULL`.
 #[must_use]
 pub fn draft_cell_from_column_default(col: &Column) -> String {
     if let Some(v) = literal_default_display(col) {
         return v;
+    }
+    if col.default_value.as_deref().is_some_and(|d| {
+        let t = d.trim();
+        !t.is_empty() && !t.eq_ignore_ascii_case("NULL")
+    }) {
+        // Expression / identity DEFAULT — leave empty for omit-on-insert.
+        return String::new();
     }
     if col.is_nullable {
         return "NULL".to_string();
@@ -488,6 +498,14 @@ mod tests {
             "NULL"
         );
         assert_eq!(draft_cell_from_column_default(&col("n", false, None)), "");
+        // Nullable + expression DEFAULT must stay empty (not "NULL") so INSERT omits.
+        let ts = col("ts", true, Some("CURRENT_TIMESTAMP"));
+        assert_eq!(draft_cell_from_column_default(&ts), "");
+        assert!(should_omit_for_insert_default(&ts, "", false, false));
+        assert!(
+            !should_omit_for_insert_default(&ts, "NULL", false, false),
+            "explicit NULL must not omit"
+        );
     }
 
     #[test]
