@@ -12,6 +12,14 @@ pub struct SqlExecuteOk {
     pub rows: Vec<Vec<String>>,
 }
 
+/// After a successful table mutation, refetch the current page if still on that table.
+#[derive(Debug, Clone)]
+pub struct TableMutationReload {
+    pub schema: String,
+    pub table: String,
+    pub success_status: Option<String>,
+}
+
 /// Table page fetch completed off the UI thread.
 #[derive(Debug, Clone)]
 pub struct TablePageLoadOk {
@@ -31,10 +39,12 @@ pub struct TablePageLoadOk {
 /// Update pushed from a background task into the app's event loop.
 pub enum BgEvent {
     /// Background action finished successfully.
-    #[allow(dead_code)] // Tasks 11–12
-    ActionDone { key: String, message: String },
+    ActionDone {
+        key: String,
+        message: String,
+        reload_table: Option<TableMutationReload>,
+    },
     /// Background action failed.
-    #[allow(dead_code)] // Tasks 11–12
     ActionFailed { key: String, message: String },
     /// SQL execute finished (success or error).
     SqlFinished {

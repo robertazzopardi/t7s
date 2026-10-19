@@ -38,7 +38,10 @@ impl App<'_> {
     }
 
     /// Remove client-only draft rows and refetch the current page from the server.
-    pub(crate) fn reload_current_table_data(&mut self) {
+    pub(crate) fn reload_current_table_data(
+        &mut self,
+        success_status: Option<String>,
+    ) {
         self.strip_draft_rows_from_table_data();
         let DatabaseExplorerState::TableData(schema, table) =
             self.database_explorer.state.clone()
@@ -62,7 +65,7 @@ impl App<'_> {
             total_rows,
             false,
             None,
-            Some("Refreshed.".into()),
+            success_status.or(Some("Refreshed.".into())),
         );
     }
 
@@ -219,13 +222,13 @@ impl App<'_> {
 
     // ponytail: Tab awaits a full cell UPDATE on the UI path; dirty-grid or
     // background write if remote Postgres Tab latency becomes sticky.
-    async fn finish_cell_edit_and_move_editable_column(
+    fn finish_cell_edit_and_move_editable_column(
         &mut self,
         forward: bool,
     ) -> Result<()> {
         let row_index = self.cell_edit.as_ref().map(|s| s.row_index);
         let from_col = self.cell_edit.as_ref().map_or(0, |s| s.col_index);
-        self.finish_cell_edit().await?;
+        self.finish_cell_edit()?;
         if self.cell_edit.is_some() {
             return Ok(());
         }
@@ -521,7 +524,7 @@ impl App<'_> {
         Ok(true)
     }
 
-    pub(crate) async fn table_data_commit_draft(&mut self) -> Result<()> {
+    pub(crate) fn table_data_commit_draft(&mut self) -> Result<()> {
         let DatabaseExplorerState::TableData(schema, table) =
             self.database_explorer.state.clone()
         else {
@@ -548,25 +551,7 @@ impl App<'_> {
             .get(sel)
             .map(|r| r.values.clone())
             .ok_or_else(|| err("no draft row"))?;
-        let Some(db) = self.database_explorer.database.as_ref() else {
-            return Ok(());
-        };
-        {
-            let n = db.insert_table_row(&schema, &table, &values).await;
-            match n {
-                Ok(count) if count > 0 => {}
-                Ok(_) => {
-                    self.set_status("Insert affected 0 rows.");
-                    return Ok(());
-                }
-                Err(e) => {
-                    self.status_action_failed("Insert", e);
-                    return Ok(());
-                }
-            }
-        }
-        self.set_status("Row inserted.");
-        self.reload_current_table_data();
+        self.spawn_table_row_insert(&schema, &table, values);
         Ok(())
     }
 
@@ -712,8 +697,8 @@ impl App<'_> {
         self.modal_manager.open_sql_execution_confirmation_modal(p);
     }
 
-    /// After confirmation: delete persisted rows, then refetch.
-    pub(crate) async fn execute_pending_row_deletes(&mut self) -> Result<()> {
+    /// After confirmation: delete persisted rows off the UI thread, then refetch.
+    pub(crate) fn spawn_pending_row_deletes(&mut self) -> Result<()> {
         let Some(specs) = self.pending_row_deletes.take() else {
             return Ok(());
         };
@@ -721,41 +706,11 @@ impl App<'_> {
             return Ok(());
         }
         let DatabaseExplorerState::TableData(schema, table) =
-            &self.database_explorer.state
+            self.database_explorer.state.clone()
         else {
             return Ok(());
         };
-        let Some(db) = self.database_explorer.database.as_ref() else {
-            return Ok(());
-        };
-        let mut any_ok = false;
-        let mut errs = 0u32;
-        for spec in specs {
-            match db
-                .delete_table_row(
-                    schema,
-                    table,
-                    &spec.primary_key,
-                    spec.row_id_fallback,
-                )
-                .await
-            {
-                Ok(n) if n > 0 => any_ok = true,
-                _ => errs += 1,
-            }
-        }
-        if any_ok {
-            if errs > 0 {
-                self.set_status(format!(
-                    "Some deletes failed ({errs}). Refetching."
-                ));
-            } else {
-                self.set_status("Row(s) deleted.");
-            }
-            self.reload_current_table_data();
-        } else if errs > 0 {
-            self.set_status("Delete failed.");
-        }
+        self.spawn_table_row_deletes(&schema, &table, specs);
         Ok(())
     }
 
@@ -777,16 +732,15 @@ impl App<'_> {
         // reject other modifiers (Ctrl/Alt chords).
         if self.cell_edit.is_some() {
             if key.code == KeyCode::Tab {
-                self.finish_cell_edit_and_move_editable_column(true).await?;
+                self.finish_cell_edit_and_move_editable_column(true)?;
                 return Ok(true);
             }
             if key.code == KeyCode::BackTab {
-                self.finish_cell_edit_and_move_editable_column(false)
-                    .await?;
+                self.finish_cell_edit_and_move_editable_column(false)?;
                 return Ok(true);
             }
             if key.code == KeyCode::Enter {
-                self.finish_cell_edit().await?;
+                self.finish_cell_edit()?;
                 return Ok(true);
             }
             if matches!(
@@ -810,7 +764,7 @@ impl App<'_> {
         }
         match key.code {
             KeyCode::Char('r' | 'R') => {
-                self.reload_current_table_data();
+                self.reload_current_table_data(None);
                 Ok(true)
             }
             KeyCode::Char('n' | 'a') => {
@@ -840,7 +794,7 @@ impl App<'_> {
                 Ok(true)
             }
             KeyCode::Char('s') => {
-                self.table_data_commit_draft().await?;
+                self.table_data_commit_draft()?;
                 Ok(true)
             }
             KeyCode::Char('D') => {

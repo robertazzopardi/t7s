@@ -2,6 +2,7 @@ use core::{error::Error, fmt::Write};
 use std::collections::HashMap;
 
 use rusqlite::{Connection as SqliteConnection, params, types};
+use tokio::task::spawn_blocking;
 use rusqlite_migration::{M, Migrations};
 use serde_json::{Map, Value as SerdeJsonValue};
 
@@ -13,7 +14,10 @@ use crate::{
             Connection, ConnectionStatus, ConnectionType, Environment,
         },
         get_db_path,
-        query_log::report_sql,
+        query_log::{
+            clear_blocking_sql_reports, merge_blocking_sql_reports, report_sql,
+            take_blocking_sql_reports,
+        },
         should_omit_for_insert_default, sole_pk, sqlite_rowid_pk_omit,
     },
     error::Result,
@@ -114,6 +118,32 @@ impl Sqlite {
     fn open_conn(&self) -> Result<SqliteConnection, Box<dyn Error>> {
         Ok(SqliteConnection::open(&self.path)?)
     }
+
+    fn clone_for_task(&self) -> Self {
+        Sqlite {
+            name: self.name.clone(),
+            path: self.path.clone(),
+        }
+    }
+
+    async fn in_blocking<T, F>(&self, f: F) -> Result<T, Box<dyn Error>>
+    where
+        T: Send + 'static,
+        F: FnOnce(Self) -> Result<T, Box<dyn Error>> + Send + 'static,
+    {
+        let db = self.clone_for_task();
+        let (out, blocking_sql) = spawn_blocking(move || {
+            clear_blocking_sql_reports();
+            let res = f(db).map_err(|e| e.to_string());
+            let reports = take_blocking_sql_reports();
+            (res, reports)
+        })
+        .await
+        .map_err(|e| -> Box<dyn Error> { e.into() })?;
+        let out = out.map_err(|s| -> Box<dyn Error> { s.into() })?;
+        merge_blocking_sql_reports(blocking_sql);
+        Ok(out)
+    }
 }
 
 impl TableData for Sqlite {
@@ -137,14 +167,179 @@ impl TableData for Sqlite {
 #[async_trait::async_trait]
 impl Database for Sqlite {
     async fn test(&self) -> bool {
-        self.open_conn().is_ok()
+        self.in_blocking(|db| Ok(db.open_conn().is_ok()))
+            .await
+            .unwrap_or(false)
     }
 
     async fn execute_sql(
         &self,
         sql: &str,
     ) -> Result<Vec<TableRow>, Box<dyn Error>> {
-        // rusqlite is synchronous, so we just run it in the async context
+        let sql = sql.to_string();
+        self.in_blocking(move |db| db.execute_sql_sync(&sql)).await
+    }
+
+    async fn get_schemas(&self) -> Result<Vec<Schema>, Box<dyn Error>> {
+        self.in_blocking(|db| db.get_schemas_sync()).await
+    }
+
+    async fn get_tables(
+        &self,
+        schema_name: &str,
+    ) -> Result<Vec<Table>, Box<dyn Error>> {
+        let schema_name = schema_name.to_string();
+        self.in_blocking(move |db| db.get_tables_sync(&schema_name))
+            .await
+    }
+
+    async fn get_columns(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+    ) -> Result<Vec<Column>, Box<dyn Error>> {
+        let schema_name = schema_name.to_string();
+        let table_name = table_name.to_string();
+        self.in_blocking(move |db| db.get_columns_sync(&schema_name, &table_name))
+            .await
+    }
+
+    async fn get_table_data_page(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+        offset: u64,
+        limit: u32,
+    ) -> Result<TableDataPage, Box<dyn Error>> {
+        let schema_name = schema_name.to_string();
+        let table_name = table_name.to_string();
+        self.in_blocking(move |db| {
+            db.get_table_data_page_sync(&schema_name, &table_name, offset, limit)
+        })
+        .await
+    }
+
+    async fn get_primary_key_columns(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+    ) -> Result<Vec<String>, Box<dyn Error>> {
+        let schema_name = schema_name.to_string();
+        let table_name = table_name.to_string();
+        self.in_blocking(move |db| {
+            db.get_primary_key_columns_sync(&schema_name, &table_name)
+        })
+        .await
+    }
+
+    async fn update_table_cell(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+        set_column: &str,
+        new_value: &str,
+        primary_key: &[(String, String)],
+        row_id_fallback: Option<DbRowId>,
+    ) -> Result<u64, Box<dyn Error>> {
+        let schema_name = schema_name.to_string();
+        let table_name = table_name.to_string();
+        let set_column = set_column.to_string();
+        let new_value = new_value.to_string();
+        let primary_key = primary_key.to_vec();
+        self.in_blocking(move |db| {
+            db.update_table_cell_sync(
+                &schema_name,
+                &table_name,
+                &set_column,
+                &new_value,
+                &primary_key,
+                row_id_fallback,
+            )
+        })
+        .await
+    }
+
+    async fn insert_table_row(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+        values: &[String],
+    ) -> Result<u64, Box<dyn Error>> {
+        let schema_name = schema_name.to_string();
+        let table_name = table_name.to_string();
+        let values = values.to_vec();
+        self.in_blocking(move |db| {
+            db.insert_table_row_sync(&schema_name, &table_name, &values)
+        })
+        .await
+    }
+
+    async fn delete_table_row(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+        primary_key: &[(String, String)],
+        row_id_fallback: Option<DbRowId>,
+    ) -> Result<u64, Box<dyn Error>> {
+        let schema_name = schema_name.to_string();
+        let table_name = table_name.to_string();
+        let primary_key = primary_key.to_vec();
+        self.in_blocking(move |db| {
+            db.delete_table_row_sync(
+                &schema_name,
+                &table_name,
+                &primary_key,
+                row_id_fallback,
+            )
+        })
+        .await
+    }
+
+    async fn get_table_row_count(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+    ) -> Result<u64, Box<dyn Error>> {
+        let schema_name = schema_name.to_string();
+        let table_name = table_name.to_string();
+        self.in_blocking(move |db| db.get_table_row_count_sync(&schema_name, &table_name))
+            .await
+    }
+
+    async fn get_table_index_names(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+    ) -> Result<Vec<String>, Box<dyn Error>> {
+        let schema_name = schema_name.to_string();
+        let table_name = table_name.to_string();
+        self.in_blocking(move |db| {
+            db.get_table_index_names_sync(&schema_name, &table_name)
+        })
+        .await
+    }
+
+    async fn get_table_size(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+    ) -> Result<Option<String>, Box<dyn Error>> {
+        let schema_name = schema_name.to_string();
+        let table_name = table_name.to_string();
+        self.in_blocking(move |db| db.get_table_size_sync(&schema_name, &table_name))
+            .await
+    }
+
+    async fn get_databases(&self) -> Result<Vec<DatabaseInfo>, Box<dyn Error>> {
+        self.in_blocking(|db| db.get_databases_sync()).await
+    }
+}
+
+impl Sqlite {
+    fn execute_sql_sync(
+        &self,
+        sql: &str,
+    ) -> Result<Vec<TableRow>, Box<dyn Error>> {
         let client = self.open_conn()?;
 
         let mut stmt = client.prepare(sql)?;
@@ -181,14 +376,14 @@ impl Database for Sqlite {
         Ok(result)
     }
 
-    async fn get_schemas(&self) -> Result<Vec<Schema>, Box<dyn Error>> {
+    fn get_schemas_sync(&self) -> Result<Vec<Schema>, Box<dyn Error>> {
         Ok(vec![Schema {
             name: "sqlite_schema".to_string(),
             owner: String::new(),
         }])
     }
 
-    async fn get_tables(
+    fn get_tables_sync(
         &self,
         schema_name: &str,
     ) -> Result<Vec<Table>, Box<dyn Error>> {
@@ -225,7 +420,7 @@ impl Database for Sqlite {
         Ok(tables)
     }
 
-    async fn get_columns(
+    fn get_columns_sync(
         &self,
         _schema_name: &str,
         table_name: &str,
@@ -253,7 +448,7 @@ impl Database for Sqlite {
         Ok(columns)
     }
 
-    async fn get_table_data_page(
+    fn get_table_data_page_sync(
         &self,
         schema_name: &str,
         table_name: &str,
@@ -261,8 +456,7 @@ impl Database for Sqlite {
         limit: u32,
     ) -> Result<TableDataPage, Box<dyn Error>> {
         let columns: Vec<String> = self
-            .get_columns(schema_name, table_name)
-            .await?
+            .get_columns_sync(schema_name, table_name)?
             .into_iter()
             .map(|col| col.name)
             .collect();
@@ -317,7 +511,7 @@ impl Database for Sqlite {
         })
     }
 
-    async fn get_primary_key_columns(
+    fn get_primary_key_columns_sync(
         &self,
         _schema_name: &str,
         table_name: &str,
@@ -337,7 +531,7 @@ impl Database for Sqlite {
         Ok(pk_cols.into_iter().map(|(_, n)| n).collect())
     }
 
-    async fn update_table_cell(
+    fn update_table_cell_sync(
         &self,
         _schema_name: &str,
         table_name: &str,
@@ -353,8 +547,7 @@ impl Database for Sqlite {
         let tq = sqlite_quote_ident(table_name);
         let cq = sqlite_quote_ident(set_column);
         let nullable = self
-            .get_columns("sqlite_schema", table_name)
-            .await?
+            .get_columns_sync("sqlite_schema", table_name)?
             .iter()
             .any(|c| c.name == set_column && c.is_nullable);
         let write_null = cell_clears_to_sql_null(new_value, nullable);
@@ -411,19 +604,18 @@ impl Database for Sqlite {
         )
     }
 
-    async fn insert_table_row(
+    fn insert_table_row_sync(
         &self,
         _schema_name: &str,
         table_name: &str,
         values: &[String],
     ) -> Result<u64, Box<dyn Error>> {
-        let columns = self.get_columns("sqlite_schema", table_name).await?;
+        let columns = self.get_columns_sync("sqlite_schema", table_name)?;
         if values.len() != columns.len() {
             return Err("INSERT column count does not match table.".into());
         }
         let pk = self
-            .get_primary_key_columns("sqlite_schema", table_name)
-            .await
+            .get_primary_key_columns_sync("sqlite_schema", table_name)
             .unwrap_or_default();
         let conn = self.open_conn()?;
         let decls = sqlite_table_decltypes(&conn, table_name)?;
@@ -473,7 +665,7 @@ impl Database for Sqlite {
         Ok(n)
     }
 
-    async fn delete_table_row(
+    fn delete_table_row_sync(
         &self,
         _schema_name: &str,
         table_name: &str,
@@ -514,7 +706,7 @@ impl Database for Sqlite {
         Err("Cannot delete row: no primary key and no rowid".into())
     }
 
-    async fn get_table_row_count(
+    fn get_table_row_count_sync(
         &self,
         _schema_name: &str,
         table_name: &str,
@@ -526,7 +718,7 @@ impl Database for Sqlite {
         Ok(count.cast_unsigned())
     }
 
-    async fn get_table_index_names(
+    fn get_table_index_names_sync(
         &self,
         _schema_name: &str,
         table_name: &str,
@@ -540,7 +732,7 @@ impl Database for Sqlite {
         Ok(names)
     }
 
-    async fn get_table_size(
+    fn get_table_size_sync(
         &self,
         _schema_name: &str,
         _table_name: &str,
@@ -549,9 +741,7 @@ impl Database for Sqlite {
         Ok(None)
     }
 
-    async fn get_databases(&self) -> Result<Vec<DatabaseInfo>, Box<dyn Error>> {
-        // SQLite doesn't have multiple databases per connection
-        // Return a single database with the path as the name
+    fn get_databases_sync(&self) -> Result<Vec<DatabaseInfo>, Box<dyn Error>> {
         Ok(vec![DatabaseInfo {
             name: self.path.clone(),
         }])

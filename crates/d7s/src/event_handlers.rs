@@ -611,7 +611,7 @@ impl App<'_> {
             ModalAction::Save => {
                 if let Some(apply) = self.modal_manager.take_cell_value_apply()
                 {
-                    if self.apply_cell_value_edit(apply).await? {
+                    if self.spawn_cell_value_edit(apply) {
                         self.cell_edit = None;
                     }
                     self.modal_manager.cleanup_closed_modals();
@@ -643,7 +643,7 @@ impl App<'_> {
                         .is_some()
                     && matches!(key.code, KeyCode::Enter)
                 {
-                    self.execute_pending_row_deletes().await?;
+                    self.spawn_pending_row_deletes()?;
                     self.modal_manager.cleanup_closed_modals();
                     return Ok(());
                 }

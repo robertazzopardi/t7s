@@ -193,9 +193,23 @@ impl App<'_> {
     pub(crate) fn drain_bg_events(&mut self) {
         while let Ok(event) = self.bg_rx.try_recv() {
             match event {
-                BgEvent::ActionDone { key, message } => {
+                BgEvent::ActionDone {
+                    key,
+                    message,
+                    reload_table,
+                } => {
                     self.in_flight.end(&key);
                     self.set_status(message);
+                    if let Some(r) = reload_table {
+                        let on_table = matches!(
+                            &self.database_explorer.state,
+                            DatabaseExplorerState::TableData(s, t)
+                                if *s == r.schema && *t == r.table
+                        );
+                        if on_table {
+                            self.reload_current_table_data(r.success_status);
+                        }
+                    }
                 }
                 BgEvent::ActionFailed { key, message } => {
                     self.in_flight.end(&key);
@@ -1680,7 +1694,9 @@ mod tests {
         type_str(&mut app, "hi").await;
         assert_eq!(app.cell_edit.as_ref().unwrap().buffer, "hi");
         app.on_key_event(enter()).await.unwrap();
+        drain_bg_work(&mut app).await;
         app.on_key_event(key('s')).await.unwrap();
+        drain_bg_work(&mut app).await;
         assert!(!app.has_table_draft_rows());
         let db_path = app.database_explorer.connection.url.clone();
         let name: String = rusqlite::Connection::open(&db_path)
@@ -1900,6 +1916,7 @@ mod tests {
         }
         type_str(&mut app, "nix").await;
         app.on_key_event(enter()).await.unwrap();
+        drain_bg_work(&mut app).await;
         assert!(!app.is_cell_editing());
         assert!(!app.has_table_draft_rows());
         let db_path = app.database_explorer.connection.url.clone();
@@ -2039,6 +2056,7 @@ mod tests {
         assert!(app.is_cell_editing());
         assert_eq!(app.cell_edit.as_ref().unwrap().buffer, "");
         app.on_key_event(enter()).await.unwrap();
+        drain_bg_work(&mut app).await;
         assert!(!app.is_cell_editing());
         assert_eq!(db_name(&app, 1), None, "cleared cell is SQL NULL");
     }

@@ -16,6 +16,7 @@ impl InFlight {
         self.keys.remove(key);
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn contains(&self, key: &str) -> bool {
         self.keys.contains(key)
     }

@@ -11,10 +11,10 @@ use k9tui::widgets::{
 use crate::{
     app::{ACTIVITY_QUERY, App},
     app_state::DatabaseExplorerState,
-    bg::{BgEvent, SqlExecuteOk, TablePageLoadOk},
+    bg::{BgEvent, SqlExecuteOk, TableMutationReload, TablePageLoadOk},
     db::{
-        Column, Database, DatabaseInfo, DbRowId, Schema, Table, TableDataPage,
-        connection::ConnectionType, query_log::QueryOrigin,
+        Column, Database, DatabaseInfo, DbRowId, RowDeleteSpec, Schema, Table,
+        TableDataPage, connection::ConnectionType, query_log::QueryOrigin,
     },
     in_flight::{
         database_key, schema_key, schemas_key, sql_key, table_key,
@@ -68,6 +68,7 @@ impl App<'_> {
         self.set_status(format!("Failed to load {resource}: {err}"));
     }
 
+    #[allow(dead_code)]
     pub(crate) fn status_action_failed<E: fmt::Display>(
         &mut self,
         action: &str,
@@ -124,6 +125,181 @@ impl App<'_> {
         };
         self.set_status(status);
         Some((database, self.bg_tx.clone()))
+    }
+
+    fn table_mutation_reload(
+        schema: &str,
+        table: &str,
+        success_status: Option<String>,
+    ) -> TableMutationReload {
+        TableMutationReload {
+            schema: schema.to_string(),
+            table: table.to_string(),
+            success_status,
+        }
+    }
+
+    /// Persist a cell edit from the modal or inline editor (off the UI thread).
+    /// Returns `true` when the edit was queued or applied in-memory (clear inline session).
+    pub fn spawn_cell_value_edit(&mut self, apply: CellValueApply) -> bool {
+        if self.row_is_draft_at(apply.row_index) {
+            self.apply_cell_value_edit_in_memory(&apply);
+            self.set_status("Draft cell updated — commit with s when ready.");
+            return true;
+        }
+        let key = table_key(&apply.schema_name, &apply.table_name);
+        let status = "Saving cell…";
+        let Some((database, tx)) = self.spawn_explorer_load(
+            key.clone(),
+            "Already busy with this table",
+            status,
+        ) else {
+            return false;
+        };
+        let schema = apply.schema_name.clone();
+        let table = apply.table_name.clone();
+        let set_column = apply.set_column.clone();
+        let new_value = apply.new_value.clone();
+        let primary_key = apply.primary_key.clone();
+        let db_row_id = apply.db_row_id.clone();
+        let reload = Self::table_mutation_reload(
+            &schema,
+            &table,
+            Some(format!("UPDATED {}", set_column)),
+        );
+        tokio::spawn(async move {
+            let event = match database
+                .update_table_cell(
+                    &schema,
+                    &table,
+                    &set_column,
+                    &new_value,
+                    &primary_key,
+                    db_row_id,
+                )
+                .await
+            {
+                Ok(0) => BgEvent::ActionFailed {
+                    key,
+                    message:
+                        "No row was updated (it may have changed in the database)."
+                            .into(),
+                },
+                Ok(_) => BgEvent::ActionDone {
+                    key,
+                    message: format!("UPDATED {}", set_column),
+                    reload_table: Some(reload),
+                },
+                Err(e) => BgEvent::ActionFailed {
+                    key,
+                    message: format!("Update failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
+        true
+    }
+
+    pub(crate) fn spawn_table_row_insert(
+        &mut self,
+        schema: &str,
+        table: &str,
+        values: Vec<String>,
+    ) {
+        let key = table_key(schema, table);
+        let status = "Saving row…";
+        let Some((database, tx)) = self.spawn_explorer_load(
+            key.clone(),
+            "Already busy with this table",
+            status,
+        ) else {
+            return;
+        };
+        let schema = schema.to_string();
+        let table = table.to_string();
+        let reload =
+            Self::table_mutation_reload(&schema, &table, Some("Row inserted.".into()));
+        tokio::spawn(async move {
+            let event = match database
+                .insert_table_row(&schema, &table, &values)
+                .await
+            {
+                Ok(0) => BgEvent::ActionFailed {
+                    key,
+                    message: "Insert affected 0 rows.".into(),
+                },
+                Ok(_) => BgEvent::ActionDone {
+                    key,
+                    message: "Row inserted.".into(),
+                    reload_table: Some(reload),
+                },
+                Err(e) => BgEvent::ActionFailed {
+                    key,
+                    message: format!("Insert failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
+    }
+
+    pub(crate) fn spawn_table_row_deletes(
+        &mut self,
+        schema: &str,
+        table: &str,
+        specs: Vec<RowDeleteSpec>,
+    ) {
+        let key = table_key(schema, table);
+        let status = "Deleting…";
+        let Some((database, tx)) = self.spawn_explorer_load(
+            key.clone(),
+            "Already busy with this table",
+            status,
+        ) else {
+            return;
+        };
+        let schema = schema.to_string();
+        let table = table.to_string();
+        tokio::spawn(async move {
+            let mut any_ok = false;
+            let mut errs = 0u32;
+            for spec in specs {
+                match database
+                    .delete_table_row(
+                        &schema,
+                        &table,
+                        &spec.primary_key,
+                        spec.row_id_fallback,
+                    )
+                    .await
+                {
+                    Ok(n) if n > 0 => any_ok = true,
+                    _ => errs += 1,
+                }
+            }
+            let event = if any_ok {
+                let message = if errs > 0 {
+                    format!("Some deletes failed ({errs}). Refetching.")
+                } else {
+                    "Row(s) deleted.".into()
+                };
+                let reload_status = message.clone();
+                BgEvent::ActionDone {
+                    key,
+                    message,
+                    reload_table: Some(Self::table_mutation_reload(
+                        &schema,
+                        &table,
+                        Some(reload_status),
+                    )),
+                }
+            } else {
+                BgEvent::ActionFailed {
+                    key,
+                    message: "Delete failed.".into(),
+                }
+            };
+            let _ = tx.send(event);
+        });
     }
 
     /// Load databases from the connection
@@ -655,51 +831,7 @@ impl App<'_> {
         Some((column_name, cell_value, selected_row, selected_col, snap))
     }
 
-    /// Persist a cell edit from the modal or inline editor.
-    /// Returns `true` when the edit was applied (clear inline session).
-    pub async fn apply_cell_value_edit(
-        &mut self,
-        apply: CellValueApply,
-    ) -> Result<bool> {
-        if self.row_is_draft_at(apply.row_index) {
-            self.apply_cell_value_edit_in_memory(&apply);
-            self.set_status("Draft cell updated — commit with s when ready.");
-            return Ok(true);
-        }
-        let Some(database) = self.database_explorer.database.as_ref() else {
-            self.set_status(STATUS_DB_NOT_CONNECTED);
-            return Ok(false);
-        };
-        match database
-            .update_table_cell(
-                &apply.schema_name,
-                &apply.table_name,
-                &apply.set_column,
-                &apply.new_value,
-                &apply.primary_key,
-                apply.db_row_id.clone(),
-            )
-            .await
-        {
-            Ok(0) => {
-                self.set_status(
-                    "No row was updated (it may have changed in the database).",
-                );
-                Ok(false)
-            }
-            Ok(_) => {
-                self.apply_cell_value_edit_in_memory(&apply);
-                self.set_status(format!("UPDATED {}", apply.set_column));
-                Ok(true)
-            }
-            Err(e) => {
-                self.status_action_failed("Update", e);
-                Ok(false)
-            }
-        }
-    }
-
-    pub async fn finish_cell_edit(&mut self) -> Result<()> {
+    pub fn finish_cell_edit(&mut self) -> Result<()> {
         let DatabaseExplorerState::TableData(schema, table) =
             self.database_explorer.state.clone()
         else {
@@ -726,7 +858,7 @@ impl App<'_> {
             return Ok(());
         };
         self.sync_cell_edit_buffer_to_grid();
-        if self.apply_cell_value_edit(apply).await? {
+        if self.spawn_cell_value_edit(apply) {
             self.cell_edit = None;
         }
         Ok(())

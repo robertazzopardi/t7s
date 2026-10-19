@@ -39,7 +39,7 @@ use crate::{
         client::{DaemonHealth, DockerClient},
     },
     error::{Result, err},
-    in_flight::InFlight,
+    in_flight::{DAEMON_KEY, InFlight},
     log_dedup::DedupMode,
     ui::widgets::hotkeys::LIST_HOTKEYS,
 };
@@ -208,7 +208,7 @@ impl App {
 
     /// Attempt to connect to the daemon and, on success, start polling.
     pub fn connect(&mut self) {
-        if !self.in_flight.try_begin(crate::in_flight::DAEMON_KEY) {
+        if !self.in_flight.try_begin(DAEMON_KEY) {
             self.set_status("Already connecting…");
             return;
         }
@@ -410,18 +410,18 @@ impl App {
                     self.state = AppState::Describe { name, text };
                 }
                 BackgroundEvent::Connected(client) => {
-                    self.in_flight.end(crate::in_flight::DAEMON_KEY);
+                    self.in_flight.end(DAEMON_KEY);
                     self.docker = Some(client);
                     self.state = AppState::List;
                     self.start_polling();
                     self.set_status("Connected to Docker");
                 }
                 BackgroundEvent::ConnectFailed(msg) => {
-                    self.in_flight.end(crate::in_flight::DAEMON_KEY);
+                    self.in_flight.end(DAEMON_KEY);
                     self.state = AppState::ConnectError(msg);
                 }
                 BackgroundEvent::DaemonHealthOk(health) => {
-                    self.in_flight.end(crate::in_flight::DAEMON_KEY);
+                    self.in_flight.end(DAEMON_KEY);
                     self.state = AppState::Info(health);
                 }
             }
@@ -577,7 +577,7 @@ impl App {
 
     /// Fetch a cheap daemon-level summary and switch to the info panel.
     pub(crate) fn open_daemon_health(&mut self) {
-        use crate::in_flight::DAEMON_KEY;
+        use DAEMON_KEY;
 
         let key = DAEMON_KEY;
         if !self.in_flight.try_begin(key) {
