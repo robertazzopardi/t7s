@@ -411,9 +411,13 @@ fn plan_fit(
     area_w: usize,
 ) -> ColumnPlan {
     let n = content.len();
-    let mut lens = capped_lens_for_mode(content, area_w, ColumnWidthMode::Fit);
+    let mut lens = content.to_vec();
     if let Some(f) = fill.and_then(|f| lens.get_mut(f)) {
         *f = (*f).min(FILL_MIN_LEN);
+    }
+    // Soft-cap only when the uncapped content (+ gaps) overflows; otherwise show it all.
+    if lens.iter().sum::<usize>() + n.saturating_sub(1) > area_w {
+        lens = capped_lens_for_mode(&lens, area_w, ColumnWidthMode::Fit);
     }
     // Pack with gap-aware units (cell + 1 spacing), so budget is `area_w + 1`.
     let units: Vec<usize> = lens.iter().map(|&l| l + 1).collect();
@@ -451,6 +455,10 @@ fn plan_fit(
         }
         start = horizontal_window_start(&units, budget, s, hint);
     }
+    debug_assert!(
+        selected.is_none_or(|s| full.contains(&s)),
+        "selected column must be in the packed window"
+    );
 
     let mut cols = Vec::new();
     let mut widths = Vec::new();
@@ -917,10 +925,36 @@ mod tests {
 
     #[test]
     fn fit_peek_shows_ellipsis_when_columns_overflow() {
-        let rows = vec![WideThird("a", "b", "x".repeat(200))];
-        let lines = render_with_mode(rows, 30, 3, ColumnWidthMode::Fit);
-        let joined = lines.join("");
-        assert!(joined.contains('…'), "{lines:?}");
+        // 6 cols of width 5 overflow 24 cols → the next column peeks as a 2-col strip.
+        let lines = render_with_mode(vec![Many("abcd".into())], 24, 3, ColumnWidthMode::Fit);
+        let row = lines.get(1).unwrap().trim_end();
+        assert!(row.ends_with('…') && !row.contains("abcd3"), "{row:?}");
+    }
+
+    #[test]
+    fn fit_does_not_softcap_when_content_fits() {
+        // [50, 5] + gap = 56 <= 80: nothing overflows, so nothing is ellipsized.
+        #[derive(Debug, Clone)]
+        struct Two(String);
+        impl TableData for Two {
+            fn title() -> &'static str {
+                "two"
+            }
+            fn ref_array(&self) -> Vec<String> {
+                vec![self.0.clone(), "short".into()]
+            }
+            fn num_columns(&self) -> usize {
+                2
+            }
+            fn cols() -> Vec<&'static str> {
+                vec!["A", "B"]
+            }
+        }
+        let long = "L".repeat(50);
+        let lines = render_with_mode(vec![Two(long.clone())], 80, 3, ColumnWidthMode::Fit);
+        let row = lines.get(1).unwrap();
+        assert!(row.contains(&long), "{row:?}");
+        assert!(!row.contains('…'), "{row:?}");
     }
 
     #[test]
@@ -999,11 +1033,7 @@ mod tests {
             }
         }
         let lines = render_with_mode(vec![H], 40, 3, ColumnWidthMode::Fit);
-        assert!(
-            lines.first().unwrap().contains("LongHeader")
-                || lines.first().unwrap().contains("LongH"),
-            "{lines:?}"
-        );
+        assert!(lines.first().unwrap().contains("LongHeader"), "{lines:?}");
     }
 
     #[test]

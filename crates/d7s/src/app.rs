@@ -2176,8 +2176,7 @@ mod tests {
             let _ = render_sized(&mut app, w, h);
         }
         let text = render_sized(&mut app, 80, 24);
-        // Table cells ellipsize under Fit, so match the ghost suffix, not the full name.
-        assert!(text.contains(&long[3..]), "ghost fits at 80 cols");
+        assert!(text.contains(long), "long name fits at 80 cols (not Fit-soft-capped)");
         // Ghost is clipped, not wrapped, in a 20x5 terminal.
         let text = render_sized(&mut app, 20, 5);
         assert!(!text.contains(&long[3..]));
