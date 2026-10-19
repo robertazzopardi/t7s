@@ -576,14 +576,30 @@ impl App {
     }
 
     /// Fetch a cheap daemon-level summary and switch to the info panel.
-    pub(crate) async fn open_daemon_health(&mut self) {
+    pub(crate) fn open_daemon_health(&mut self) {
+        use crate::in_flight::DAEMON_KEY;
+
+        let key = DAEMON_KEY;
+        if !self.in_flight.try_begin(key) {
+            self.set_status("Daemon busy…");
+            return;
+        }
         let Some(docker) = self.docker.clone() else {
+            self.in_flight.end(key);
             return;
         };
-        match docker.daemon_health().await {
-            Ok(health) => self.state = AppState::Info(health),
-            Err(e) => self.set_status(format!("Daemon info failed: {e}")),
-        }
+        self.set_status("Loading daemon info…");
+        let tx = self.bg_tx.clone();
+        tokio::spawn(async move {
+            let event = match docker.daemon_health().await {
+                Ok(h) => BackgroundEvent::DaemonHealthOk(h),
+                Err(e) => BackgroundEvent::ActionFailed {
+                    key: key.to_string(),
+                    message: format!("Daemon info failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
     }
 
     /// Enter the process view and poll `docker top` while it is open.
@@ -716,20 +732,6 @@ impl Default for App {
 
 /// Merge a freshly polled row list into a table, preserving the current
 /// selection where possible instead of resetting it to row 0.
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{app_state::AppState, in_flight::DAEMON_KEY};
-
-    #[tokio::test]
-    async fn connect_is_non_blocking_and_locks_daemon_key() {
-        let mut app = App::new();
-        app.connect();
-        assert!(app.in_flight.contains(DAEMON_KEY));
-        assert_eq!(app.state, AppState::Connecting);
-    }
-}
-
 fn apply_table_update<T: TableData + Clone>(
     table: &mut TableDataState<T>,
     rows: Vec<T>,
@@ -749,5 +751,19 @@ fn apply_table_update<T: TableData + Clone>(
         }
         None if len > 0 => table.view.state.select(Some(0)),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{app_state::AppState, in_flight::DAEMON_KEY};
+
+    #[tokio::test]
+    async fn connect_is_non_blocking_and_locks_daemon_key() {
+        let mut app = App::new();
+        app.connect();
+        assert!(app.in_flight.contains(DAEMON_KEY));
+        assert_eq!(app.state, AppState::Connecting);
     }
 }

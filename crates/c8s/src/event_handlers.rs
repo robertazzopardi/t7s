@@ -382,7 +382,7 @@ impl App {
                 }
             }
             (_, KeyCode::Char('i')) => {
-                self.open_daemon_health().await;
+                self.open_daemon_health();
             }
             (_, KeyCode::Char('D') | KeyCode::Delete) => {
                 self.prompt_remove_selected();
@@ -712,6 +712,7 @@ mod tests {
             app.on_key_event(key(KeyCode::Char('i')), &mut t)
                 .await
                 .unwrap();
+            flush_background(&mut app).await;
             assert_eq!(app.state, AppState::List, "{kind:?}");
             let out = screen(&mut app, &mut t);
             assert!(out.contains("Daemon info failed"), "{kind:?}: {out}");
