@@ -2141,10 +2141,11 @@ mod tests {
             let _ = render_sized(&mut app, w, h);
         }
         let text = render_sized(&mut app, 80, 24);
-        assert!(text.contains(long), "ghost fits at 80 cols");
+        // Table cells ellipsize under Fit, so match the ghost suffix, not the full name.
+        assert!(text.contains(&long[3..]), "ghost fits at 80 cols");
         // Ghost is clipped, not wrapped, in a 20x5 terminal.
         let text = render_sized(&mut app, 20, 5);
-        assert!(!text.contains(long));
+        assert!(!text.contains(&long[3..]));
         // Typed text wider than the bar: ghost vanishes, no panic.
         type_str(&mut app, &"x".repeat(300)).await;
         for (w, h) in [(20, 5), (80, 24), (5, 3)] {
