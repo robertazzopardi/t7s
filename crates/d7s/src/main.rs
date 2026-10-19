@@ -6,7 +6,6 @@ use std::{
     process::exit,
 };
 
-use color_eyre::eyre::eyre;
 mod app;
 mod app_state;
 mod auth;
@@ -17,6 +16,7 @@ mod connection_manager;
 mod database_explorer;
 mod database_explorer_state;
 mod db;
+mod error;
 mod event_handlers;
 mod filtered_data;
 mod filtering;
@@ -52,7 +52,7 @@ Options:
 }
 
 /// `None` = run TUI; `Some(name)` = connect on launch; exits process on --help/--version.
-fn parse_launch_args() -> color_eyre::Result<Option<String>> {
+fn parse_launch_args() -> error::Result<Option<String>> {
     let mut args = env::args().skip(1);
     let mut connection: Option<String> = None;
     while let Some(arg) = args.next() {
@@ -66,9 +66,9 @@ fn parse_launch_args() -> color_eyre::Result<Option<String>> {
                 exit(0);
             }
             "-c" | "--connection" => {
-                let name = args
-                    .next()
-                    .ok_or_else(|| eyre!("--connection requires a name"))?;
+                let name = args.next().ok_or_else(|| {
+                    error::err("--connection requires a name")
+                })?;
                 connection = Some(name);
             }
             other => {
@@ -82,8 +82,7 @@ fn parse_launch_args() -> color_eyre::Result<Option<String>> {
 }
 
 #[tokio::main]
-async fn main() -> color_eyre::Result<()> {
-    color_eyre::install()?;
+async fn main() -> error::Result<()> {
     let launch_connection = parse_launch_args()?;
     let terminal = ratatui::init();
     execute!(stdout(), EnableBracketedPaste)?;

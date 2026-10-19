@@ -1,6 +1,5 @@
 use core::time::Duration;
 
-use color_eyre::Result;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
@@ -18,6 +17,7 @@ use crate::{
     app::App,
     app_state::{AppState, DatabaseExplorerState},
     db::connection::ConnectionType,
+    error::Result,
     services::{ConnectionService, PasswordService, PreferencesService},
     sql::safety::split_statements,
     ui::widgets::connection_modal::{ModalAction, TestResult},

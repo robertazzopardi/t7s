@@ -1,7 +1,6 @@
 //! `:` command bar. Reuses the `/` search bar slot (`search_filter`), with
 //! `command_mode` switching its meaning from row filter to command line.
 
-use color_eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use k9tui::widgets::table::TableDataState;
 use ratatui::style::{Color, Style};
@@ -12,6 +11,7 @@ use crate::{
     app_state::{AppState, DatabaseExplorerState},
     command::{Command, Verb, resolve, suggest},
     db::connection::ConnectionType,
+    error::Result,
     services::PreferencesService,
     ui::widgets::help_content::help_rows,
 };

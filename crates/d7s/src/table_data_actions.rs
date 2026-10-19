@@ -2,7 +2,6 @@
 
 use alloc::collections::BTreeSet;
 
-use color_eyre::{Result, eyre::eyre};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use k9tui::widgets::navigation::TableNavigationHandler;
 
@@ -10,9 +9,9 @@ use crate::{
     app::App,
     app_state::{AppState, DatabaseExplorerState},
     cell_edit::{
-        CellEditSession, all_editable_columns, editable_columns_from_meta,
-        is_table_data_browse_binding, next_editable_column,
-        prev_editable_column,
+        CellEditSession, EditableCol, all_editable_columns,
+        editable_columns_from_meta, is_table_data_browse_binding,
+        next_editable_column, prev_editable_column,
     },
     database_explorer::{column_index_for_name, pk_value_pairs},
     db::{
@@ -20,6 +19,7 @@ use crate::{
         draft_cell_from_column_default, should_omit_for_insert_default,
         sole_pk, sqlite_rowid_pk_omit,
     },
+    error::{Result, err},
     ui::widgets::raw_table::{RawTableRow, RawTableStateExt},
 };
 
@@ -98,9 +98,7 @@ impl App<'_> {
         self.database_explorer.connection.r#type == ConnectionType::Sqlite
     }
 
-    fn editable_columns_for_current_table(
-        &self,
-    ) -> Vec<crate::cell_edit::EditableCol> {
+    fn editable_columns_for_current_table(&self) -> Vec<EditableCol> {
         let num_cols = self
             .database_explorer
             .table_data
@@ -134,7 +132,7 @@ impl App<'_> {
         let columns = db
             .get_columns(schema, table)
             .await
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+            .map_err(|e| err(e.to_string()))?;
         let pk = db
             .get_primary_key_columns(schema, table)
             .await
@@ -374,7 +372,7 @@ impl App<'_> {
             .model
             .dynamic_column_names
             .clone()
-            .ok_or_else(|| eyre!("no columns"))?;
+            .ok_or_else(|| err("no columns"))?;
         let n = names.len();
         self.discard_table_draft();
         let row = RawTableRow {
@@ -409,7 +407,7 @@ impl App<'_> {
             .database_explorer
             .table_columns
             .clone()
-            .ok_or_else(|| color_eyre::eyre::eyre!("no columns"))?;
+            .ok_or_else(|| err("no columns"))?;
         let names: Vec<String> =
             columns.iter().map(|c| c.name.clone()).collect();
         let engine_sqlite = matches!(
@@ -476,14 +474,14 @@ impl App<'_> {
             .view
             .state
             .selected()
-            .ok_or_else(|| eyre!("no selection"))?;
+            .ok_or_else(|| err("no selection"))?;
         let base = fd
             .table
             .model
             .items
             .get(sel)
             .cloned()
-            .ok_or_else(|| eyre!("no row"))?;
+            .ok_or_else(|| err("no row"))?;
         if base.is_draft {
             self.set_status("Pick a saved row to duplicate, not a draft.");
             return Ok(false);
@@ -561,7 +559,7 @@ impl App<'_> {
             .items
             .get(sel)
             .map(|r| r.values.clone())
-            .ok_or_else(|| eyre!("no draft row"))?;
+            .ok_or_else(|| err("no draft row"))?;
         let Some(db) = self.database_explorer.database.as_ref() else {
             return Ok(());
         };

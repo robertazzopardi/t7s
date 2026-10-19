@@ -2,7 +2,6 @@ use core::time::Duration;
 use std::{io::stdout, process::Command};
 
 use ansi_to_tui::IntoText;
-use color_eyre::{Result, eyre::eyre};
 use crossterm::{
     ExecutableCommand,
     event::{
@@ -39,6 +38,7 @@ use crate::{
         ContainerRow, ImageRow, NetworkRow, ProcessRow, VolumeRow,
         client::DockerClient,
     },
+    error::{Result, err},
     log_dedup::DedupMode,
     ui::widgets::hotkeys::LIST_HOTKEYS,
 };
@@ -422,7 +422,7 @@ impl App {
         stdout().execute(EnterAlternateScreen)?;
         enable_raw_mode()?;
         execute!(stdout(), EnableBracketedPaste)?;
-        terminal.clear().map_err(|e| eyre!("{e}"))?;
+        terminal.clear().map_err(|e| err(e.to_string()))?;
 
         match status {
             Ok(s) if s.success() => self.set_status("Exec session ended"),

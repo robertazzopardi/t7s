@@ -13,7 +13,7 @@ pub mod tls;
 
 use std::path::PathBuf;
 
-use color_eyre::{Result, eyre};
+use crate::error::{Result, err};
 
 /// Stable-enough row locator for `UPDATE` when the table has no primary key.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -430,9 +430,7 @@ impl TableData for TableRow {
 
 pub fn get_app_data_dir() -> Result<PathBuf> {
     let Some(path) = BaseDirs::new() else {
-        return Err(eyre::eyre!(
-            "Unable to find data directory for ratatui-template"
-        ));
+        return Err(err("Unable to find data directory for d7s"));
     };
 
     let mut path = PathBuf::from(path.data_dir());

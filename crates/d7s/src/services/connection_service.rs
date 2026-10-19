@@ -1,13 +1,16 @@
 use core::time::Duration;
 
-use color_eyre::{Result, eyre::eyre};
 use tokio::{fs::metadata, net::TcpStream, time::timeout};
 
-use crate::db::{
-    connection::{Connection, ConnectionType, parse_server_url},
-    sqlite::{
-        delete_connection, get_connections, save_connection, update_connection,
+use crate::{
+    db::{
+        connection::{Connection, ConnectionType, parse_server_url},
+        sqlite::{
+            delete_connection, get_connections, save_connection,
+            update_connection,
+        },
     },
+    error::Result,
 };
 
 /// Service for managing database connections (CRUD operations)
@@ -24,21 +27,18 @@ impl ConnectionService {
 
     /// Create a new connection
     pub fn create(connection: &Connection) -> Result<()> {
-        save_connection(connection).map_err(|e| eyre!("{}", e))?;
-        Ok(())
+        save_connection(connection)
     }
 
     /// Update an existing connection (handles renames)
     pub fn update(old_name: &str, connection: &Connection) -> Result<()> {
         // update_connection handles renaming automatically via WHERE clause
-        update_connection(old_name, connection).map_err(|e| eyre!("{}", e))?;
-        Ok(())
+        update_connection(old_name, connection)
     }
 
     /// Delete a connection by name
     pub fn delete(name: &str) -> Result<()> {
-        delete_connection(name).map_err(|e| eyre!("{}", e))?;
-        Ok(())
+        delete_connection(name)
     }
 
     /// Validate a connection (check required fields are present)

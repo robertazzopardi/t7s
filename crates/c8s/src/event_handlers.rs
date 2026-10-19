@@ -1,6 +1,5 @@
 use core::mem::take;
 
-use color_eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use k9tui::{
     theme,
@@ -15,6 +14,7 @@ use crate::{
     app::App,
     app_state::{AppState, ResourceKind},
     command::{Command, resolve, suggest},
+    error::Result,
     ui::widgets::hotkeys::{LIST_HOTKEYS, RESOURCE_HOTKEYS},
 };
 

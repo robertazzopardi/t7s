@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
-use color_eyre::Result;
-
 use crate::{
     auth::Keyring,
     db::connection::{Connection, ConnectionType},
+    error::Result,
 };
 
 /// Service for managing passwords across keyring and session storage
