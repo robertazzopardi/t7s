@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 
-use color_eyre::Result;
 use tokio::task::JoinSet;
 
 use crate::{
@@ -10,6 +9,7 @@ use crate::{
     db::connection::{
         Connection, ConnectionStatus, ConnectionType, parse_server_url,
     },
+    error::Result,
     services::{ConnectionService, PreferencesService},
     ui::widgets::hotkeys::{CONNECTION_HOTKEYS, database_hotkeys},
 };

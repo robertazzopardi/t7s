@@ -5,6 +5,7 @@ mod app;
 mod app_state;
 mod command;
 mod docker;
+mod error;
 mod event_handlers;
 mod log_dedup;
 mod rendering;
@@ -19,8 +20,7 @@ use crossterm::{
 };
 
 #[tokio::main]
-async fn main() -> color_eyre::Result<()> {
-    color_eyre::install()?;
+async fn main() -> error::Result<()> {
     let terminal = ratatui::init();
     execute!(stdout(), EnableBracketedPaste)?;
     let prev_hook = take_hook();

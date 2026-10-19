@@ -16,7 +16,6 @@ use bollard::{
         StopContainerOptions, TopOptionsBuilder,
     },
 };
-use color_eyre::{Result, eyre::eyre};
 use futures_util::{StreamExt, future::join_all};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -28,6 +27,7 @@ use tokio::{
 use super::{
     ContainerRow, ImageRow, NetworkRow, ProcessRow, SCAN_SCRIPT, VolumeRow,
 };
+use crate::error::{Result, err};
 
 /// Snapshot of daemon-level health/info — c8s's single-daemon analog of a
 /// fleet-wide health dashboard (there's only ever one daemon to summarize).
@@ -109,7 +109,7 @@ impl DockerClient {
         })
         .await
         .map_err(|_| {
-            eyre!("timed out after {}s", HEALTH_TIMEOUT.as_secs())
+            err(format!("timed out after {}s", HEALTH_TIMEOUT.as_secs()))
         })??;
         Ok(DaemonHealth {
             server_version: version.version.unwrap_or_default(),

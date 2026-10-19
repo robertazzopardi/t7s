@@ -1,10 +1,11 @@
 use std::env::var;
 
-use color_eyre::Result;
 use rusqlite::{Connection as SqliteConnection, params};
 use serde::{Deserialize, Serialize};
 
-use crate::{db::get_db_path, virtual_table::VIRTUAL_TABLE_PAGE_SIZE};
+use crate::{
+    db::get_db_path, error::Result, virtual_table::VIRTUAL_TABLE_PAGE_SIZE,
+};
 
 const KEY_RECENT_TABLES: &str = "recent_tables";
 const KEY_SQL_HISTORY: &str = "sql_history";

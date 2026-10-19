@@ -8,7 +8,6 @@ use std::{
     time::Instant,
 };
 
-use color_eyre::{Result, eyre::Error};
 use crossterm::{
     ExecutableCommand, clipboard,
     event::{DisableBracketedPaste, EnableBracketedPaste},
@@ -37,6 +36,7 @@ use crate::{
         query_log::{QueryLog, QueryLogEntry},
         sqlite::init_db,
     },
+    error::Result,
     filtered_data::FilteredData,
     services::{ConnectionService, PasswordService, PreferencesService},
     sql::safety::{StatementSafety, classify_statement, split_statements},
@@ -230,7 +230,7 @@ impl App<'_> {
     async fn handle_external_terminal(
         &mut self,
         terminal: &mut DefaultTerminal,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         if self.open_editor_requested {
             self.open_editor_requested = false;
             let new_sql = if var("D7S_DEMO").is_ok() {

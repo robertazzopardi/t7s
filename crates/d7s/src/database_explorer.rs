@@ -1,6 +1,5 @@
 use core::fmt;
 
-use color_eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use k9tui::widgets::{
     navigation::TableNavigationHandler, table::TableDataState,
@@ -10,9 +9,10 @@ use crate::{
     app::{ACTIVITY_QUERY, App},
     app_state::DatabaseExplorerState,
     db::{
-        Database, TableDataPage, connection::ConnectionType,
+        Database, DbRowId, TableDataPage, connection::ConnectionType,
         query_log::QueryOrigin,
     },
+    error::Result,
     filtered_data::FilteredData,
     services::PreferencesService,
     ui::widgets::{
@@ -707,10 +707,7 @@ impl App<'_> {
             .is_some_and(|r| r.is_draft)
     }
 
-    pub(crate) fn row_db_id_at(
-        &self,
-        row_index: usize,
-    ) -> Option<crate::db::DbRowId> {
+    pub(crate) fn row_db_id_at(&self, row_index: usize) -> Option<DbRowId> {
         self.database_explorer
             .table_data
             .as_ref()

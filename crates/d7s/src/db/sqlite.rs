@@ -1,18 +1,22 @@
 use core::{error::Error, fmt::Write};
 use std::collections::HashMap;
 
-use color_eyre::Result;
 use rusqlite::{Connection as SqliteConnection, params, types};
 use rusqlite_migration::{M, Migrations};
 use serde_json::{Map, Value as SerdeJsonValue};
 
-use crate::db::{
-    Column, Database, DatabaseInfo, DbRowId, Schema, Table, TableData,
-    TableDataPage, TableRow, cell_clears_to_sql_null,
-    connection::{Connection, ConnectionStatus, ConnectionType, Environment},
-    get_db_path,
-    query_log::report_sql,
-    should_omit_for_insert_default, sole_pk, sqlite_rowid_pk_omit,
+use crate::{
+    db::{
+        Column, Database, DatabaseInfo, DbRowId, Schema, Table, TableData,
+        TableDataPage, TableRow, cell_clears_to_sql_null,
+        connection::{
+            Connection, ConnectionStatus, ConnectionType, Environment,
+        },
+        get_db_path,
+        query_log::report_sql,
+        should_omit_for_insert_default, sole_pk, sqlite_rowid_pk_omit,
+    },
+    error::Result,
 };
 
 /// `prepare` that reports the SQL text (placeholders only) to the query log.
@@ -664,7 +668,7 @@ fn metadata_from_row(
 /// # Errors
 ///
 /// This function will return an error if the database cannot be opened or if the query fails.
-pub fn save_connection(connection: &Connection) -> Result<(), Box<dyn Error>> {
+pub fn save_connection(connection: &Connection) -> Result<()> {
     let db_path = get_db_path()?;
     let conn = SqliteConnection::open(db_path)?;
 
@@ -736,7 +740,7 @@ pub fn get_connections() -> Result<Vec<Connection>> {
 pub fn update_connection(
     old_name: &str,
     connection: &Connection,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     let db_path = get_db_path()?;
     let conn = SqliteConnection::open(db_path)?;
 
@@ -762,7 +766,7 @@ pub fn update_connection(
 /// # Errors
 ///
 /// This function will return an error if the database cannot be opened or if the query fails.
-pub fn delete_connection(connection_name: &str) -> Result<(), Box<dyn Error>> {
+pub fn delete_connection(connection_name: &str) -> Result<()> {
     let db_path = get_db_path()?;
     let conn = SqliteConnection::open(db_path)?;
 
