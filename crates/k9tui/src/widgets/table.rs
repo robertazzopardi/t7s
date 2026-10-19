@@ -70,6 +70,14 @@ impl ColumnWidthMode {
             Self::Content => Self::Fit,
         }
     }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Fit => "Fit",
+            Self::Content => "Content",
+        }
+    }
 }
 
 /// Width of the partial-column strips shown at the edges under Fit.
@@ -1188,6 +1196,8 @@ mod tests {
         assert_eq!(ColumnWidthMode::default(), ColumnWidthMode::Fit);
         assert_eq!(ColumnWidthMode::Fit.toggle(), ColumnWidthMode::Content);
         assert_eq!(ColumnWidthMode::Content.toggle(), ColumnWidthMode::Fit);
+        assert_eq!(ColumnWidthMode::Fit.label(), "Fit");
+        assert_eq!(ColumnWidthMode::Content.label(), "Content");
     }
 
     #[test]
