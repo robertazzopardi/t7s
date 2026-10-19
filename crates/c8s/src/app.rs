@@ -207,25 +207,27 @@ impl App {
     }
 
     /// Attempt to connect to the daemon and, on success, start polling.
-    pub async fn connect(&mut self) {
-        match DockerClient::connect() {
-            Ok(client) => match client.ping().await {
-                Ok(()) => {
-                    self.docker = Some(client);
-                    self.state = AppState::List;
-                    self.start_polling();
-                }
-                Err(e) => {
-                    self.state = AppState::ConnectError(format!(
-                        "Docker unreachable: {e}"
-                    ));
-                }
-            },
-            Err(e) => {
-                self.state =
-                    AppState::ConnectError(format!("Docker unreachable: {e}"));
-            }
+    pub fn connect(&mut self) {
+        if !self.in_flight.try_begin(crate::in_flight::DAEMON_KEY) {
+            self.set_status("Already connecting…");
+            return;
         }
+        self.state = AppState::Connecting;
+        let tx = self.bg_tx.clone();
+        tokio::spawn(async move {
+            let result = match DockerClient::connect() {
+                Ok(client) => match client.ping().await {
+                    Ok(()) => BackgroundEvent::Connected(client),
+                    Err(e) => BackgroundEvent::ConnectFailed(format!(
+                        "Docker unreachable: {e}"
+                    )),
+                },
+                Err(e) => BackgroundEvent::ConnectFailed(format!(
+                    "Docker unreachable: {e}"
+                )),
+            };
+            let _ = tx.send(result);
+        });
     }
 
     fn start_polling(&mut self) {
@@ -331,7 +333,7 @@ impl App {
     /// Run the application's main loop.
     pub async fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
-        self.connect().await;
+        self.connect();
 
         while self.running {
             terminal.draw(|frame| self.render(frame))?;
@@ -714,6 +716,20 @@ impl Default for App {
 
 /// Merge a freshly polled row list into a table, preserving the current
 /// selection where possible instead of resetting it to row 0.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{app_state::AppState, in_flight::DAEMON_KEY};
+
+    #[tokio::test]
+    async fn connect_is_non_blocking_and_locks_daemon_key() {
+        let mut app = App::new();
+        app.connect();
+        assert!(app.in_flight.contains(DAEMON_KEY));
+        assert_eq!(app.state, AppState::Connecting);
+    }
+}
+
 fn apply_table_update<T: TableData + Clone>(
     table: &mut TableDataState<T>,
     rows: Vec<T>,

@@ -118,8 +118,7 @@ impl App {
     async fn on_key_connect_error(&mut self, key: KeyEvent) -> Result<()> {
         match (key.modifiers, key.code) {
             (_, KeyCode::Char('r') | KeyCode::Enter) => {
-                self.state = AppState::Connecting;
-                self.connect().await;
+                self.connect();
             }
             (_, KeyCode::Char('q'))
             | (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
