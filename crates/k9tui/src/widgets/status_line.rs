@@ -33,6 +33,11 @@ impl StatusLine {
     pub fn clear(&mut self) {
         self.message.clear();
     }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl Widget for StatusLine {

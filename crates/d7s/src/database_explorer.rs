@@ -1,6 +1,8 @@
 use core::fmt;
 use std::sync::Arc;
 
+use tokio::sync::mpsc::UnboundedSender;
+
 use crossterm::event::{KeyCode, KeyEvent};
 use k9tui::widgets::{
     navigation::TableNavigationHandler, table::TableDataState,
@@ -9,12 +11,14 @@ use k9tui::widgets::{
 use crate::{
     app::{ACTIVITY_QUERY, App},
     app_state::DatabaseExplorerState,
-    bg::{BgEvent, SqlExecuteOk},
+    bg::{BgEvent, SqlExecuteOk, TablePageLoadOk},
     db::{
-        Database, DbRowId, TableDataPage, connection::ConnectionType,
-        query_log::QueryOrigin,
+        Column, Database, DatabaseInfo, DbRowId, Schema, Table, TableDataPage,
+        connection::ConnectionType, query_log::QueryOrigin,
     },
-    in_flight::sql_key,
+    in_flight::{
+        database_key, schema_key, schemas_key, sql_key, table_key,
+    },
     error::Result,
     filtered_data::FilteredData,
     ui::widgets::{
@@ -102,24 +106,51 @@ impl App<'_> {
         explorer.table_data_virtual = Some(meta);
     }
 
-    /// Load databases from the connection
-    pub async fn load_databases(&mut self) -> Result<()> {
-        let explorer = &mut self.database_explorer;
-
-        let Some(database) = explorer.database.as_ref() else {
-            self.set_status(STATUS_DB_NOT_CONNECTED);
-            return Ok(());
-        };
-
-        match database.get_databases().await {
-            Ok(databases) => {
-                explorer.databases = Some(FilteredData::new(databases));
-                explorer.state = DatabaseExplorerState::Databases;
-            }
-            Err(e) => self.status_load_failed("databases", e),
+    fn spawn_explorer_load(
+        &mut self,
+        key: String,
+        busy_message: &str,
+        status: &str,
+    ) -> Option<(Arc<dyn Database>, UnboundedSender<BgEvent>)>
+    {
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status(busy_message);
+            return None;
         }
+        let Some(database) = self.database_explorer.database.clone() else {
+            self.in_flight.end(&key);
+            self.set_status(STATUS_DB_NOT_CONNECTED);
+            return None;
+        };
+        self.set_status(status);
+        Some((database, self.bg_tx.clone()))
+    }
 
-        Ok(())
+    /// Load databases from the connection
+    pub fn load_databases(&mut self) {
+        let conn = self.database_explorer.connection.name.clone();
+        let key = database_key(&conn);
+        let Some((database, tx)) = self.spawn_explorer_load(
+            key.clone(),
+            "Already loading databases",
+            "Loading databases…",
+        ) else {
+            return;
+        };
+        tokio::spawn(async move {
+            match database.get_databases().await {
+                Ok(databases) => {
+                    let _ = tx.send(BgEvent::DatabasesLoaded { key, databases });
+                }
+                Err(e) => {
+                    let _ = tx.send(BgEvent::ExplorerLoadFailed {
+                        key,
+                        resource: "databases".into(),
+                        message: e.to_string(),
+                    });
+                }
+            }
+        });
     }
 
     /// Select a database and reconnect to it
@@ -135,7 +166,7 @@ impl App<'_> {
 
             if db.test().await {
                 explorer.database = Some(Arc::from(log.wrap(db)));
-                self.load_schemas().await?;
+                self.load_schemas();
             } else {
                 self.set_status(STATUS_CONNECT_FAILED);
             }
@@ -145,138 +176,201 @@ impl App<'_> {
     }
 
     /// Load schemas from the database
-    pub async fn load_schemas(&mut self) -> Result<()> {
-        let explorer = &mut self.database_explorer;
-        let Some(database) = explorer.database.as_ref() else {
-            self.set_status(STATUS_DB_NOT_CONNECTED);
-            return Ok(());
+    pub fn load_schemas(&mut self) {
+        if self.database_explorer.connection.r#type == ConnectionType::Sqlite {
+            self.load_tables("sqlite_schema");
+            return;
+        }
+
+        let conn = self.database_explorer.connection.name.clone();
+        let key = schemas_key(&conn);
+        let Some((database, tx)) = self.spawn_explorer_load(
+            key.clone(),
+            "Already loading schemas",
+            "Loading schemas…",
+        ) else {
+            return;
         };
-
-        // SQLite doesn't need the Schemas navigation step
-        // Skip directly to loading tables from the default sqlite_schema
-        if explorer.connection.r#type == ConnectionType::Sqlite {
-            return self.load_tables("sqlite_schema").await;
-        }
-
-        match database.get_schemas().await {
-            Ok(schemas) => {
-                explorer.schemas = Some(FilteredData::new(schemas));
-                explorer.state = DatabaseExplorerState::Schemas;
+        tokio::spawn(async move {
+            match database.get_schemas().await {
+                Ok(schemas) => {
+                    let _ = tx.send(BgEvent::SchemasLoaded { key, schemas });
+                }
+                Err(e) => {
+                    let _ = tx.send(BgEvent::ExplorerLoadFailed {
+                        key,
+                        resource: "schemas".into(),
+                        message: e.to_string(),
+                    });
+                }
             }
-            Err(e) => self.status_load_failed("schemas", e),
-        }
-
-        Ok(())
+        });
     }
 
     /// Load tables for a schema
-    pub async fn load_tables(&mut self, schema_name: &str) -> Result<()> {
-        let explorer = &mut self.database_explorer;
-        let Some(database) = explorer.database.as_ref() else {
-            self.set_status(STATUS_DB_NOT_CONNECTED);
-            return Ok(());
+    pub fn load_tables(&mut self, schema_name: &str) {
+        let schema = schema_name.to_string();
+        let key = schema_key(schema_name);
+        let status = format!("Loading tables in {schema_name}…");
+        let Some((database, tx)) = self.spawn_explorer_load(
+            key.clone(),
+            "Already loading tables for this schema",
+            &status,
+        ) else {
+            return;
         };
-
-        match database.get_tables(schema_name).await {
-            Ok(tables) => {
-                explorer.tables = Some(FilteredData::new(tables));
-                explorer.state =
-                    DatabaseExplorerState::Tables(schema_name.to_string());
+        tokio::spawn(async move {
+            match database.get_tables(&schema).await {
+                Ok(tables) => {
+                    let _ = tx.send(BgEvent::TablesLoaded { key, schema, tables });
+                }
+                Err(e) => {
+                    let _ = tx.send(BgEvent::ExplorerLoadFailed {
+                        key,
+                        resource: "tables".into(),
+                        message: e.to_string(),
+                    });
+                }
             }
-            Err(e) => self.status_load_failed("tables", e),
-        }
-
-        Ok(())
+        });
     }
 
     /// Load columns for a table
-    pub async fn load_columns(
-        &mut self,
-        schema_name: &str,
-        table_name: &str,
-    ) -> Result<()> {
-        let explorer = &mut self.database_explorer;
-        let Some(database) = explorer.database.as_ref() else {
-            self.set_status(STATUS_DB_NOT_CONNECTED);
-            return Ok(());
+    pub fn load_columns(&mut self, schema_name: &str, table_name: &str) {
+        let schema = schema_name.to_string();
+        let table = table_name.to_string();
+        let key = table_key(schema_name, table_name);
+        let status = format!("Loading columns for {schema_name}.{table_name}…");
+        let Some((database, tx)) = self.spawn_explorer_load(
+            key.clone(),
+            "Already loading this table",
+            &status,
+        ) else {
+            return;
         };
-
-        match database.get_columns(schema_name, table_name).await {
-            Ok(columns) => {
-                explorer.columns = Some(FilteredData::new(columns));
-                explorer.state = DatabaseExplorerState::Columns(
-                    schema_name.to_string(),
-                    table_name.to_string(),
-                );
+        tokio::spawn(async move {
+            match database.get_columns(&schema, &table).await {
+                Ok(columns) => {
+                    let _ = tx.send(BgEvent::ColumnsLoaded {
+                        key,
+                        schema,
+                        table,
+                        columns,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(BgEvent::ExplorerLoadFailed {
+                        key,
+                        resource: "columns".into(),
+                        message: e.to_string(),
+                    });
+                }
             }
-            Err(e) => self.status_load_failed("columns", e),
-        }
-
-        Ok(())
+        });
     }
 
     /// Load table data for a table (first page of a paged / virtual table).
-    pub async fn load_table_data(
+    pub fn load_table_data(&mut self, schema_name: &str, table_name: &str) {
+        self.spawn_table_page_load(
+            schema_name,
+            table_name,
+            0,
+            None,
+            true,
+            None,
+            None,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn spawn_table_page_load(
         &mut self,
         schema_name: &str,
         table_name: &str,
-    ) -> Result<()> {
-        let Some(database) = self.database_explorer.database.as_ref() else {
-            self.set_status(STATUS_DB_NOT_CONNECTED);
-            return Ok(());
-        };
-
-        let total_rows = database
-            .get_table_row_count(schema_name, table_name)
-            .await
-            .ok();
+        window_start: u64,
+        total_rows: Option<u64>,
+        record_recent: bool,
+        select_row_at: Option<usize>,
+        success_status: Option<String>,
+    ) {
+        let schema = schema_name.to_string();
+        let table = table_name.to_string();
+        let key = table_key(schema_name, table_name);
+        let status = format!("Loading {table_name}…");
         let page_size = self.page_size;
-
-        // Bind the page (or return) before further awaits so `Box<dyn Error>`
-        // from the page Result is not held across `.await` (clippy::future_not_send).
-        let page = match database
-            .get_table_data_page(schema_name, table_name, 0, page_size)
-            .await
-        {
-            Ok(page) => page,
-            Err(e) => {
-                self.database_explorer.table_data_virtual = None;
-                self.status_load_failed("table data", e);
-                return Ok(());
-            }
+        let fetch_meta = window_start == 0 && record_recent;
+        let Some((database, tx)) = self.spawn_explorer_load(
+            key.clone(),
+            "Already loading this table",
+            &status,
+        ) else {
+            return;
         };
-        let col_meta = database.get_columns(schema_name, table_name).await.ok();
-        let pk_meta = database
-            .get_primary_key_columns(schema_name, table_name)
-            .await
-            .ok();
-        self.replace_explorer_table_page(page, 0, page_size, total_rows);
-        let explorer = &mut self.database_explorer;
-        explorer.table_columns = col_meta;
-        explorer.table_pk_names = pk_meta;
-        explorer.state = DatabaseExplorerState::TableData(
-            schema_name.to_string(),
-            table_name.to_string(),
-        );
-        explorer.record_recent_table_open(schema_name, table_name);
-
-        Ok(())
+        tokio::spawn(async move {
+            let total_rows = if window_start == 0 && total_rows.is_none() {
+                database
+                    .get_table_row_count(&schema, &table)
+                    .await
+                    .ok()
+            } else {
+                total_rows
+            };
+            let page = match database
+                .get_table_data_page(&schema, &table, window_start, page_size)
+                .await
+            {
+                Ok(page) => page,
+                Err(e) => {
+                    let _ = tx.send(BgEvent::TablePageLoaded {
+                        key,
+                        result: Err(e.to_string()),
+                    });
+                    return;
+                }
+            };
+            let (table_columns, table_pk_names) = if fetch_meta {
+                let col_meta = database.get_columns(&schema, &table).await.ok();
+                let pk_meta = database
+                    .get_primary_key_columns(&schema, &table)
+                    .await
+                    .ok();
+                (col_meta, pk_meta)
+            } else {
+                (None, None)
+            };
+            let _ = tx.send(BgEvent::TablePageLoaded {
+                key,
+                result: Ok(TablePageLoadOk {
+                    schema,
+                    table,
+                    window_start,
+                    page_size,
+                    total_rows,
+                    page,
+                    table_columns,
+                    table_pk_names,
+                    record_recent,
+                    select_row_at,
+                    success_status,
+                }),
+            });
+        });
     }
 
     /// Jump to a 1-based row in the current table (unfiltered view only).
-    pub async fn jump_to_table_row(&mut self, row_1based: u64) -> Result<()> {
+    pub fn jump_to_table_row(&mut self, row_1based: u64) {
         if row_1based == 0 {
             self.set_status("Row number must be >= 1");
-            return Ok(());
+            return;
         }
         if self.has_active_filter() {
             self.set_status("Clear filter before jumping to row");
-            return Ok(());
+            return;
         }
         let DatabaseExplorerState::TableData(schema, table) =
             self.database_explorer.state.clone()
         else {
-            return Ok(());
+            return;
         };
         let offset = row_1based - 1;
         let page_size = self.page_size;
@@ -287,37 +381,15 @@ impl App<'_> {
             .table_data_virtual
             .as_ref()
             .and_then(|m| m.total_rows);
-        let Some(database) = self.database_explorer.database.as_ref() else {
-            self.set_status(STATUS_DB_NOT_CONNECTED);
-            return Ok(());
-        };
-        match database
-            .get_table_data_page(&schema, &table, window_start, page_size)
-            .await
-        {
-            Ok(page) => {
-                let loaded = page.rows.len();
-                self.replace_explorer_table_page(
-                    page,
-                    window_start,
-                    page_size,
-                    total_rows,
-                );
-                if local_idx < loaded {
-                    if let Some(fd) = self.database_explorer.table_data.as_mut()
-                    {
-                        fd.table.view.state.select(Some(local_idx));
-                    }
-                    self.set_status(format!("Jumped to row {row_1based}"));
-                } else {
-                    self.set_status(format!(
-                        "Row {row_1based} is beyond loaded page"
-                    ));
-                }
-            }
-            Err(e) => self.status_load_failed("jump to row", e),
-        }
-        Ok(())
+        self.spawn_table_page_load(
+            &schema,
+            &table,
+            window_start,
+            total_rows,
+            false,
+            Some(local_idx),
+            None,
+        );
     }
 
     /// `:table <name>`: open the best-matching table of the current schema.
@@ -333,11 +405,8 @@ impl App<'_> {
             self.set_status("Open a schema first.");
             return Ok(());
         };
-        self.load_table_data(&schema, table_name).await?;
-        if candidates.len() > 1
-            && self.database_explorer.state
-                == DatabaseExplorerState::TableData(schema, table_name.clone())
-        {
+        self.load_table_data(&schema, table_name);
+        if candidates.len() > 1 {
             let shown = candidates.iter().take(4).cloned().collect::<Vec<_>>();
             self.set_status(format!(
                 "{} matches: {}; opened {table_name}",
@@ -356,11 +425,8 @@ impl App<'_> {
         let Some(schema_name) = candidates.first() else {
             return Ok(());
         };
-        self.load_tables(schema_name).await?;
-        if candidates.len() > 1
-            && self.database_explorer.state
-                == DatabaseExplorerState::Tables(schema_name.clone())
-        {
+        self.load_tables(schema_name);
+        if candidates.len() > 1 {
             let shown = candidates.iter().take(4).cloned().collect::<Vec<_>>();
             self.set_status(format!(
                 "{} matches: {}; opened {schema_name}",
@@ -371,22 +437,22 @@ impl App<'_> {
         Ok(())
     }
 
-    async fn fetch_adjacent_table_page(&mut self, next: bool) -> Result<()> {
+    fn fetch_adjacent_table_page(&mut self, next: bool) {
         if self.discard_table_draft() {
             self.set_status("Draft discarded (page change).");
         }
         let Some(meta) = self.database_explorer.table_data_virtual.as_ref()
         else {
-            return Ok(());
+            return;
         };
         if next {
             if !meta.has_more_after {
                 self.set_status("Already at last page.");
-                return Ok(());
+                return;
             }
         } else if !meta.has_more_before {
             self.set_status("Already at first page.");
-            return Ok(());
+            return;
         }
         let page_size = meta.page_size;
         let new_start = if next {
@@ -396,34 +462,34 @@ impl App<'_> {
         };
         let total_rows = meta.total_rows;
         let DatabaseExplorerState::TableData(schema, table) =
-            &self.database_explorer.state
+            self.database_explorer.state.clone()
         else {
-            return Ok(());
+            return;
         };
-        let (schema, table) = (schema.clone(), table.clone());
-        let Some(database) = self.database_explorer.database.as_ref() else {
-            return Ok(());
+        let select_row_at = if next {
+            None
+        } else {
+            Some(page_size.saturating_sub(1) as usize)
         };
-        match database
-            .get_table_data_page(&schema, &table, new_start, page_size)
-            .await
-        {
-            Ok(page) => self.replace_explorer_table_page(
-                page, new_start, page_size, total_rows,
-            ),
-            Err(e) => self.status_load_failed("page", e),
-        }
-        Ok(())
+        self.spawn_table_page_load(
+            &schema,
+            &table,
+            new_start,
+            total_rows,
+            false,
+            select_row_at,
+            None,
+        );
     }
 
     /// Load the next page of rows for the current table data view.
-    pub async fn fetch_next_table_page(&mut self) -> Result<()> {
-        self.fetch_adjacent_table_page(true).await
+    pub fn fetch_next_table_page(&mut self) {
+        self.fetch_adjacent_table_page(true);
     }
 
     /// Load the previous page of rows for the current table data view.
-    pub async fn fetch_prev_table_page(&mut self) -> Result<()> {
-        self.fetch_adjacent_table_page(false).await
+    pub fn fetch_prev_table_page(&mut self) {
+        self.fetch_adjacent_table_page(false);
     }
 
     /// At the first/last row of a loaded page, j/k loads the previous/next page.
@@ -481,15 +547,11 @@ impl App<'_> {
 
         match edge {
             Some(true) => {
-                self.fetch_next_table_page().await?;
+                self.fetch_next_table_page();
                 Ok(true)
             }
             Some(false) => {
-                self.fetch_prev_table_page().await?;
-                if let Some(ref mut td) = self.database_explorer.table_data {
-                    let last = td.table.model.items.len().saturating_sub(1);
-                    td.table.view.state.select(Some(last));
-                }
+                self.fetch_prev_table_page();
                 Ok(true)
             }
             None => Ok(false),
@@ -514,7 +576,7 @@ impl App<'_> {
                 if let Some(schema_name) = self.get_selected_schema_name() {
                     self.database_explorer.connection.schema =
                         Some(schema_name.clone());
-                    self.load_tables(&schema_name).await?;
+                    self.load_tables(&schema_name);
                     self.set_status(format!("Opened schema {schema_name}"));
                 }
             }
@@ -522,14 +584,14 @@ impl App<'_> {
                 if let Some(table_name) = self.get_selected_table_name() {
                     self.database_explorer.connection.table =
                         Some(table_name.clone());
-                    self.load_table_data(&schema_name, &table_name).await?;
+                    self.load_table_data(&schema_name, &table_name);
                     self.set_status(format!(
                         "Opened {schema_name}.{table_name}"
                     ));
                 }
             }
             DatabaseExplorerState::Columns(schema_name, table_name) => {
-                self.load_table_data(&schema_name, &table_name).await?;
+                self.load_table_data(&schema_name, &table_name);
                 self.set_status(format!("Opened {schema_name}.{table_name}"));
             }
             DatabaseExplorerState::TableData(_, _) => {
@@ -822,6 +884,177 @@ impl App<'_> {
                 result,
             });
         });
+    }
+
+    fn should_apply_table_page(
+        state: &DatabaseExplorerState,
+        schema: &str,
+        table: &str,
+        record_recent: bool,
+    ) -> bool {
+        match state {
+            DatabaseExplorerState::TableData(s, t) => {
+                s == schema && t == table
+            }
+            DatabaseExplorerState::Columns(s, t) if record_recent => {
+                s == schema && t == table
+            }
+            DatabaseExplorerState::Tables(s) if record_recent => s == schema,
+            DatabaseExplorerState::Tables(_)
+            | DatabaseExplorerState::Columns(_, _) => false,
+            DatabaseExplorerState::Connections
+            | DatabaseExplorerState::Databases
+            | DatabaseExplorerState::Schemas
+            | DatabaseExplorerState::SqlResults(_) => false,
+        }
+    }
+
+    pub(crate) fn apply_databases_loaded(
+        &mut self,
+        databases: Vec<DatabaseInfo>,
+    ) {
+        if !matches!(
+            self.database_explorer.state,
+            DatabaseExplorerState::Databases
+        ) {
+            return;
+        }
+        self.database_explorer.databases = Some(FilteredData::new(databases));
+        self.database_explorer.state = DatabaseExplorerState::Databases;
+    }
+
+    pub(crate) fn apply_schemas_loaded(&mut self, schemas: Vec<Schema>) {
+        if !matches!(
+            self.database_explorer.state,
+            DatabaseExplorerState::Databases | DatabaseExplorerState::Schemas
+        ) {
+            return;
+        }
+        self.database_explorer.schemas = Some(FilteredData::new(schemas));
+        self.database_explorer.state = DatabaseExplorerState::Schemas;
+    }
+
+    pub(crate) fn apply_tables_loaded(
+        &mut self,
+        schema: &str,
+        tables: Vec<Table>,
+    ) {
+        let ok = match &self.database_explorer.state {
+            DatabaseExplorerState::Schemas => true,
+            DatabaseExplorerState::Tables(s)
+            | DatabaseExplorerState::Columns(s, _)
+            | DatabaseExplorerState::TableData(s, _) => s == schema,
+            DatabaseExplorerState::Connections
+            | DatabaseExplorerState::Databases
+            | DatabaseExplorerState::SqlResults(_) => false,
+        };
+        if !ok {
+            return;
+        }
+        self.database_explorer.tables = Some(FilteredData::new(tables));
+        self.database_explorer.state =
+            DatabaseExplorerState::Tables(schema.to_string());
+    }
+
+    pub(crate) fn apply_columns_loaded(
+        &mut self,
+        schema: &str,
+        table: &str,
+        columns: Vec<Column>,
+    ) {
+        if !Self::should_apply_table_page(
+            &self.database_explorer.state,
+            schema,
+            table,
+            true,
+        ) {
+            return;
+        }
+        self.database_explorer.columns = Some(FilteredData::new(columns));
+        self.database_explorer.state = DatabaseExplorerState::Columns(
+            schema.to_string(),
+            table.to_string(),
+        );
+    }
+
+    pub(crate) fn apply_table_page_loaded(
+        &mut self,
+        result: Result<TablePageLoadOk, String>,
+    ) {
+        match result {
+            Err(e) => {
+                if matches!(
+                    self.database_explorer.state,
+                    DatabaseExplorerState::TableData(_, _)
+                        | DatabaseExplorerState::Columns(_, _)
+                        | DatabaseExplorerState::Tables(_)
+                ) {
+                    self.database_explorer.table_data_virtual = None;
+                    self.status_load_failed("table data", e);
+                }
+            }
+            Ok(payload) => {
+                if !Self::should_apply_table_page(
+                    &self.database_explorer.state,
+                    &payload.schema,
+                    &payload.table,
+                    payload.record_recent,
+                ) {
+                    return;
+                }
+                let loaded = payload.page.rows.len();
+                self.replace_explorer_table_page(
+                    payload.page,
+                    payload.window_start,
+                    payload.page_size,
+                    payload.total_rows,
+                );
+                let explorer = &mut self.database_explorer;
+                if let Some(cols) = payload.table_columns {
+                    explorer.table_columns = Some(cols);
+                }
+                if let Some(pk) = payload.table_pk_names {
+                    explorer.table_pk_names = Some(pk);
+                }
+                if payload.record_recent {
+                    explorer.state = DatabaseExplorerState::TableData(
+                        payload.schema.clone(),
+                        payload.table.clone(),
+                    );
+                    explorer.record_recent_table_open(
+                        &payload.schema,
+                        &payload.table,
+                    );
+                }
+                if let Some(idx) = payload.select_row_at {
+                    if idx < loaded {
+                        if let Some(fd) = explorer.table_data.as_mut() {
+                            fd.table.view.state.select(Some(idx));
+                        }
+                        let row_1based =
+                            payload.window_start + u64::try_from(idx).unwrap_or(0)
+                                + 1;
+                        self.set_status(format!("Jumped to row {row_1based}"));
+                    } else {
+                        self.set_status("Row is beyond loaded page");
+                    }
+                } else if let Some(msg) = payload.success_status {
+                    self.set_status(msg);
+                } else if payload.record_recent
+                    && self.status_line.message().contains("Loading")
+                {
+                    self.clear_status();
+                }
+            }
+        }
+    }
+
+    pub(crate) fn apply_explorer_load_failed(
+        &mut self,
+        resource: &str,
+        message: &str,
+    ) {
+        self.set_status(format!("Failed to load {resource}: {message}"));
     }
 
     /// Go back to previous level in database navigation

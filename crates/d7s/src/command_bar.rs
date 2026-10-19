@@ -206,7 +206,7 @@ impl App<'_> {
                     self.database_explorer.state,
                     DatabaseExplorerState::TableData(_, _)
                 ) {
-                    self.jump_to_table_row(n).await?;
+                    self.jump_to_table_row(n);
                 } else {
                     self.set_status("Row jump needs an open table.");
                 }
@@ -234,11 +234,11 @@ impl App<'_> {
                 {
                     self.set_status("SQLite has no schemas.");
                 } else {
-                    self.load_schemas().await?;
+                    self.load_schemas();
                 }
             }
             Verb::Tables => match self.command_schema() {
-                Some(schema) => self.load_tables(&schema).await?,
+                Some(schema) => self.load_tables(&schema),
                 None => self.set_status("Open a schema first."),
             },
             Verb::Columns => {
@@ -256,7 +256,7 @@ impl App<'_> {
                     | DatabaseExplorerState::SqlResults(_) => None,
                 };
                 match target {
-                    Some((s, t)) => self.load_columns(&s, &t).await?,
+                    Some((s, t)) => self.load_columns(&s, &t),
                     None => self.set_status("Select a table first."),
                 }
             }

@@ -38,44 +38,32 @@ impl App<'_> {
     }
 
     /// Remove client-only draft rows and refetch the current page from the server.
-    pub(crate) async fn reload_current_table_data(&mut self) -> Result<()> {
+    pub(crate) fn reload_current_table_data(&mut self) {
         self.strip_draft_rows_from_table_data();
         let DatabaseExplorerState::TableData(schema, table) =
             self.database_explorer.state.clone()
         else {
-            return Ok(());
+            return;
         };
         let offset = self
             .database_explorer
             .table_data_virtual
             .as_ref()
             .map_or(0, |m| m.window_start);
-        let page_size = self
-            .database_explorer
-            .table_data_virtual
-            .as_ref()
-            .map_or(self.page_size, |m| m.page_size);
         let total_rows = self
             .database_explorer
             .table_data_virtual
             .as_ref()
             .and_then(|m| m.total_rows);
-        let Some(database) = self.database_explorer.database.as_ref() else {
-            return Ok(());
-        };
-        match database
-            .get_table_data_page(&schema, &table, offset, page_size)
-            .await
-        {
-            Ok(page) => {
-                self.replace_explorer_table_page(
-                    page, offset, page_size, total_rows,
-                );
-                self.set_status("Refreshed.");
-            }
-            Err(e) => self.status_action_failed("Refresh", e),
-        }
-        Ok(())
+        self.spawn_table_page_load(
+            &schema,
+            &table,
+            offset,
+            total_rows,
+            false,
+            None,
+            Some("Refreshed.".into()),
+        );
     }
 
     pub(crate) fn discard_table_draft(&mut self) -> bool {
@@ -578,7 +566,7 @@ impl App<'_> {
             }
         }
         self.set_status("Row inserted.");
-        self.reload_current_table_data().await?;
+        self.reload_current_table_data();
         Ok(())
     }
 
@@ -764,7 +752,7 @@ impl App<'_> {
             } else {
                 self.set_status("Row(s) deleted.");
             }
-            self.reload_current_table_data().await?;
+            self.reload_current_table_data();
         } else if errs > 0 {
             self.set_status("Delete failed.");
         }
@@ -822,7 +810,7 @@ impl App<'_> {
         }
         match key.code {
             KeyCode::Char('r' | 'R') => {
-                self.reload_current_table_data().await?;
+                self.reload_current_table_data();
                 Ok(true)
             }
             KeyCode::Char('n' | 'a') => {

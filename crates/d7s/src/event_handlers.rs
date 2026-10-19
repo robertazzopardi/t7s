@@ -260,7 +260,7 @@ impl App<'_> {
                     if let Some((schema, table)) =
                         self.database_explorer.recent_tables.get(idx).cloned()
                     {
-                        self.load_table_data(&schema, &table).await?;
+                        self.load_table_data(&schema, &table);
                     }
                     Ok(true)
                 } else {
@@ -589,18 +589,10 @@ impl App<'_> {
 
         match state {
             DatabaseExplorerState::TableData(schema_name, table_name) => {
-                if let Err(e) =
-                    self.load_columns(&schema_name, &table_name).await
-                {
-                    self.status_load_failed("columns", e);
-                }
+                self.load_columns(&schema_name, &table_name);
             }
             DatabaseExplorerState::Columns(schema_name, table_name) => {
-                if let Err(e) =
-                    self.load_table_data(&schema_name, &table_name).await
-                {
-                    self.status_load_failed("table data", e);
-                }
+                self.load_table_data(&schema_name, &table_name);
             }
             DatabaseExplorerState::Connections
             | DatabaseExplorerState::Databases
@@ -629,7 +621,7 @@ impl App<'_> {
                     self.modal_manager.was_jump_to_row_confirmed()
                     && matches!(key.code, KeyCode::Enter)
                 {
-                    self.jump_to_table_row(row).await?;
+                    self.jump_to_table_row(row);
                     self.modal_manager.cleanup_closed_modals();
                     return Ok(());
                 }

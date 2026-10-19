@@ -30,12 +30,18 @@ pub fn connection_key(id: &str) -> String {
     format!("connection:{id}")
 }
 
-#[allow(dead_code)]
 pub fn database_key(name: &str) -> String {
     format!("database:{name}")
 }
 
-#[allow(dead_code)]
+pub fn schemas_key(connection_name: &str) -> String {
+    format!("schemas:{connection_name}")
+}
+
+pub fn schema_key(schema: &str) -> String {
+    format!("schema:{schema}")
+}
+
 pub fn table_key(schema: &str, table: &str) -> String {
     format!("table:{schema}.{table}")
 }

@@ -89,7 +89,7 @@ impl App<'_> {
 
         // SQLite doesn't need the Databases/Schemas navigation steps
         // Load tables directly from the default sqlite_schema
-        self.load_tables("sqlite_schema").await?;
+        self.load_tables("sqlite_schema");
         Ok(())
     }
 
@@ -135,7 +135,7 @@ impl App<'_> {
             self.set_status(msg);
 
             // Load databases after successful connection
-            self.load_databases().await?;
+            self.load_databases();
         } else {
             self.set_status(format!(
                 "Failed to connect to database: {}",

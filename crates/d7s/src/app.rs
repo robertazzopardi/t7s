@@ -236,6 +236,39 @@ impl App<'_> {
                         }
                     }
                 }
+                BgEvent::DatabasesLoaded { key, databases } => {
+                    self.in_flight.end(&key);
+                    self.apply_databases_loaded(databases);
+                }
+                BgEvent::SchemasLoaded { key, schemas } => {
+                    self.in_flight.end(&key);
+                    self.apply_schemas_loaded(schemas);
+                }
+                BgEvent::TablesLoaded { key, schema, tables } => {
+                    self.in_flight.end(&key);
+                    self.apply_tables_loaded(&schema, tables);
+                }
+                BgEvent::ColumnsLoaded {
+                    key,
+                    schema,
+                    table,
+                    columns,
+                } => {
+                    self.in_flight.end(&key);
+                    self.apply_columns_loaded(&schema, &table, columns);
+                }
+                BgEvent::TablePageLoaded { key, result } => {
+                    self.in_flight.end(&key);
+                    self.apply_table_page_loaded(result);
+                }
+                BgEvent::ExplorerLoadFailed {
+                    key,
+                    resource,
+                    message,
+                } => {
+                    self.in_flight.end(&key);
+                    self.apply_explorer_load_failed(&resource, &message);
+                }
             }
         }
     }
@@ -842,6 +875,7 @@ mod tests {
             query_log::{QueryLogEntry, QueryOrigin, tests::temp_sqlite},
             tls::TlsConfig,
         },
+        in_flight::table_key,
         ui::widgets::hotkeys::DATABASE_HOTKEYS,
     };
 
@@ -1067,7 +1101,8 @@ mod tests {
                  INSERT INTO users(id) VALUES (1),(2),(3);",
             )
             .unwrap();
-        app.load_tables("sqlite_schema").await.unwrap();
+        app.load_tables("sqlite_schema");
+        drain_bg_work(&mut app).await;
         app
     }
 
@@ -1249,6 +1284,7 @@ mod tests {
         app.on_key_event(tab()).await.unwrap();
         assert_eq!(app.command_text(), "table users");
         app.on_key_event(enter()).await.unwrap();
+        drain_bg_work(&mut app).await;
         assert!(!app.command_mode && app.search_filter.is_none());
         assert_eq!(
             app.database_explorer.state,
@@ -1257,6 +1293,31 @@ mod tests {
                 "users".into()
             )
         );
+    }
+
+    #[tokio::test]
+    async fn load_table_data_refuses_when_table_key_busy() {
+        let mut app = tables_app("tbl_busy").await;
+        let key = table_key("sqlite_schema", "users");
+        assert!(app.in_flight.try_begin(key.clone()));
+        app.load_table_data("sqlite_schema", "users");
+        assert!(app.in_flight.contains(&key));
+    }
+
+    #[tokio::test]
+    async fn stale_table_page_load_is_discarded() {
+        let mut app = tables_app("tbl_stale").await;
+        app.load_table_data("sqlite_schema", "users");
+        app.database_explorer.state = DatabaseExplorerState::TableData(
+            "sqlite_schema".into(),
+            "orders".into(),
+        );
+        drain_bg_work(&mut app).await;
+        assert_eq!(
+            app.database_explorer.state,
+            DatabaseExplorerState::TableData("sqlite_schema".into(), "orders".into())
+        );
+        assert!(app.database_explorer.table_data.is_none());
     }
 
     #[tokio::test]
@@ -1474,7 +1535,8 @@ mod tests {
                 "CREATE TABLE def_row(id INTEGER PRIMARY KEY, name TEXT DEFAULT 'x', note TEXT);",
             )
             .unwrap();
-        app.load_tables("sqlite_schema").await.unwrap();
+        app.load_tables("sqlite_schema");
+        drain_bg_work(&mut app).await;
         app
     }
 
@@ -1574,7 +1636,8 @@ mod tests {
                  INSERT INTO cell_edit_row VALUES (1, 'old');",
             )
             .unwrap();
-        app.load_tables("sqlite_schema").await.unwrap();
+        app.load_tables("sqlite_schema");
+        drain_bg_work(&mut app).await;
         app
     }
 
@@ -1975,7 +2038,8 @@ mod tests {
                  CREATE TABLE \"tables\"(id); CREATE TABLE \"my data\"(id);",
             )
             .unwrap();
-        app.load_tables("sqlite_schema").await.unwrap();
+        app.load_tables("sqlite_schema");
+        drain_bg_work(&mut app).await;
         let open = |t: &str| {
             DatabaseExplorerState::TableData("sqlite_schema".into(), t.into())
         };
