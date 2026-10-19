@@ -50,10 +50,11 @@ pub const TABLE_DATA_VIEW_HOTKEYS: [Hotkey; 6] = [
 ];
 
 /// Replaces [`TABLE_DATA_VIEW_HOTKEYS`] in the top bar during inline cell edit.
-pub const CELL_EDIT_HOTKEYS: [Hotkey; 5] = [
+pub const CELL_EDIT_HOTKEYS: [Hotkey; 6] = [
     Hotkey::code(KeyCode::Esc, "Cancel"),
-    Hotkey::code(KeyCode::Enter, "Commit"),
+    Hotkey::code(KeyCode::Enter, "Done"),
     Hotkey::code(KeyCode::Tab, "Next col"),
     Hotkey::code(KeyCode::BackTab, "Prev col"),
+    Hotkey::labeled("Ctrl+e", KeyCode::Char('e'), "Modal"),
     Hotkey::code(KeyCode::Backspace, "Delete char"),
 ];

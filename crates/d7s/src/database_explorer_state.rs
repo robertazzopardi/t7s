@@ -96,6 +96,7 @@ impl DatabaseExplorer {
                     schema: schema.clone(),
                     table: table.clone(),
                 },
+                key_display: None,
             })
             .collect()
     }

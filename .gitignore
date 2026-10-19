@@ -7,6 +7,7 @@ rustc-ice-*
 crates/d7s/docker/sqlite/*.sqlite
 crates/d7s/docker/certs/
 .claude/
+# Agent plan/spec scratch — never commit (jj/git keep untracking these).
 docs/superpowers/
 .superpowers/
 

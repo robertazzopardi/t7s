@@ -1400,11 +1400,32 @@ mod tests {
         .unwrap();
         assert!(app.has_table_draft_rows());
         assert_eq!(selected_col(&app), 1, "first editable column is name");
+        assert_eq!(
+            table_data_cell_value(&app, Some(1)),
+            "x",
+            "N prefills literal defaults in the draft row"
+        );
+        assert_eq!(table_data_cell_value(&app, Some(2)), "NULL");
+        assert!(
+            render_text(&mut app).contains("Draft with defaults ("),
+            "status notes how many cols use defaults"
+        );
         // First editable is `name` (id is rowid PK); tab to `note`.
         app.on_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
             .await
             .unwrap();
+        assert_eq!(
+            app.cell_edit.as_ref().unwrap().buffer,
+            "",
+            "NULL display starts empty so typing replaces"
+        );
+        assert_eq!(
+            table_data_cell_value(&app, Some(2)),
+            "NULL",
+            "grid still shows NULL until first key"
+        );
         type_str(&mut app, "hi").await;
+        assert_eq!(app.cell_edit.as_ref().unwrap().buffer, "hi");
         app.on_key_event(enter()).await.unwrap();
         app.on_key_event(key('s')).await.unwrap();
         assert!(!app.has_table_draft_rows());
@@ -1678,10 +1699,16 @@ mod tests {
             .await
             .unwrap();
         app.on_key_event(enter()).await.unwrap();
-        assert_eq!(app.cell_edit.as_ref().unwrap().buffer, "NULL");
+        assert_eq!(
+            app.cell_edit.as_ref().unwrap().buffer,
+            "",
+            "NULL display edits start empty"
+        );
+        assert_eq!(table_data_cell_value(&app, Some(1)), "NULL");
         app.on_key_event(enter()).await.unwrap();
         assert!(!app.is_cell_editing());
         assert_eq!(db_name(&app, 2), None, "still SQL NULL, not 'NULL'");
+        assert_eq!(table_data_cell_value(&app, Some(1)), "NULL");
     }
 
     #[tokio::test]
@@ -1720,12 +1747,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rowid_pk_cell_is_editable_on_saved_rows() {
+    async fn rowid_pk_cell_is_not_editable_on_saved_rows() {
         let mut app = cell_update_table_app("edit_saved_pk").await;
         run_cmd(&mut app, "table cell_edit_row").await;
         select_table_column(&mut app, 0);
         app.on_key_event(enter()).await.unwrap();
-        assert!(app.is_cell_editing());
+        assert!(!app.is_cell_editing());
+        assert!(
+            render_text(&mut app).contains("not editable"),
+            "rowid PK refused like Tab skip"
+        );
     }
 
     #[tokio::test]
@@ -1740,7 +1771,48 @@ mod tests {
         let editing = render_text(&mut app);
         assert!(editing.contains("> Cancel"));
         assert!(editing.contains("> Next col"));
+        assert!(editing.contains("Ctrl+e"));
+        assert!(editing.contains("> Done") || editing.contains("> Modal"));
         assert!(!editing.contains("> Duplicate"));
+    }
+
+    #[tokio::test]
+    async fn clearing_saved_nullable_cell_persists_sql_null() {
+        let mut app = cell_update_table_app("clear_to_null").await;
+        run_cmd(&mut app, "table cell_edit_row").await;
+        select_table_column(&mut app, 1);
+        app.on_key_event(backspace()).await.unwrap();
+        assert!(app.is_cell_editing());
+        assert_eq!(app.cell_edit.as_ref().unwrap().buffer, "");
+        app.on_key_event(enter()).await.unwrap();
+        assert!(!app.is_cell_editing());
+        assert_eq!(db_name(&app, 1), None, "cleared cell is SQL NULL");
+    }
+
+    #[tokio::test]
+    async fn paste_goes_to_modal_when_ctrl_e_open() {
+        let mut app = cell_update_table_app("paste_modal").await;
+        run_cmd(&mut app, "table cell_edit_row").await;
+        select_table_column(&mut app, 1);
+        app.on_key_event(enter()).await.unwrap();
+        app.on_key_event(KeyEvent::new(
+            KeyCode::Char('e'),
+            KeyModifiers::CONTROL,
+        ))
+        .await
+        .unwrap();
+        assert!(app.modal_manager.get_cell_value_modal().is_some());
+        let before = app.cell_edit.as_ref().unwrap().buffer.clone();
+        app.handle_paste_text(" via-modal");
+        assert_eq!(
+            app.cell_edit.as_ref().unwrap().buffer,
+            before,
+            "inline buffer unchanged while modal open"
+        );
+        assert!(
+            render_text(&mut app).contains("via-modal"),
+            "paste lands in the open modal"
+        );
     }
 
     #[tokio::test]

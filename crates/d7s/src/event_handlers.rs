@@ -84,12 +84,17 @@ impl App<'_> {
 
     pub(crate) fn handle_paste_text(&mut self, text: &str) {
         self.clear_status();
+        // Modal owns paste while open (Ctrl+e leaves cell_edit set).
+        if self.modal_manager.is_any_modal_open() {
+            let _ = self.modal_manager.handle_paste(text);
+            return;
+        }
         if let Some(session) = self.cell_edit.as_mut() {
             session.buffer.push_str(text);
-        }
-        if self.cell_edit.is_some() {
             self.sync_cell_edit_buffer_to_grid();
-        } else if !self.modal_manager.handle_paste(text)
+            return;
+        }
+        if !self.modal_manager.handle_paste(text)
             && let Some(textarea) = &mut self.search_filter
         {
             textarea.insert_str(text);

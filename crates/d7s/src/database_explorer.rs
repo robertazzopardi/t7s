@@ -627,10 +627,12 @@ impl App<'_> {
         else {
             return Ok(());
         };
-        let unchanged = self
-            .cell_edit
-            .as_ref()
-            .is_some_and(|s| s.buffer == s.pre_edit_value);
+        let unchanged = self.cell_edit.as_ref().is_some_and(|s| {
+            s.buffer == s.pre_edit_value
+                // Enter on a NULL display starts with an empty buffer; leaving
+                // without typing must not write '' over SQL NULL.
+                || (s.pre_edit_value == "NULL" && s.buffer.is_empty())
+        });
         if unchanged {
             // Unchanged: leave edit mode without a write (NULL cells render as "NULL").
             self.cell_edit = None;

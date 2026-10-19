@@ -8,7 +8,7 @@ use serde_json::{Map, Value as SerdeJsonValue};
 
 use crate::db::{
     Column, Database, DatabaseInfo, DbRowId, Schema, Table, TableData,
-    TableDataPage, TableRow,
+    TableDataPage, TableRow, cell_clears_to_sql_null,
     connection::{Connection, ConnectionStatus, ConnectionType, Environment},
     get_db_path,
     query_log::report_sql,
@@ -348,15 +348,25 @@ impl Database for Sqlite {
             sqlite_cast_keyword(sqlite_resolve_decl(&decls, set_column));
         let tq = sqlite_quote_ident(table_name);
         let cq = sqlite_quote_ident(set_column);
+        let nullable = self
+            .get_columns("sqlite_schema", table_name)
+            .await?
+            .iter()
+            .any(|c| c.name == set_column && c.is_nullable);
+        let write_null = cell_clears_to_sql_null(new_value, nullable);
 
         if !primary_key.is_empty() {
-            let mut sql =
-                format!("UPDATE {tq} SET {cq} = CAST(?1 AS {set_kw}) WHERE ");
+            let mut sql = if write_null {
+                format!("UPDATE {tq} SET {cq} = NULL WHERE ")
+            } else {
+                format!("UPDATE {tq} SET {cq} = CAST(?1 AS {set_kw}) WHERE ")
+            };
+            let param_base = if write_null { 1 } else { 2 };
             for (i, (k, _)) in primary_key.iter().enumerate() {
                 if i > 0 {
                     sql.push_str(" AND ");
                 }
-                let param_num = i + 2;
+                let param_num = i + param_base;
                 let pk_kw = sqlite_cast_keyword(sqlite_resolve_decl(&decls, k));
                 let _ = write!(
                     sql,
@@ -365,7 +375,9 @@ impl Database for Sqlite {
                 );
             }
             let mut refs: Vec<&dyn rusqlite::ToSql> = Vec::new();
-            refs.push(&new_value);
+            if !write_null {
+                refs.push(&new_value);
+            }
             for (_, v) in primary_key {
                 refs.push(v);
             }
@@ -375,11 +387,17 @@ impl Database for Sqlite {
         }
 
         if let Some(DbRowId::Sqlite(rid)) = row_id_fallback {
-            let sql = format!(
-                "UPDATE {tq} SET {cq} = CAST(?1 AS {set_kw}) WHERE rowid = ?2"
-            );
-            let n = u64::try_from(exec(&conn, &sql, params![new_value, rid])?)
-                .unwrap_or(0);
+            let n = if write_null {
+                let sql =
+                    format!("UPDATE {tq} SET {cq} = NULL WHERE rowid = ?1");
+                u64::try_from(exec(&conn, &sql, params![rid])?).unwrap_or(0)
+            } else {
+                let sql = format!(
+                    "UPDATE {tq} SET {cq} = CAST(?1 AS {set_kw}) WHERE rowid = ?2"
+                );
+                u64::try_from(exec(&conn, &sql, params![new_value, rid])?)
+                    .unwrap_or(0)
+            };
             return Ok(n);
         }
 

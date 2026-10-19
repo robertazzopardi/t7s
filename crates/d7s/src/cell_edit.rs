@@ -17,51 +17,21 @@ pub struct EditableCol {
 
 /// Table-data Browse bindings that must not type-to-overwrite.
 ///
-/// Must include every `Char` handled by `handle_hotkeys` / navigation while on
-/// table data so `handle_table_data_hotkeys` can fall through to global handlers.
+/// Keep in sync with `Char` arms in `handle_table_data_hotkeys` / global hotkeys
+/// / navigation so those keys still fall through when not editing a cell.
 pub const fn is_table_data_browse_binding(c: char) -> bool {
     matches!(
         c,
-        'q' | 'e'
-            | 'E'
-            | 't'
-            | 'd'
-            | '?'
-            | 'b'
-            | 'w'
-            | 'A'
-            | 'L'
-            | 'o'
-            | 'O'
-            | 'p'
-            | 'x'
-            | '1'
-            ..='5'
-                | 'n'
-                | 'N'
-                | 'c'
-                | 's'
-                | 'r'
-                | 'D'
-                | 'R'
-                | 'S'
-                | 'C'
-                | 'a'
-                | 'i'
-                | 'y'
-                | 'Y'
-                | '/'
-                | ':'
-                | '#'
-                | ' '
-                | 'j'
-                | 'k'
-                | 'h'
-                | 'l'
-                | 'g'
-                | 'G'
-                | '0'
-                | '$'
+        // app / overlays
+        'q' | '?' | ':' | '/' | '#' | ' '
+        // connection + explorer chrome
+        | 'e' | 'E' | 't' | 'd' | 'b' | 'w' | 'A' | 'L' | 'o' | 'O' | 'p' | 'x'
+        // recent tables
+        | '1' | '2' | '3' | '4' | '5'
+        // table-data row ops
+        | 'n' | 'N' | 'a' | 'c' | 's' | 'i' | 'r' | 'R' | 'D' | 'S' | 'C'
+        // copy + motion
+        | 'y' | 'Y' | 'j' | 'k' | 'h' | 'l' | 'g' | 'G' | '0' | '$'
     )
 }
 

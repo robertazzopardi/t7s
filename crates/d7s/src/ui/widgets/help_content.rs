@@ -149,6 +149,10 @@ const TABLE_DATA_HELP: &[HelpEntry] = &[
         desc: "New row (blank draft)",
     },
     HelpEntry {
+        key: "a",
+        desc: "Alias for n (blank draft)",
+    },
+    HelpEntry {
         key: "N",
         desc: "New row (column defaults)",
     },

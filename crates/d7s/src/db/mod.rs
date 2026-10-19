@@ -157,11 +157,28 @@ pub fn should_omit_for_insert_default(
     let empty = trimmed.is_empty();
     let explicit_null = !empty && trimmed.eq_ignore_ascii_case("null");
     if !empty && !explicit_null {
+        // Prefill from `N` may leave the literal default in the cell; still omit so
+        // identity/expression defaults are not sent as text.
+        if literal_default_display(col).as_deref() == Some(trimmed) {
+            return column_has_insert_default(
+                col,
+                engine_sqlite,
+                sqlite_rowid_pk_omit,
+            );
+        }
         return false;
     }
     if explicit_null {
         return false;
     }
+    column_has_insert_default(col, engine_sqlite, sqlite_rowid_pk_omit)
+}
+
+fn column_has_insert_default(
+    col: &Column,
+    engine_sqlite: bool,
+    sqlite_rowid_pk_omit: bool,
+) -> bool {
     if let Some(d) = &col.default_value {
         let t = d.trim();
         if !t.is_empty() && t.to_uppercase() != "NULL" {
@@ -185,6 +202,52 @@ pub fn should_omit_for_insert_default(
         }
     }
     false
+}
+
+/// Blank / `"null"` on a nullable column should write SQL `NULL` (not `''` / `0`).
+#[must_use]
+pub fn cell_clears_to_sql_null(new_value: &str, column_nullable: bool) -> bool {
+    let t = new_value.trim();
+    column_nullable && (t.is_empty() || t.eq_ignore_ascii_case("null"))
+}
+
+/// Unquoted literal from a schema DEFAULT for grid prefill (`N`), if simple enough.
+///
+/// Expression defaults (`CURRENT_TIMESTAMP`, `nextval`, …) return `None` so the cell
+/// stays empty and [`should_omit_for_insert_default`] still omits on INSERT.
+#[must_use]
+pub fn literal_default_display(col: &Column) -> Option<String> {
+    let raw = col.default_value.as_deref()?.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("NULL") {
+        return None;
+    }
+    if is_generated_default(raw) {
+        return None;
+    }
+    // Postgres often appends `::typename`.
+    let d = raw.split("::").next().unwrap_or(raw).trim();
+    if d.len() >= 2 && d.starts_with('\'') && d.ends_with('\'') {
+        return Some(d[1..d.len() - 1].replace("''", "'"));
+    }
+    if d.eq_ignore_ascii_case("true") || d.eq_ignore_ascii_case("false") {
+        return Some(d.to_string());
+    }
+    if d.parse::<i64>().is_ok() || d.parse::<f64>().is_ok() {
+        return Some(d.to_string());
+    }
+    None
+}
+
+/// Cell value for a new `N` (defaults) draft row.
+#[must_use]
+pub fn draft_cell_from_column_default(col: &Column) -> String {
+    if let Some(v) = literal_default_display(col) {
+        return v;
+    }
+    if col.is_nullable {
+        return "NULL".to_string();
+    }
+    String::new()
 }
 
 /// Table information
@@ -376,4 +439,61 @@ pub fn get_db_path() -> Result<PathBuf> {
     let mut path = get_app_data_dir()?;
     path.push("d7s.db");
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn col(name: &str, nullable: bool, default: Option<&str>) -> Column {
+        Column {
+            name: name.into(),
+            data_type: "TEXT".into(),
+            is_nullable: nullable,
+            default_value: default.map(str::to_string),
+            description: None,
+        }
+    }
+
+    #[test]
+    fn cell_clears_to_sql_null_only_when_nullable() {
+        assert!(cell_clears_to_sql_null("", true));
+        assert!(cell_clears_to_sql_null("NULL", true));
+        assert!(cell_clears_to_sql_null(" null ", true));
+        assert!(!cell_clears_to_sql_null("", false));
+        assert!(!cell_clears_to_sql_null("x", true));
+    }
+
+    #[test]
+    fn literal_default_display_unwraps_simple_defaults() {
+        assert_eq!(
+            literal_default_display(&col("n", true, Some("'x'"))).as_deref(),
+            Some("x")
+        );
+        assert_eq!(
+            literal_default_display(&col("n", true, Some("'x'::text")))
+                .as_deref(),
+            Some("x")
+        );
+        assert_eq!(
+            literal_default_display(&col("n", true, Some("0"))).as_deref(),
+            Some("0")
+        );
+        assert!(
+            literal_default_display(&col("n", true, Some("CURRENT_TIMESTAMP")))
+                .is_none()
+        );
+        assert_eq!(
+            draft_cell_from_column_default(&col("n", true, None)),
+            "NULL"
+        );
+        assert_eq!(draft_cell_from_column_default(&col("n", false, None)), "");
+    }
+
+    #[test]
+    fn omit_when_cell_still_shows_literal_default() {
+        let c = col("n", false, Some("'x'"));
+        assert!(should_omit_for_insert_default(&c, "x", false, false));
+        assert!(!should_omit_for_insert_default(&c, "y", false, false));
+    }
 }

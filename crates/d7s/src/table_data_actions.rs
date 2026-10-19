@@ -15,7 +15,11 @@ use crate::{
         prev_editable_column,
     },
     database_explorer::{column_index_for_name, pk_value_pairs},
-    db::{DbRowId, RowDeleteSpec, connection::ConnectionType},
+    db::{
+        DbRowId, RowDeleteSpec, connection::ConnectionType,
+        draft_cell_from_column_default, should_omit_for_insert_default,
+        sole_pk, sqlite_rowid_pk_omit,
+    },
     ui::widgets::raw_table::{RawTableRow, RawTableStateExt},
 };
 
@@ -170,18 +174,26 @@ impl App<'_> {
         else {
             return;
         };
-        // Generated columns are refused on drafts only; saved rows stay editable.
-        if self.row_is_draft_at(row_idx)
-            && self
-                .editable_columns_for_current_table()
-                .iter()
-                .find(|c| c.index == col_idx)
-                .is_some_and(|c| !c.editable)
+        if self
+            .editable_columns_for_current_table()
+            .iter()
+            .find(|c| c.index == col_idx)
+            .is_some_and(|c| !c.editable)
         {
             self.set_status(format!("Column '{column_name}' is not editable"));
             return;
         }
-        let buffer = replace_with.unwrap_or_else(|| cell_value.clone());
+        // SQL NULL renders as "NULL". Start with an empty buffer so typing
+        // replaces instead of appending (`NULLhello`); keep the grid showing
+        // NULL until the first keystroke syncs.
+        let from_null_display = replace_with.is_none() && cell_value == "NULL";
+        let buffer = replace_with.unwrap_or_else(|| {
+            if from_null_display {
+                String::new()
+            } else {
+                cell_value.clone()
+            }
+        });
         if let Some(fd) = self.database_explorer.table_data.as_mut() {
             fd.table.view.state.select_column(Some(col_idx));
             fd.table.view.state.select(Some(row_idx));
@@ -193,7 +205,9 @@ impl App<'_> {
             pre_edit_value: cell_value,
             row_snapshot: snap,
         });
-        self.sync_cell_edit_buffer_to_grid();
+        if !from_null_display {
+            self.sync_cell_edit_buffer_to_grid();
+        }
         self.set_status(format!("EDIT col={column_name} · Ctrl+e modal"));
     }
 
@@ -287,7 +301,7 @@ impl App<'_> {
                 self.cancel_cell_edit();
                 true
             }
-            KeyCode::Backspace => {
+            KeyCode::Backspace | KeyCode::Delete => {
                 if let Some(session) = self.cell_edit.as_mut() {
                     session.buffer.pop();
                 }
@@ -374,20 +388,21 @@ impl App<'_> {
         Ok(true)
     }
 
+    /// `Ok(Some(n))` = draft created with `n` columns using schema defaults.
     pub(crate) async fn table_data_add_defaults_draft(
         &mut self,
-    ) -> Result<bool> {
+    ) -> Result<Option<usize>> {
         let DatabaseExplorerState::TableData(schema, table) =
             self.database_explorer.state.clone()
         else {
-            return Ok(false);
+            return Ok(None);
         };
         let Some(fd) = self.database_explorer.table_data.as_ref() else {
-            return Ok(false);
+            return Ok(None);
         };
         if fd.is_filtered() {
             self.set_status("Clear filter before adding a row.");
-            return Ok(false);
+            return Ok(None);
         }
         self.refresh_table_column_meta(&schema, &table).await?;
         let columns = self
@@ -397,17 +412,38 @@ impl App<'_> {
             .ok_or_else(|| color_eyre::eyre::eyre!("no columns"))?;
         let names: Vec<String> =
             columns.iter().map(|c| c.name.clone()).collect();
-        let n = names.len();
+        let engine_sqlite = matches!(
+            self.database_explorer.connection.r#type,
+            ConnectionType::Sqlite
+        );
+        let pk_names = self
+            .database_explorer
+            .table_pk_names
+            .as_deref()
+            .unwrap_or(&[]);
+        let pk_first = sole_pk(pk_names);
+        let values: Vec<String> =
+            columns.iter().map(draft_cell_from_column_default).collect();
+        let defaults_n = columns
+            .iter()
+            .filter(|c| {
+                should_omit_for_insert_default(
+                    c,
+                    "",
+                    engine_sqlite,
+                    engine_sqlite && sqlite_rowid_pk_omit(c, pk_first),
+                )
+            })
+            .count();
         self.discard_table_draft();
         let row = RawTableRow {
-            values: vec![String::new(); n],
+            values,
             column_names: names.into(),
             db_row_id: None,
             is_draft: true,
         };
         self.insert_draft_row_below_cursor(row);
-        self.set_status("Draft with defaults");
-        Ok(true)
+        Ok(Some(defaults_n))
     }
 
     fn begin_cell_edit_on_first_editable_column(&mut self) {
@@ -798,8 +834,12 @@ impl App<'_> {
                 Ok(true)
             }
             KeyCode::Char('N') => {
-                if self.table_data_add_defaults_draft().await? {
+                if let Some(n) = self.table_data_add_defaults_draft().await? {
                     self.begin_cell_edit_on_first_editable_column();
+                    // Set after begin so EDIT status does not clobber the count.
+                    self.set_status(format!(
+                        "Draft with defaults ({n} cols) · Ctrl+e modal"
+                    ));
                 }
                 Ok(true)
             }
