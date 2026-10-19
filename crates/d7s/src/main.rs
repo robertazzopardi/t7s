@@ -95,7 +95,7 @@ async fn main() -> error::Result<()> {
     }));
     let mut app = App::default().init()?;
     if let Some(name) = launch_connection {
-        app.connect_to_named_connection(&name).await?;
+        app.connect_to_named_connection(&name)?;
     }
     let result = app.run(terminal).await;
     let _ = execute!(stdout(), DisableBracketedPaste);

@@ -578,7 +578,7 @@ impl App<'_> {
 
         match explorer_state {
             DatabaseExplorerState::Connections => {
-                self.connect_to_database().await?;
+                self.connect_to_database()?;
             }
             DatabaseExplorerState::Databases => {
                 if let Some(database_name) = self.get_selected_database_name() {

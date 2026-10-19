@@ -88,22 +88,6 @@ impl PasswordService {
         }
     }
 
-    // High-level API
-
-    /// Get password for a connection from the appropriate source
-    /// Returns Some(password) if found in session or keyring, None if needs prompting.
-    /// `SQLite` connections have no password; returns None so caller connects without password.
-    pub fn get_password(&self, connection: &Connection) -> Option<String> {
-        if connection.r#type == ConnectionType::Sqlite {
-            return None;
-        }
-        if connection.should_ask_every_time() {
-            self.get_session_password(connection).cloned()
-        } else {
-            Self::get_from_keyring(&connection.name).ok()
-        }
-    }
-
     /// Get password for connection, returning empty string if "ask every time" and not in session.
     /// `SQLite` connections have no password; returns empty string.
     pub fn get_connection_password(connection: &Connection) -> String {

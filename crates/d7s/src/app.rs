@@ -177,7 +177,7 @@ impl App<'_> {
     #[allow(clippy::future_not_send)]
     pub async fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
-        self.ping_connections_if_any().await;
+        self.ping_connections_if_any();
         while self.running {
             terminal.draw(|frame| self.render(frame))?;
             self.drain_bg_events();
@@ -286,6 +286,62 @@ impl App<'_> {
                         table.as_deref(),
                         &message,
                     );
+                }
+                BgEvent::Connected {
+                    key,
+                    connection,
+                    database,
+                } => {
+                    self.in_flight.end(&key);
+                    let from_password_modal = self
+                        .modal_manager
+                        .password_connection()
+                        .is_some_and(|c| c.name == connection.name);
+                    let modal_password = from_password_modal.then(|| {
+                        self.modal_manager
+                            .get_password_modal_mut()
+                            .map(|m| m.input_value())
+                    }).flatten();
+                    let conn_for_session = connection.clone();
+                    self.apply_connected(connection, database);
+                    if let Some(password) = modal_password {
+                        self.password_service.store_session_password(
+                            &conn_for_session,
+                            password,
+                        );
+                        if let Some(password_modal) =
+                            self.modal_manager.get_password_modal_mut()
+                        {
+                            password_modal.close();
+                        }
+                    }
+                }
+                BgEvent::ConnectFailed { key, message } => {
+                    self.in_flight.end(&key);
+                    self.set_status(message);
+                    if let Some(modal_conn) =
+                        self.modal_manager.password_connection().cloned()
+                    {
+                        self.password_service.remove_session_password(&modal_conn);
+                        if let Some(password_modal) =
+                            self.modal_manager.get_password_modal_mut()
+                        {
+                            password_modal.clear_input();
+                        }
+                    }
+                }
+                BgEvent::ConnectPasswordRequired {
+                    key,
+                    connection,
+                    prompt,
+                } => {
+                    self.in_flight.end(&key);
+                    self.modal_manager
+                        .open_password_modal(connection, prompt);
+                }
+                BgEvent::ConnectionStatus { key, name, status } => {
+                    self.in_flight.end(&key);
+                    self.apply_connection_status(&name, status);
                 }
             }
         }
@@ -405,7 +461,7 @@ impl App<'_> {
                 self.apply_filter();
             }
         }
-        self.ping_connections_if_any().await;
+        self.ping_connections_if_any();
     }
 
     /// Copy the value under the cursor to the clipboard
@@ -1170,6 +1226,7 @@ mod tests {
         // Filtered view shows only one row; the ping must still cover all.
         app.database_explorer.connections.apply_filter("present");
         app.on_key_event(key('p')).await.unwrap();
+        drain_bg_work(&mut app).await;
 
         let status = |c: &FilteredData<Connection>| {
             c.original.iter().map(|c| c.status).collect::<Vec<_>>()
@@ -1198,7 +1255,7 @@ mod tests {
     #[tokio::test]
     async fn ping_if_any_skips_when_no_connections() {
         let mut app = App::default();
-        app.ping_connections_if_any().await;
+        app.ping_connections_if_any();
         assert!(app.database_explorer.connections.original.is_empty());
     }
 
@@ -1221,7 +1278,8 @@ mod tests {
                 .all(|c| c.status == ConnectionStatus::Unknown)
         );
 
-        app.ping_connections_if_any().await;
+        app.ping_connections_if_any();
+        drain_bg_work(&mut app).await;
 
         let statuses: Vec<_> = app
             .database_explorer
@@ -1246,7 +1304,8 @@ mod tests {
         let mut app = App::default();
         app.database_explorer.connections =
             FilteredData::new(vec![sqlite_conn("present", &present.path)]);
-        app.ping_connections_if_any().await;
+        app.ping_connections_if_any();
+        drain_bg_work(&mut app).await;
         let status = |app: &App<'_>| {
             app.database_explorer
                 .connections
@@ -1259,7 +1318,8 @@ mod tests {
         app.database_explorer.connections =
             FilteredData::new(vec![sqlite_conn("present", &present.path)]);
         assert_eq!(status(&app), Some(ConnectionStatus::Unknown));
-        app.ping_connections_if_any().await;
+        app.ping_connections_if_any();
+        drain_bg_work(&mut app).await;
         assert_eq!(status(&app), Some(ConnectionStatus::Up));
         let _ = remove_file(&present.path);
     }

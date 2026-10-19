@@ -1,4 +1,9 @@
-use crate::db::{Column, DatabaseInfo, Schema, Table, TableDataPage};
+use std::sync::Arc;
+
+use crate::db::{
+    Column, Database, DatabaseInfo, Schema, Table, TableDataPage,
+    connection::{Connection, ConnectionStatus},
+};
 
 /// Successful SQL execute payload for the UI thread.
 #[derive(Debug, Clone)]
@@ -70,5 +75,25 @@ pub enum BgEvent {
         schema: Option<String>,
         table: Option<String>,
         message: String,
+    },
+    /// Database connect succeeded off the UI thread.
+    Connected {
+        key: String,
+        connection: Connection,
+        database: Arc<dyn Database>,
+    },
+    /// Database connect failed off the UI thread.
+    ConnectFailed { key: String, message: String },
+    /// Keyring had no password; UI should prompt (connect key cleared).
+    ConnectPasswordRequired {
+        key: String,
+        connection: Connection,
+        prompt: String,
+    },
+    /// Per-connection health ping result.
+    ConnectionStatus {
+        key: String,
+        name: String,
+        status: ConnectionStatus,
     },
 }

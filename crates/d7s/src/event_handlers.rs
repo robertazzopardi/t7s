@@ -272,7 +272,7 @@ impl App<'_> {
                     self.database_explorer.state,
                     DatabaseExplorerState::Connections
                 ) {
-                    self.connect_to_database().await?;
+                    self.connect_to_database()?;
                 }
                 Ok(true)
             }
@@ -283,7 +283,7 @@ impl App<'_> {
                 ) {
                     if let Some(name) = PreferencesService::last_connection() {
                         let before = self.state;
-                        self.connect_to_named_connection(&name).await?;
+                        self.connect_to_named_connection(&name)?;
                         if self.state == AppState::DatabaseConnected
                             && before != AppState::DatabaseConnected
                         {
@@ -309,7 +309,7 @@ impl App<'_> {
                     self.database_explorer.state,
                     DatabaseExplorerState::Connections
                 ) {
-                    self.check_connections_health().await;
+                    self.check_connections_health();
                     Ok(true)
                 } else {
                     Ok(false)
@@ -479,7 +479,7 @@ impl App<'_> {
                     self.database_explorer.state,
                     DatabaseExplorerState::Connections
                 ) {
-                    self.connect_to_database().await?;
+                    self.connect_to_database()?;
                 } else {
                     self.handle_database_navigation().await?;
                 }
@@ -625,7 +625,7 @@ impl App<'_> {
                     self.modal_manager.cleanup_closed_modals();
                     return Ok(());
                 }
-                if self.handle_password_modal_save().await? {
+                if self.handle_password_modal_save()? {
                     return Ok(());
                 }
                 if let Some(statement) =
@@ -702,62 +702,23 @@ impl App<'_> {
     }
 
     /// Handle password modal save action
-    async fn handle_password_modal_save(&mut self) -> Result<bool> {
-        // Extract data from modal before attempting connection
-        // This releases the mutable borrow so we can call connect_with_password
+    fn handle_password_modal_save(&mut self) -> Result<bool> {
         let Some(connection) =
             self.modal_manager.password_connection().cloned()
         else {
             return Ok(false);
         };
 
-        let (connection, password) = {
+        let password = {
             let Some(password_modal) =
                 self.modal_manager.get_password_modal_mut()
             else {
                 return Ok(false);
             };
-
-            (connection, password_modal.input_value())
+            password_modal.input_value()
         };
 
-        // Store the state before attempting connection to check if it changed
-        let state_before = self.state;
-
-        // Try to connect with the password (don't store in session yet)
-        let password_clone = password.clone();
-        let _ = self
-            .connect_with_password(connection.clone(), password_clone)
-            .await;
-
-        // Check if connection succeeded by checking if state changed to DatabaseConnected
-        if self.state == AppState::DatabaseConnected
-            && state_before != AppState::DatabaseConnected
-        {
-            self.password_service
-                .store_session_password(&connection, password);
-            if let Some(password_modal) =
-                self.modal_manager.get_password_modal_mut()
-            {
-                password_modal.close();
-            }
-            let msg = self.connect_status_message(
-                &connection.name,
-                connection.environment,
-            );
-            self.set_status(msg);
-        } else {
-            // Connection failed, keep modal open so user can retry
-            // Remove any password from session that might have been stored
-            self.password_service.remove_session_password(&connection);
-            // The error message is already set by connect_with_password
-            // Clear the password field so user can retry
-            if let Some(password_modal) =
-                self.modal_manager.get_password_modal_mut()
-            {
-                password_modal.clear_input();
-            }
-        }
+        self.spawn_connect(connection, Some(password))?;
         Ok(true)
     }
 
