@@ -2,6 +2,9 @@
 rustc-ice-*
 .DS_Store
 *.mp4
+# Nix build outputs
+/result
+/result-*
 .demo-home/
 .demo-data/
 crates/d7s/docker/sqlite/*.sqlite
