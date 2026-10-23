@@ -1,6 +1,6 @@
 # t7s
 
-k9s-style terminal UIs in Rust ([Ratatui](https://ratatui.rs)). **t7s** is short for “terminals”: **d7s** (databases), **c8s** (containers), and **k9tui** (shared UI crate).
+k9s-style terminal UIs in Rust ([Ratatui](https://ratatui.rs)). **t7s** is short for “terminals”: **d7s** (databases), **c8s** (containers), **p7s** (processes), and **k9tui** (shared UI crate).
 
 Inspired by [k9s](https://k9scli.io/) — keyboard-driven, table-first TUIs for more than Kubernetes.
 
@@ -18,6 +18,10 @@ Docker TUI: containers (CPU/memory), images, volumes, networks, logs, exec. [REA
 
 ![c8s — container list, restart, live logs](crates/c8s/demo.gif)
 
+### [p7s](crates/p7s)
+
+System process viewer: live process list (CPU/memory), sort, filter, describe, signal picker. [README](crates/p7s/README.md); demo with `just p7s-demo` (canned data).
+
 ### [k9tui](crates/k9tui)
 
 Shared UI crate (theme, tables, modals, top bar, hotkeys). [README](crates/k9tui/README.md).
@@ -27,9 +31,10 @@ Shared UI crate (theme, tables, modals, top bar, hotkeys). [README](crates/k9tui
 ```sh
 cargo install d7s --locked
 cargo install c8s --locked
+cargo install p7s --locked
 ```
 
-Prebuilt binaries are on [GitHub Releases](https://github.com/robertazzopardi/t7s/releases), or `cargo binstall d7s` / `cargo binstall c8s`.
+Prebuilt binaries are on [GitHub Releases](https://github.com/robertazzopardi/t7s/releases), or `cargo binstall d7s` / `cargo binstall c8s` / `cargo binstall p7s`.
 
 ## Nix
 
@@ -41,6 +46,7 @@ just           # list project commands
 
 nix build      # d7s
 nix build .#c8s
+nix build .#p7s
 nix run .#d7s
 ```
 

@@ -1,5 +1,5 @@
 {
-  description = "k9s-style TUIs: d7s (PostgreSQL/MySQL/MariaDB/SQLite) and c8s (Docker)";
+  description = "k9s-style TUIs: d7s (PostgreSQL/MySQL/MariaDB/SQLite), c8s (Docker) and p7s (processes)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -146,6 +146,7 @@
           default = self.packages.${system}.d7s;
           d7s = mkCrate "d7s";
           c8s = mkCrate "c8s";
+          p7s = mkCrate "p7s";
         };
 
         # Formatter configuration
