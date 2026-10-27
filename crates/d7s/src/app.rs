@@ -159,7 +159,7 @@ impl App<'_> {
 
     /// Push the session width mode onto every table the app owns, so tables
     /// created later (new query, new drill-down) inherit it.
-    pub(crate) fn sync_column_width_mode(&mut self) {
+    pub(crate) const fn sync_column_width_mode(&mut self) {
         let m = self.column_width_mode;
         self.help_table.view.column_width_mode = m;
         self.describe_table.view.column_width_mode = m;
@@ -2180,7 +2180,10 @@ mod tests {
             let _ = render_sized(&mut app, w, h);
         }
         let text = render_sized(&mut app, 80, 24);
-        assert!(text.contains(long), "long name fits at 80 cols (not Fit-soft-capped)");
+        assert!(
+            text.contains(long),
+            "long name fits at 80 cols (not Fit-soft-capped)"
+        );
         // Ghost is clipped, not wrapped, in a 20x5 terminal.
         let text = render_sized(&mut app, 20, 5);
         assert!(!text.contains(&long[3..]));
@@ -2340,7 +2343,11 @@ mod tests {
         );
         app.toggle_column_width_mode();
         assert_eq!(
-            app.database_explorer.connections.table.view.column_width_mode,
+            app.database_explorer
+                .connections
+                .table
+                .view
+                .column_width_mode,
             ColumnWidthMode::Fit
         );
     }

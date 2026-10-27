@@ -411,6 +411,7 @@ fn plan_content(
 
 /// Fit layout: capped column widths, left/right peek strips for off-screen
 /// columns, spare width given to the fill column (or last full column).
+#[allow(clippy::too_many_lines)]
 fn plan_fit(
     content: &[usize],
     fill: Option<usize>,
@@ -442,20 +443,20 @@ fn plan_fit(
             |s| horizontal_window_start(&units, budget0, s, hint),
         )
     };
-    let (mut full, mut left, mut right);
+    let (mut packed, mut left, mut right);
     let mut tries = 0;
     loop {
         left = peeks && start > 0;
         let base = budget0.saturating_sub(if left { PEEK_COLS + 1 } else { 0 });
-        full = visible_columns_packed(&units, start, base);
-        right = peeks && full.last().is_some_and(|&i| i + 1 < n);
+        packed = visible_columns_packed(&units, start, base);
+        right = peeks && packed.last().is_some_and(|&i| i + 1 < n);
         let mut budget = base;
         if right {
             budget = base.saturating_sub(PEEK_COLS + 1);
-            full = visible_columns_packed(&units, start, budget);
+            packed = visible_columns_packed(&units, start, budget);
         }
         tries += 1;
-        let Some(s) = selected.filter(|s| !full.contains(s)) else {
+        let Some(s) = selected.filter(|s| !packed.contains(s)) else {
             break;
         };
         if tries == 3 {
@@ -464,7 +465,7 @@ fn plan_fit(
         start = horizontal_window_start(&units, budget, s, hint);
     }
     debug_assert!(
-        selected.is_none_or(|s| full.contains(&s)),
+        selected.is_none_or(|s| packed.contains(&s)),
         "selected column must be in the packed window"
     );
 
@@ -474,14 +475,14 @@ fn plan_fit(
         cols.push(start - 1);
         widths.push(PEEK_COLS);
     }
-    for &i in &full {
+    for &i in &packed {
         cols.push(i);
         widths.push(col_width(lens.get(i).copied().unwrap_or(0)));
     }
     // Under Fit the fill target absorbs spare width (only when nothing is peeked on the right).
     let target = (!right).then(|| {
-        fill.filter(|f| full.contains(f))
-            .or_else(|| full.last().copied())
+        fill.filter(|f| packed.contains(f))
+            .or_else(|| packed.last().copied())
     });
     let target_pos = target
         .flatten()
@@ -489,7 +490,7 @@ fn plan_fit(
     let gaps = cols.len().saturating_sub(1) + usize::from(right);
     if right {
         let used: usize = widths.iter().sum::<usize>() + gaps;
-        cols.push(full.last().map_or(0, |&i| i + 1));
+        cols.push(packed.last().map_or(0, |&i| i + 1));
         widths.push(area_w.saturating_sub(used).max(1));
     }
     if let Some(p) = target_pos {
@@ -527,7 +528,7 @@ fn plan_fit(
     let rel_selected = selected.map(|s| {
         cols.iter()
             .position(|&c| c == s)
-            .unwrap_or(usize::from(left))
+            .unwrap_or_else(|| usize::from(left))
     });
     ColumnPlan {
         cols,
@@ -934,7 +935,12 @@ mod tests {
     #[test]
     fn fit_peek_shows_ellipsis_when_columns_overflow() {
         // 6 cols of width 5 overflow 24 cols → the next column peeks as a 2-col strip.
-        let lines = render_with_mode(vec![Many("abcd".into())], 24, 3, ColumnWidthMode::Fit);
+        let lines = render_with_mode(
+            vec![Many("abcd".into())],
+            24,
+            3,
+            ColumnWidthMode::Fit,
+        );
         let row = lines.get(1).unwrap().trim_end();
         assert!(row.ends_with('…') && !row.contains("abcd3"), "{row:?}");
     }
@@ -959,7 +965,12 @@ mod tests {
             }
         }
         let long = "L".repeat(50);
-        let lines = render_with_mode(vec![Two(long.clone())], 80, 3, ColumnWidthMode::Fit);
+        let lines = render_with_mode(
+            vec![Two(long.clone())],
+            80,
+            3,
+            ColumnWidthMode::Fit,
+        );
         let row = lines.get(1).unwrap();
         assert!(row.contains(&long), "{row:?}");
         assert!(!row.contains('…'), "{row:?}");

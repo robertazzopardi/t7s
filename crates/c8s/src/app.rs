@@ -204,7 +204,7 @@ impl App {
 
     /// Push the session width mode onto every table, including `processes`,
     /// which is recreated on each open.
-    pub(crate) fn sync_column_width_mode(&mut self) {
+    pub(crate) const fn sync_column_width_mode(&mut self) {
         let m = self.column_width_mode;
         self.containers.view.column_width_mode = m;
         self.images.view.column_width_mode = m;
