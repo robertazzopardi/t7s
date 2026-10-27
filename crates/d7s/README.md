@@ -68,6 +68,7 @@ Tab completes; Esc cancels. Unique prefixes work (`:sch`). Draft row pending blo
 | `:tables` / `:table` | Tables in current schema |
 | `:table <name>` | Open table (same match rules; spaces ok) |
 | `:table conn.db.schema.table` | Jump across connections, databases and schemas (each part matched like above). SQLite: `conn.table`. MySQL: schema = database. Tab completes each level of the current context |
+| `:table schema.table` / `:table db.schema.table` | Inside a Postgres/MySQL connection: relative to the current database / connection. A path starting with an exact connection name that fits stays absolute |
 | `:columns` / `:cols` | Columns |
 | `:sql` / `:editor` | SQL editor |
 | `:log` / `:querylog` | Query log |

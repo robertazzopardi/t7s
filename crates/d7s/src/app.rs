@@ -2983,14 +2983,14 @@ mod tests {
         );
         app.on_key_event(esc()).unwrap();
 
-        // Same database, other schema; fuzzy parts.
-        run_cmd(&mut app, "table it.d7s_test.edge.empty").await;
+        // Relative to the current database; fuzzy parts.
+        run_cmd(&mut app, "table edge.empty").await;
         assert_eq!(
             app.database_explorer.state,
             open("edge_cases", "empty_table")
         );
 
-        // Other database, then back.
+        // Other database, then back (relative to the connection).
         run_cmd(&mut app, "table it.postgres.public.nope").await;
         assert_eq!(
             app.database_explorer
@@ -3000,7 +3000,7 @@ mod tests {
             Some("postgres")
         );
         assert!(render_text(&mut app).contains("No table matching 'nope'"));
-        run_cmd(&mut app, "table it.d7s_test.test_schema.categories").await;
+        run_cmd(&mut app, "table d7s_test.test_schema.categories").await;
         assert_eq!(
             app.database_explorer.state,
             open("test_schema", "categories")

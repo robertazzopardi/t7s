@@ -1,7 +1,5 @@
 //! k9s-style `:` command resolution. Pure: no app state, easy to test.
 
-use core::iter::once;
-
 /// A view/action a bare command word maps to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verb {
@@ -159,8 +157,41 @@ fn split_conn<'n, 'a>(
     Some((name, sqlite, rest))
 }
 
+/// Connected to a server (non-SQLite) connection: relative paths allowed.
+fn in_server(scope: &Scope) -> bool {
+    !scope.conn.is_empty()
+        && scope
+            .connections
+            .iter()
+            .any(|&(name, sqlite)| name == scope.conn && !sqlite)
+}
+
+/// Path parts after `conn`, or `None` when the count doesn't fit its type.
+fn table_path(conn: &str, sqlite: bool, parts: &[&str]) -> Option<TablePath> {
+    if parts.iter().any(|p| p.is_empty()) {
+        return None;
+    }
+    let (db, schema, table) = match (sqlite, parts) {
+        (true, [table]) => (None, None, table),
+        (false, [db, schema, table]) => (Some(db), Some(schema), table),
+        _ => return None,
+    };
+    Some(TablePath {
+        conn: conn.into(),
+        db: db.map(|d| (*d).into()),
+        schema: schema.map(|s| (*s).into()),
+        table: (*table).into(),
+    })
+}
+
+fn path_parts(s: &str) -> Vec<&str> {
+    s.split('.').map(str::trim).collect()
+}
+
 /// `table <arg>`: a current-schema table name, or a dotted path. A table
-/// literally named with a dot wins when typed exactly.
+/// literally named with a dot wins when typed exactly. Inside a server
+/// connection, `schema.table` and `db.schema.table` are relative to it,
+/// unless the path starts with an exact connection name and fits it.
 fn resolve_table_arg(arg: &str, scope: &Scope) -> Command {
     let arg = arg.trim();
     if !arg.contains('.')
@@ -173,78 +204,120 @@ fn resolve_table_arg(arg: &str, scope: &Scope) -> Command {
             Command::NoTable,
         );
     }
-    let Some((conn, sqlite, rest)) = split_conn(arg, scope.connections, true)
-    else {
-        let head = arg.split('.').next().unwrap_or(arg);
-        return Command::NoConnection(head.into());
-    };
-    let parts: Vec<&str> = rest.split('.').map(str::trim).collect();
-    if parts.iter().any(|p| p.is_empty()) {
-        return Command::BadTablePath(arg.into());
+    if let Some(path) = split_conn(arg, scope.connections, false).and_then(
+        |(conn, sqlite, rest)| table_path(conn, sqlite, &path_parts(rest)),
+    ) {
+        return Command::TablePath(path);
     }
-    let path = |db: Option<&str>, schema: Option<&str>, table: &str| {
-        Command::TablePath(TablePath {
-            conn: conn.into(),
+    let parts = path_parts(arg);
+    if in_server(scope) && (2..=3).contains(&parts.len()) {
+        if parts.iter().any(|p| p.is_empty()) {
+            return Command::BadTablePath(arg.into());
+        }
+        let (db, rest) = match parts.as_slice() {
+            [db, rest @ ..] if parts.len() == 3 => (Some(*db), rest),
+            rest => ((!scope.db.is_empty()).then_some(scope.db), rest),
+        };
+        let [schema, table] = rest else {
+            return Command::BadTablePath(arg.into());
+        };
+        return Command::TablePath(TablePath {
+            conn: scope.conn.into(),
             db: db.map(String::from),
-            schema: schema.map(String::from),
-            table: table.into(),
-        })
-    };
-    match (sqlite, parts.as_slice()) {
-        (true, [table]) => path(None, None, table),
-        (false, [db, schema, table]) => path(Some(db), Some(schema), table),
-        _ => Command::BadTablePath(arg.into()),
+            schema: Some((*schema).into()),
+            table: (*table).into(),
+        });
+    }
+    match split_conn(arg, scope.connections, true) {
+        None => {
+            let head = arg.split('.').next().unwrap_or(arg);
+            Command::NoConnection(head.into())
+        }
+        Some((conn, sqlite, rest)) => {
+            table_path(conn, sqlite, &path_parts(rest)).map_or_else(
+                || Command::BadTablePath(arg.into()),
+                Command::TablePath,
+            )
+        }
     }
 }
 
-/// Completion for `table <arg>`: current tables, then connection names, then
-/// each path level whose parent levels are the current context.
-fn suggest_table_arg(arg: &str, scope: &Scope) -> Option<String> {
-    // `more`: a deeper level follows, so complete (or append) the `.`.
-    let complete = |names: &[&str], typed: &str, more: bool| {
-        let typed_lower = typed.to_ascii_lowercase();
-        names
-            .iter()
-            .find(|n| {
-                let l = n.to_ascii_lowercase();
-                l.starts_with(&typed_lower)
-                    && (n.len() > typed.len() || (more && l == typed_lower))
-            })
-            .map(|n| format!("{n}{}", if more { "." } else { "" }))
-    };
-    if let Some(t) = complete(scope.tables, arg, false) {
-        return Some(t);
-    }
-    let Some((conn, sqlite, rest)) = split_conn(arg, scope.connections, false)
-    else {
-        if arg.contains('.') {
-            return None;
-        }
-        let names: Vec<&str> = scope.connections.iter().map(|c| c.0).collect();
-        return complete(&names, arg, true);
-    };
-    let parts: Vec<&str> = rest.split('.').collect();
-    let levels: &[&[&str]] = if sqlite {
-        &[scope.tables]
-    } else {
-        &[scope.databases, scope.schemas, scope.tables]
-    };
-    let level = parts.len() - 1;
-    let names = levels.get(level)?;
-    // Only the current context's names are loaded: parents must match it.
-    let path = once(conn).chain(parts.iter().copied());
-    let current = [scope.conn, scope.db, scope.schema];
-    if !path
-        .zip(current)
-        .take(level + 1)
+/// First of `names` extending `typed` (case-insensitive). `more`: a deeper
+/// level follows, so also complete an exact name and append the `.`.
+fn complete_name(names: &[&str], typed: &str, more: bool) -> Option<String> {
+    let typed_lower = typed.to_ascii_lowercase();
+    names
+        .iter()
+        .find(|n| {
+            let l = n.to_ascii_lowercase();
+            l.starts_with(&typed_lower)
+                && (n.len() > typed.len() || (more && l == typed_lower))
+        })
+        .map(|n| format!("{n}{}", if more { "." } else { "" }))
+}
+
+/// Complete the last of `parts`, typed against `levels`. Only the current
+/// context's names are loaded, so earlier parts must equal `context`.
+fn complete_level(
+    levels: &[&[&str]],
+    context: &[&str],
+    parts: &[&str],
+) -> Option<String> {
+    let (typed, parents) = parts.split_last()?;
+    let names = levels.get(parents.len())?;
+    if !parents
+        .iter()
+        .zip(context)
         .all(|(p, c)| p.eq_ignore_ascii_case(c))
     {
         return None;
     }
-    let typed = *parts.last()?;
+    complete_name(names, typed, parents.len() + 1 < levels.len())
+}
+
+/// Completion for `table <arg>`: current tables, then connection names, then
+/// each path level whose parents are the current context (absolute first,
+/// then relative `schema.table` / `db.schema.table` inside a server).
+fn suggest_table_arg(arg: &str, scope: &Scope) -> Option<String> {
+    if let Some(t) = complete_name(scope.tables, arg, false) {
+        return Some(t);
+    }
+    let typed = arg.rsplit('.').next()?;
     let done = arg.get(..arg.len() - typed.len())?;
-    complete(names, typed, level + 1 < levels.len())
-        .map(|n| format!("{done}{n}"))
+    let server = [scope.databases, scope.schemas, scope.tables];
+    let absolute = split_conn(arg, scope.connections, false)
+        .filter(|(conn, ..)| conn.eq_ignore_ascii_case(scope.conn))
+        .and_then(|(_, sqlite, rest)| {
+            let parts: Vec<&str> = rest.split('.').collect();
+            if sqlite {
+                complete_level(&[scope.tables], &[], &parts)
+            } else {
+                complete_level(&server, &[scope.db, scope.schema], &parts)
+            }
+        });
+    let completed = absolute
+        .or_else(|| {
+            let names: Vec<&str> =
+                scope.connections.iter().map(|c| c.0).collect();
+            (!arg.contains('.'))
+                .then(|| complete_name(&names, arg, true))
+                .flatten()
+        })
+        .or_else(|| {
+            let parts: Vec<&str> = arg.split('.').collect();
+            in_server(scope).then(|| {
+                complete_level(
+                    &[scope.schemas, scope.tables],
+                    &[scope.schema],
+                    &parts,
+                )
+                .or_else(|| {
+                    complete_level(&server, &[scope.db, scope.schema], &parts)
+                })
+            })?
+        })?;
+    // `completed` replaces only the last typed part.
+    Some(format!("{done}{completed}"))
 }
 
 /// Resolve typed command text. `scope` names are used only for the argument
@@ -427,14 +500,56 @@ mod tests {
         );
         assert_eq!(r("table lite.notes"), path("lite", None, None, "notes"));
         assert_eq!(r("table nope.a.b.c"), Command::NoConnection("nope".into()));
-        for bad in ["pg.app.users", "pg.a.b.c.d", "lite.main.notes", "pg..b.c"]
-        {
+        for bad in ["pg.a.b.c.d", "pg..b.c", "public.", "a..t"] {
             assert_eq!(
                 r(&format!("table {bad}")),
                 Command::BadTablePath(bad.into()),
                 "{bad}"
             );
         }
+        // Inside a server connection: relative to the current db / conn.
+        assert_eq!(
+            r("table public.users"),
+            path("pg", Some("app"), Some("public"), "users")
+        );
+        assert_eq!(
+            r("table analytics.events.clicks"),
+            path("pg", Some("analytics"), Some("events"), "clicks")
+        );
+        // An exact connection prefix that fits its depth stays absolute.
+        assert_eq!(r("table lite.notes"), path("lite", None, None, "notes"));
+        // A misfit connection prefix reads as relative.
+        assert_eq!(
+            r("table pg.app.users"),
+            path("pg", Some("pg"), Some("app"), "users")
+        );
+
+        // Not connected (or in SQLite): no relative forms.
+        let off = Scope {
+            connections: &CONNS,
+            ..Scope::default()
+        };
+        let r = |q: &str| super::resolve(q, &off);
+        assert_eq!(
+            r("table public.users"),
+            Command::NoConnection("public".into())
+        );
+        for bad in ["pg.app.users", "lite.main.notes"] {
+            assert_eq!(
+                r(&format!("table {bad}")),
+                Command::BadTablePath(bad.into()),
+                "{bad}"
+            );
+        }
+        let in_lite = Scope {
+            connections: &CONNS,
+            conn: "lite",
+            ..Scope::default()
+        };
+        assert_eq!(
+            super::resolve("table main.notes", &in_lite),
+            Command::NoConnection("main".into())
+        );
         // A table literally named with a dot still opens directly.
         let sc = Scope {
             tables: &["a.b"],
@@ -469,6 +584,17 @@ mod tests {
         assert_eq!(s("table pg.app.other.us"), None);
         assert_eq!(s("table lite.no"), None);
         assert_eq!(s("table nope.x"), None);
+        // Relative levels: schemas, then databases, after tables and conns.
+        assert_eq!(s("table pu").as_deref(), Some("table public."));
+        assert_eq!(s("table an").as_deref(), Some("table analytics."));
+        assert_eq!(s("table public.us").as_deref(), Some("table public.users"));
+        assert_eq!(s("table app.pu").as_deref(), Some("table app.public."));
+        assert_eq!(
+            s("table app.public.ord").as_deref(),
+            Some("table app.public.order_items")
+        );
+        assert_eq!(s("table analytics.pu"), None, "db not loaded");
+        assert_eq!(s("table info.us"), None, "schema not current");
         let lite = Scope {
             tables: &["notes"],
             connections: &CONNS,

@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Row drafts: `n` blank draft, `N` draft with column defaults prefilled in the grid (literal defaults shown; nullable empty → `NULL`; generated columns left blank and omitted on insert), `c` duplicate row, `a` alias for `n`; new drafts auto-enter edit on the first editable column.
 - Tab and Shift+Tab move inline edit across editable columns on the same row (skips read-only columns).
 - While editing a cell, Ctrl+e opens the multiline editor modal; `D` and `d` are ignored so delete/describe do not fire; Space and `y` stay browse-only.
-- `:table conn.db.schema.table` (SQLite: `conn.table`) jumps across connections, databases and schemas, also from the connection list. Tab completes connection names and each level of the current context. Any key cancels a jump that is still loading.
+- `:table conn.db.schema.table` (SQLite: `conn.table`) jumps across connections, databases and schemas, also from the connection list. Inside a Postgres/MySQL connection the prefix can be omitted: `:table schema.table` (current database) and `:table db.schema.table` (current connection). Tab completes connection names and each level of the current context. Any key cancels a jump that is still loading.
 
 ### Fixed
 - Connecting to SQLite opens its tables list again (results were dropped while the view was still on databases).
