@@ -449,8 +449,11 @@ impl App {
                 }
                 BackgroundEvent::DescribeReady { key, name, text } => {
                     self.in_flight.end(&key);
-                    self.describe_scroll = 0;
-                    self.state = AppState::Describe { name, text };
+                    // Requested from the list; the user may have opened logs etc. since.
+                    if self.state == AppState::List {
+                        self.describe_scroll = 0;
+                        self.state = AppState::Describe { name, text };
+                    }
                 }
                 BackgroundEvent::Connected(client) => {
                     self.in_flight.end(DAEMON_KEY);
@@ -465,7 +468,9 @@ impl App {
                 }
                 BackgroundEvent::DaemonHealthOk(health) => {
                     self.in_flight.end(DAEMON_KEY);
-                    self.state = AppState::Info(health);
+                    if self.state == AppState::List {
+                        self.state = AppState::Info(health);
+                    }
                 }
             }
         }
@@ -818,6 +823,35 @@ mod tests {
         app.connect();
         assert!(app.in_flight.contains(DAEMON_KEY));
         assert_eq!(app.state, AppState::Connecting);
+    }
+
+    #[test]
+    fn late_describe_does_not_replace_another_view() {
+        let mut app = App::new();
+        app.state = AppState::Connecting;
+        assert!(app.in_flight.try_begin("d"));
+        app.bg_tx
+            .send(BackgroundEvent::DescribeReady {
+                key: "d".into(),
+                name: "web".into(),
+                text: "{}".into(),
+            })
+            .unwrap();
+        app.drain_background_events();
+        assert!(!app.in_flight.contains("d"));
+        assert_eq!(app.state, AppState::Connecting);
+
+        app.state = AppState::List;
+        assert!(app.in_flight.try_begin("d"));
+        app.bg_tx
+            .send(BackgroundEvent::DescribeReady {
+                key: "d".into(),
+                name: "web".into(),
+                text: "{}".into(),
+            })
+            .unwrap();
+        app.drain_background_events();
+        assert!(matches!(app.state, AppState::Describe { .. }));
     }
 
     #[tokio::test]
