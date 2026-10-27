@@ -55,11 +55,58 @@ pub struct TableModel<T: TableData + Clone> {
     pub dynamic_column_names: Option<Arc<Vec<String>>>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColumnWidthMode {
+    #[default]
+    Fit,
+    Content,
+}
+
+impl ColumnWidthMode {
+    #[must_use]
+    pub const fn toggle(self) -> Self {
+        match self {
+            Self::Fit => Self::Content,
+            Self::Content => Self::Fit,
+        }
+    }
+}
+
+impl fmt::Display for ColumnWidthMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Fit => "Fit",
+            Self::Content => "Content",
+        })
+    }
+}
+
+/// Width of the partial-column strips shown at the edges under Fit.
+const PEEK_COLS: usize = 2;
+
+const fn fit_soft_cap(area_width: usize) -> usize {
+    let soft = area_width / 3;
+    if soft == 0 { 1 } else { soft }
+}
+
+/// Fit soft cap, in place; returns the capped total. The soft cap is at most
+/// `area_width`, so it doubles as the hard (viewport) cap.
+fn cap_fit_lens(lens: &mut [usize], area_width: usize) -> usize {
+    let cap = fit_soft_cap(area_width);
+    lens.iter_mut()
+        .map(|l| {
+            *l = (*l).min(cap);
+            *l
+        })
+        .sum()
+}
+
 /// View state for the table (UI state like selection, scrolling)
 #[derive(Clone, Debug, Default)]
 pub struct TableViewState {
     pub state: TableState,
     pub column_offset: usize,
+    pub column_width_mode: ColumnWidthMode,
 }
 
 /// Combined state that holds both model and view state
@@ -95,6 +142,7 @@ impl<T: TableData + Clone> TableDataState<T> {
             view: TableViewState {
                 state: TableState::default().with_selected(0),
                 column_offset: 0,
+                column_width_mode: ColumnWidthMode::Fit,
             },
             multi_row_selection: BTreeSet::new(),
         }
@@ -299,6 +347,185 @@ fn calculate_visible_columns_for_table(
     (vis_cols, rel, start)
 }
 
+/// Columns to draw plus how to size and truncate each one.
+struct ColumnPlan {
+    cols: Vec<usize>,
+    constraints: Vec<Constraint>,
+    /// Max display width per drawn column; `None` leaves the text alone.
+    trunc: Vec<Option<usize>>,
+    rel_selected: Option<usize>,
+    start: usize,
+}
+
+fn length(w: usize) -> Constraint {
+    Constraint::Length(u16::try_from(w).unwrap_or(u16::MAX))
+}
+
+/// Legacy size-to-content layout; only the fill column is truncated.
+fn plan_content(
+    lens: &[usize],
+    fill: Option<usize>,
+    selected: Option<usize>,
+    hint: usize,
+    area_w: u16,
+) -> ColumnPlan {
+    let (cols, rel_selected, start) =
+        calculate_visible_columns_for_table(lens, hint, selected, area_w);
+    let fill_width = fill.map(|f| {
+        let others: usize = cols
+            .iter()
+            .filter(|&&i| i != f)
+            .map(|&i| col_width(lens.get(i).copied().unwrap_or(0)))
+            .sum();
+        // Table puts 1 cell of spacing between each pair of columns.
+        let gaps = cols.len().saturating_sub(1);
+        usize::from(area_w).saturating_sub(others + gaps).max(1)
+    });
+    let (constraints, trunc) = cols
+        .iter()
+        .map(|&i| {
+            if fill == Some(i) {
+                (Constraint::Fill(1), fill_width)
+            } else {
+                (length(lens.get(i).unwrap_or(&0) + 1), None)
+            }
+        })
+        .unzip();
+    ColumnPlan {
+        cols,
+        constraints,
+        trunc,
+        rel_selected,
+        start,
+    }
+}
+
+/// Fit layout: capped column widths, left/right peek strips for off-screen
+/// columns, spare width given to the fill column (or last full column).
+#[allow(clippy::too_many_lines)]
+fn plan_fit(
+    content: &[usize],
+    fill: Option<usize>,
+    selected: Option<usize>,
+    hint: usize,
+    area_w: usize,
+) -> ColumnPlan {
+    let n = content.len();
+    let mut lens = content.to_vec();
+    if let Some(f) = fill.and_then(|f| lens.get_mut(f)) {
+        *f = (*f).min(FILL_MIN_LEN);
+    }
+    // Soft-cap only when the uncapped content (+ gaps) overflows; otherwise show it all.
+    let mut total: usize = lens.iter().sum();
+    if total + n.saturating_sub(1) > area_w {
+        total = cap_fit_lens(&mut lens, area_w);
+    }
+    // Pack with gap-aware units (cell + 1 spacing), so budget is `area_w + 1`.
+    let units: Vec<usize> = lens.iter().map(|&l| l + 1).collect();
+    let budget0 = area_w + 1;
+    // Same as summing `col_width(unit)`: each column costs `len + 2`.
+    let all_fit = total + 2 * n <= budget0;
+    // Too narrow for peeks to be useful; fall back to plain packing.
+    let peeks = area_w >= 4 * PEEK_COLS;
+
+    let mut start = if all_fit {
+        0
+    } else {
+        selected.map_or_else(
+            || hint.min(n - 1),
+            |s| horizontal_window_start(&units, budget0, s, hint),
+        )
+    };
+    let (mut packed, mut left, mut right);
+    let mut tries = 0;
+    loop {
+        left = peeks && start > 0;
+        let base = budget0.saturating_sub(if left { PEEK_COLS + 1 } else { 0 });
+        packed = visible_columns_packed(&units, start, base);
+        right = peeks && packed.last().is_some_and(|&i| i + 1 < n);
+        let mut budget = base;
+        if right {
+            budget = base.saturating_sub(PEEK_COLS + 1);
+            packed = visible_columns_packed(&units, start, budget);
+        }
+        tries += 1;
+        let Some(s) = selected.filter(|s| !packed.contains(s)) else {
+            break;
+        };
+        if tries == 3 {
+            break;
+        }
+        start = horizontal_window_start(&units, budget, s, hint);
+    }
+    debug_assert!(
+        selected.is_none_or(|s| packed.contains(&s)),
+        "selected column must be in the packed window"
+    );
+
+    // `cols` is `[left peek?] + packed + [right peek?]`, so packed index `p`
+    // sits at `p + off`.
+    let off = usize::from(left);
+    let mut cols = Vec::with_capacity(packed.len() + 2);
+    let mut widths = Vec::with_capacity(packed.len() + 2);
+    if left {
+        cols.push(start - 1);
+        widths.push(PEEK_COLS);
+    }
+    for &i in &packed {
+        cols.push(i);
+        widths.push(col_width(lens.get(i).copied().unwrap_or(0)));
+    }
+    let used: usize = widths.iter().sum();
+    // Under Fit the fill target absorbs spare width (only when nothing is peeked on the right).
+    let target_pos = (!right)
+        .then(|| {
+            fill.and_then(|f| packed.iter().position(|&i| i == f))
+                .or_else(|| packed.len().checked_sub(1))
+        })
+        .flatten()
+        .map(|p| p + off);
+    if right {
+        let w = area_w.saturating_sub(used + cols.len()).max(1);
+        cols.push(packed.last().map_or(0, |&i| i + 1));
+        widths.push(w);
+    }
+    if let Some(w) = target_pos.and_then(|p| widths.get_mut(p)) {
+        let others = used - *w;
+        *w = area_w.saturating_sub(others + cols.len() - 1).max(1);
+    }
+
+    let last = cols.len() - 1;
+    // Leave the spacing cell free between columns; the last one may use its full width.
+    let (constraints, trunc) = widths
+        .iter()
+        .enumerate()
+        .map(|(j, &w)| {
+            let c = if Some(j) == target_pos {
+                Constraint::Fill(1)
+            } else {
+                length(w)
+            };
+            (
+                c,
+                Some(if j == last {
+                    w
+                } else {
+                    w.saturating_sub(1).max(1)
+                }),
+            )
+        })
+        .unzip();
+    let rel_selected = selected
+        .map(|s| packed.iter().position(|&c| c == s).map_or(off, |p| p + off));
+    ColumnPlan {
+        cols,
+        constraints,
+        trunc,
+        rel_selected,
+        start,
+    }
+}
+
 impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
     type State = TableDataState<T>;
 
@@ -311,19 +538,36 @@ impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
         // A fill column only needs a small floor to stay in the visible set;
         // it then takes whatever width the other columns leave.
         let fill = T::fill_column();
-        let mut lens = state.model.longest_item_lens.clone();
-        if let Some(f) = fill.and_then(|f| lens.get_mut(f)) {
-            *f = (*f).min(FILL_MIN_LEN);
-        }
-
         let selected_col_opt = state.view.state.selected_column();
-        let (visible_cols, relative_selected_col, scroll_start) =
-            calculate_visible_columns_for_table(
-                &lens,
-                state.view.column_offset,
+        let plan = match state.view.column_width_mode {
+            ColumnWidthMode::Content => {
+                let mut lens = state.model.longest_item_lens.clone();
+                if let Some(f) = fill.and_then(|f| lens.get_mut(f)) {
+                    *f = (*f).min(FILL_MIN_LEN);
+                }
+                plan_content(
+                    &lens,
+                    fill,
+                    selected_col_opt,
+                    state.view.column_offset,
+                    area.width,
+                )
+            }
+            ColumnWidthMode::Fit => plan_fit(
+                &state.model.longest_item_lens,
+                fill,
                 selected_col_opt,
-                area.width,
-            );
+                state.view.column_offset,
+                usize::from(area.width),
+            ),
+        };
+        let ColumnPlan {
+            cols: visible_cols,
+            constraints,
+            trunc,
+            rel_selected: relative_selected_col,
+            start: scroll_start,
+        } = plan;
         state.view.column_offset = scroll_start;
 
         let original_col = state.view.state.selected_column();
@@ -397,17 +641,6 @@ impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
             },
         );
 
-        let fill_width = fill.map_or(0, |f| {
-            let others: usize = visible_cols
-                .iter()
-                .filter(|&&i| i != f)
-                .map(|&i| col_width(lens.get(i).copied().unwrap_or(0)))
-                .sum();
-            // Table puts 1 cell of spacing between each pair of columns.
-            let gaps = visible_cols.len().saturating_sub(1);
-            (area.width as usize).saturating_sub(others + gaps).max(1)
-        });
-
         let rows =
             state.model.items.iter().enumerate().map(|(row_idx, data)| {
                 let row_data = data.ref_array();
@@ -428,8 +661,8 @@ impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
                             row_data.get(idx).cloned().unwrap_or_default();
                         let (mut text, cell_style) =
                             format_display_cell(data, idx, value);
-                        if fill == Some(idx) {
-                            text = truncate_ellipsis(&text, fill_width);
+                        if let Some(w) = trunc.get(vis_idx).copied().flatten() {
+                            text = truncate_ellipsis(&text, w);
                         }
                         if data.is_draft_row() && vis_idx == 0 {
                             text = format!("~{text}");
@@ -444,17 +677,6 @@ impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
                     .style(row_style)
                     .height(1)
             });
-
-        let constraints = visible_cols
-            .iter()
-            .map(|&idx| {
-                if fill == Some(idx) {
-                    return Constraint::Fill(1);
-                }
-                let width = lens.get(idx).unwrap_or(&0) + 1;
-                Constraint::Length(u16::try_from(width).unwrap_or(u16::MAX))
-            })
-            .collect::<Vec<_>>();
 
         let t = Table::new(rows, constraints)
             .header(header)
@@ -613,7 +835,17 @@ mod tests {
         width: u16,
         height: u16,
     ) -> Vec<String> {
+        render_with_mode(items, width, height, ColumnWidthMode::Fit)
+    }
+
+    fn render_with_mode<T: TableData + fmt::Debug + Clone>(
+        items: Vec<T>,
+        width: u16,
+        height: u16,
+        mode: ColumnWidthMode,
+    ) -> Vec<String> {
         let mut state = TableDataState::new(items);
+        state.view.column_width_mode = mode;
         let mut terminal =
             Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
@@ -630,6 +862,204 @@ mod tests {
             .chunks(usize::from(width.max(1)))
             .map(|row| row.iter().map(buffer::Cell::symbol).collect::<String>())
             .collect()
+    }
+
+    #[derive(Debug, Clone)]
+    struct WideThird(&'static str, &'static str, String);
+
+    impl TableData for WideThird {
+        fn title() -> &'static str {
+            "wide"
+        }
+        fn ref_array(&self) -> Vec<String> {
+            vec![self.0.into(), self.1.into(), self.2.clone()]
+        }
+        fn num_columns(&self) -> usize {
+            3
+        }
+        fn cols() -> Vec<&'static str> {
+            vec!["A", "B", "Wide"]
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct Many(String);
+
+    impl TableData for Many {
+        fn title() -> &'static str {
+            "many"
+        }
+        fn ref_array(&self) -> Vec<String> {
+            (0..6).map(|i| format!("{}{}", self.0, i)).collect()
+        }
+        fn num_columns(&self) -> usize {
+            6
+        }
+        fn cols() -> Vec<&'static str> {
+            vec!["C0", "C1", "C2", "C3", "C4", "C5"]
+        }
+    }
+
+    #[test]
+    fn fit_shows_more_than_one_column_when_third_is_huge() {
+        let rows = vec![WideThird("a", "b", "x".repeat(200))];
+        let lines = render_with_mode(rows, 40, 3, ColumnWidthMode::Fit);
+        let header = lines.first().unwrap().as_str();
+        assert!(header.contains('A'), "{header:?}");
+        assert!(header.contains('B'), "{header:?}");
+    }
+
+    #[test]
+    fn fit_fills_short_table_to_right_edge() {
+        // Last column grows to the right edge and ellipsizes there.
+        let rows = vec![WideThird("a", "b", "x".repeat(200))];
+        let lines = render_with_mode(rows, 40, 4, ColumnWidthMode::Fit);
+        let row = lines.get(1).unwrap().as_str();
+        assert!(row.trim_end().chars().count() >= 38, "{row:?}");
+        assert!(row.trim_end().ends_with('…'), "{row:?}");
+    }
+
+    #[test]
+    fn fit_peek_shows_ellipsis_when_columns_overflow() {
+        // 6 cols of width 5 overflow 24 cols → the next column peeks as a 2-col strip.
+        let lines = render_with_mode(
+            vec![Many("abcd".into())],
+            24,
+            3,
+            ColumnWidthMode::Fit,
+        );
+        let row = lines.get(1).unwrap().trim_end();
+        assert!(row.ends_with('…') && !row.contains("abcd3"), "{row:?}");
+    }
+
+    #[test]
+    fn fit_does_not_softcap_when_content_fits() {
+        // [50, 5] + gap = 56 <= 80: nothing overflows, so nothing is ellipsized.
+        #[derive(Debug, Clone)]
+        struct Two(String);
+        impl TableData for Two {
+            fn title() -> &'static str {
+                "two"
+            }
+            fn ref_array(&self) -> Vec<String> {
+                vec![self.0.clone(), "short".into()]
+            }
+            fn num_columns(&self) -> usize {
+                2
+            }
+            fn cols() -> Vec<&'static str> {
+                vec!["A", "B"]
+            }
+        }
+        let long = "L".repeat(50);
+        let lines = render_with_mode(
+            vec![Two(long.clone())],
+            80,
+            3,
+            ColumnWidthMode::Fit,
+        );
+        let row = lines.get(1).unwrap();
+        assert!(row.contains(&long), "{row:?}");
+        assert!(!row.contains('…'), "{row:?}");
+    }
+
+    #[test]
+    fn fit_right_peek_fits_area_and_truncates_every_cell() {
+        // 6 cols of width 5 (+gaps) don't fit in 24: right peek strip expected.
+        let lines = render_with_mode(
+            vec![Many("abcd".into())],
+            24,
+            3,
+            ColumnWidthMode::Fit,
+        );
+        let row = lines.get(1).unwrap().as_str();
+        assert_eq!(row.chars().count(), 24);
+        assert!(row.starts_with("abcd0 "), "{row:?}");
+        assert!(row.trim_end().ends_with('…'), "{row:?}");
+        assert!(!row.contains("abcd5"), "{row:?}");
+    }
+
+    #[test]
+    fn fit_left_peek_when_scrolled_right() {
+        let mut state = TableDataState::new(vec![Many("abcd".into())]);
+        state.view.state.select_column(Some(5));
+        let mut terminal = Terminal::new(TestBackend::new(24, 3)).unwrap();
+        terminal
+            .draw(|f| {
+                f.render_stateful_widget(
+                    DataTable::<Many>::default(),
+                    f.area(),
+                    &mut state,
+                );
+            })
+            .unwrap();
+        let row: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .get(24..48)
+            .unwrap()
+            .iter()
+            .map(buffer::Cell::symbol)
+            .collect();
+        assert!(row.contains("abcd5"), "{row:?}");
+        assert!(row.starts_with('…') || row.starts_with("a…"), "{row:?}");
+        assert!(state.view.column_offset > 0);
+    }
+
+    #[test]
+    fn content_mode_matches_legacy_short_layout() {
+        assert_eq!(
+            render_with_mode(items(), 20, 4, ColumnWidthMode::Content),
+            vec![
+                "Name   Value        ",
+                "alpha  1            ",
+                "beta   2            ",
+                "                    ",
+            ]
+        );
+    }
+
+    #[test]
+    fn fit_header_floors_width() {
+        #[derive(Debug, Clone)]
+        struct H;
+        impl TableData for H {
+            fn title() -> &'static str {
+                "h"
+            }
+            fn ref_array(&self) -> Vec<String> {
+                vec!["x".into()]
+            }
+            fn num_columns(&self) -> usize {
+                1
+            }
+            fn cols() -> Vec<&'static str> {
+                vec!["LongHeader"]
+            }
+        }
+        let lines = render_with_mode(vec![H], 40, 3, ColumnWidthMode::Fit);
+        assert!(lines.first().unwrap().contains("LongHeader"), "{lines:?}");
+    }
+
+    #[test]
+    fn fit_tiny_areas_do_not_panic() {
+        for w in 0u16..=12 {
+            for h in 0u16..=3 {
+                let _ = render_with_mode(
+                    vec![WideThird("a", "b", "x".repeat(80))],
+                    w,
+                    h,
+                    ColumnWidthMode::Fit,
+                );
+                let _ = render_with_mode(
+                    vec![Many("abcd".into())],
+                    w,
+                    h,
+                    ColumnWidthMode::Fit,
+                );
+            }
+        }
     }
 
     #[derive(Debug, Clone)]
@@ -709,7 +1139,7 @@ mod tests {
         assert_eq!(Item::fill_column(), None);
         // Fixed layout for a table without a fill column (matches main).
         assert_eq!(
-            render_lines(items(), 20, 4),
+            render_with_mode(items(), 20, 4, ColumnWidthMode::Content),
             vec![
                 "Name   Value        ",
                 "alpha  1            ",
@@ -718,10 +1148,13 @@ mod tests {
             ]
         );
         assert_eq!(
-            render_lines(items(), 8, 3),
+            render_with_mode(items(), 8, 3, ColumnWidthMode::Content),
             vec!["Name    ", "alpha   ", "beta    "]
         );
-        assert_eq!(render_lines(items(), 3, 3), vec!["Nam", "alp", "bet"]);
+        assert_eq!(
+            render_with_mode(items(), 3, 3, ColumnWidthMode::Content),
+            vec!["Nam", "alp", "bet"]
+        );
     }
 
     #[test]
@@ -754,6 +1187,40 @@ mod tests {
                 let _ = render_lines(vec![Filled(String::new())], w, h);
             }
         }
+    }
+
+    #[test]
+    fn column_width_mode_defaults_to_fit_and_toggles() {
+        assert_eq!(ColumnWidthMode::default(), ColumnWidthMode::Fit);
+        assert_eq!(ColumnWidthMode::Fit.toggle(), ColumnWidthMode::Content);
+        assert_eq!(ColumnWidthMode::Content.toggle(), ColumnWidthMode::Fit);
+        assert_eq!(ColumnWidthMode::Fit.to_string(), "Fit");
+        assert_eq!(ColumnWidthMode::Content.to_string(), "Content");
+    }
+
+    #[test]
+    fn cap_fit_lens_soft_caps_and_returns_total() {
+        // area 30 → soft = 10
+        let mut lens = vec![5usize, 100, 8];
+        assert_eq!(cap_fit_lens(&mut lens, 30), 23);
+        assert_eq!(lens, vec![5, 10, 8]);
+    }
+
+    #[test]
+    fn cap_fit_lens_never_exceeds_viewport() {
+        for area in [0usize, 1, 2, 20] {
+            let mut lens = vec![500usize];
+            cap_fit_lens(&mut lens, area);
+            assert!(lens.iter().all(|&l| l <= area.max(1)), "area {area}");
+        }
+    }
+
+    #[test]
+    fn table_view_state_defaults_to_fit() {
+        assert_eq!(
+            TableViewState::default().column_width_mode,
+            ColumnWidthMode::Fit
+        );
     }
 }
 

@@ -63,6 +63,7 @@ impl App {
             (_, KeyCode::Char('q') | KeyCode::Esc) => self.close_processes(),
             (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
             (_, KeyCode::Char('l')) => self.open_process_output(),
+            (_, KeyCode::Char('W')) => self.toggle_column_width_mode(),
             (_, KeyCode::Char('j')) => self.navigate_processes(KeyCode::Down),
             (_, KeyCode::Char('k')) => self.navigate_processes(KeyCode::Up),
             (
@@ -322,6 +323,7 @@ impl App {
         }
 
         match (key.modifiers, key.code) {
+            (_, KeyCode::Char('W')) => self.toggle_column_width_mode(),
             (_, KeyCode::Char('1')) => {
                 self.switch_view(ResourceKind::Containers);
             }
@@ -795,6 +797,25 @@ mod tests {
         assert!(!app.command_mode && !app.list_search_open);
         assert_eq!(app.view, ResourceKind::Images);
         assert_eq!(app.hotkeys.len(), RESOURCE_HOTKEYS.len());
+    }
+
+    #[tokio::test]
+    async fn w_toggles_column_width_mode_on_all_tables() {
+        use k9tui::widgets::table::ColumnWidthMode::{Content, Fit};
+        let mut app = app();
+        let mut t = term();
+        let w = KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT);
+        app.on_key_event(w, &mut t).await.unwrap();
+        assert_eq!(app.column_width_mode, Content);
+        assert_eq!(app.status_line.message(), "Column width: Content");
+        assert_eq!(app.networks.view.column_width_mode, Content);
+        assert_eq!(app.processes.view.column_width_mode, Content);
+        // Processes are recreated on open; render re-syncs them.
+        app.processes = TableDataState::new(Vec::new());
+        screen(&mut app, &mut t);
+        assert_eq!(app.processes.view.column_width_mode, Content);
+        app.on_key_event(w, &mut t).await.unwrap();
+        assert_eq!(app.images.view.column_width_mode, Fit);
     }
 
     #[tokio::test]

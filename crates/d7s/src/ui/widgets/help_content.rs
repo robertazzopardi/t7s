@@ -71,6 +71,10 @@ const VIM_NAV_HELP: &[HelpEntry] = &[
         key: "/",
         desc: "Search filter",
     },
+    HelpEntry {
+        key: "W",
+        desc: "Toggle column width (Fit / Content)",
+    },
 ];
 
 const CONNECTION_HELP: &[HelpEntry] = &[

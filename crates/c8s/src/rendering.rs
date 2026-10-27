@@ -31,6 +31,7 @@ const SEARCH_BAR_HEIGHT: u16 = 3;
 
 impl App {
     pub fn render(&mut self, frame: &mut Frame) {
+        self.sync_column_width_mode();
         match &self.state {
             AppState::Connecting => Self::render_connecting(frame),
             AppState::ConnectError(message) => {

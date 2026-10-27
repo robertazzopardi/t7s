@@ -57,6 +57,20 @@ WITH RECURSIVE seq(i) AS (
 INSERT INTO big_seed (payload)
 SELECT 'row_' || i FROM seq;
 
+-- Short | very long | short — open this and press W to see Fit vs Content.
+CREATE TABLE wide_cols (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    tag TEXT NOT NULL
+);
+
+INSERT INTO wide_cols (code, payload, tag) VALUES
+    ('A1', 'lorem-ipsum-dolor-sit-amet-lorem-ipsum-dolor-sit-amet-lorem-ipsum-dolor-sit-amet-lorem-ipsum-dolor-sit-amet-lorem-ipsum-dolor-sit-amet-lorem-ipsum-dolor-sit-amet-', 'alpha'),
+    ('B2', 'https://example.com/path/to/resource?id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'beta'),
+    ('C3', 'short-enough', 'gamma'),
+    ('D4', 'WIDE_COLUMN_PAYLOAD_WIDE_COLUMN_PAYLOAD_WIDE_COLUMN_PAYLOAD_WIDE_COLUMN_PAYLOAD_WIDE_COLUMN_PAYLOAD_WIDE_COLUMN_PAYLOAD_WIDE_COLUMN_PAYLOAD_WIDE_COLUMN_PAYLOAD_', 'delta');
+
 CREATE TABLE customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

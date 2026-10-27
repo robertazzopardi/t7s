@@ -199,6 +199,20 @@ INSERT INTO long_text (short_text, long_text) VALUES
     ('short', REPEAT('The quick brown fox jumps over the lazy dog. ', 40)),
     ('empty', '');
 
+-- Short | very long | short — open this and press W to see Fit vs Content.
+CREATE TABLE wide_cols (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    code VARCHAR(8) NOT NULL,
+    payload TEXT NOT NULL,
+    tag VARCHAR(8) NOT NULL
+) DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO wide_cols (code, payload, tag) VALUES
+    ('A1', REPEAT('lorem-ipsum-dolor-sit-amet-', 12), 'alpha'),
+    ('B2', CONCAT(REPEAT('https://example.com/path/to/resource?id=', 8), 'zzzz'), 'beta'),
+    ('C3', 'short-enough', 'gamma'),
+    ('D4', REPEAT('WIDE_COLUMN_PAYLOAD_', 20), 'delta');
+
 -- Wide variety of column types, including binary / bit / json / date-time.
 CREATE TABLE full_types (
     id INT AUTO_INCREMENT PRIMARY KEY,
