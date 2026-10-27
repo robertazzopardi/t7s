@@ -217,7 +217,6 @@ impl App<'_> {
     }
 
     /// Run the application's main loop.
-    #[allow(clippy::future_not_send)]
     pub fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
         self.ping_connections_if_any();
@@ -473,7 +472,9 @@ impl App<'_> {
                 }
                 BgEvent::DescribeRowsLoaded { key, target, rows } => {
                     self.in_flight.end(&key);
-                    self.apply_describe_rows_loaded(&target, rows);
+                    if self.is_active_key(&key) {
+                        self.apply_describe_rows_loaded(&target, rows);
+                    }
                 }
                 BgEvent::ConnectionTestResult {
                     key,
@@ -693,7 +694,7 @@ impl App<'_> {
         let Some((target, work)) = self.describe_work_for_selection() else {
             return false;
         };
-        let key = describe_key();
+        let key = describe_key(&self.database_explorer.connection.name);
         if !self.in_flight.try_begin(key.clone()) {
             self.set_status("Already loading describe…");
             return true;
@@ -1470,7 +1471,6 @@ mod tests {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
     }
 
-    #[allow(clippy::future_not_send)]
     fn type_str(app: &mut App<'_>, s: &str) {
         for c in s.chars() {
             app.on_key_event(key(c)).unwrap();
@@ -1723,7 +1723,7 @@ mod tests {
     #[tokio::test]
     async fn describe_refuses_when_describe_key_busy() {
         let mut app = tables_app("desc_busy").await;
-        let key = describe_key();
+        let key = describe_key(&app.database_explorer.connection.name);
         assert!(app.in_flight.try_begin(key.clone()));
         assert!(app.spawn_describe_rows());
         assert!(app.in_flight.contains(&key));

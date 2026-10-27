@@ -71,15 +71,6 @@ impl App<'_> {
         self.set_status(format!("Failed to load {resource}: {err}"));
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn status_action_failed<E: fmt::Display>(
-        &mut self,
-        action: &str,
-        err: E,
-    ) {
-        self.set_status(format!("{action} failed: {err}"));
-    }
-
     /// Replace the current table grid + virtual scroll metadata from a fetched page.
     pub(crate) fn replace_explorer_table_page(
         &mut self,
@@ -354,7 +345,6 @@ impl App<'_> {
             self.set_status("Already opening database…");
             return;
         }
-        explorer.connection.selected_database = Some(database_name.to_string());
         let connection = explorer.connection.clone();
         let db_name = database_name.to_string();
         let query_log = self.query_log.clone();
@@ -382,6 +372,8 @@ impl App<'_> {
         database_name: &str,
         database: Arc<dyn Database>,
     ) {
+        self.database_explorer.connection.selected_database =
+            Some(database_name.to_string());
         self.database_explorer.database = Some(database);
         self.load_schemas();
         self.set_status(format!("Opened database {database_name}"));

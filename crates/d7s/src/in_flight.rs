@@ -58,8 +58,8 @@ pub fn select_database_key(
     scoped(connection_name, &format!("select_database:{database_name}"))
 }
 
-pub fn describe_key() -> String {
-    "describe".into()
+pub fn describe_key(connection_name: &str) -> String {
+    scoped(connection_name, "describe")
 }
 
 pub fn connection_test_key(connection_name: &str) -> String {
