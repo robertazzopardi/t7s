@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crossterm::event::KeyCode;
 use k9tui::widgets::hotkey::{Hotkey, HotkeyDescription};
 use ratatui::widgets::TableState;
@@ -19,7 +21,7 @@ pub struct DatabaseExplorer {
     /// The active database connection
     pub connection: Connection,
     /// The active database client
-    pub database: Option<Box<dyn Database>>,
+    pub database: Option<Arc<dyn Database>>,
     /// Current navigation state in the database
     pub state: DatabaseExplorerState,
     /// Connection list with filtering
@@ -51,7 +53,7 @@ impl DatabaseExplorer {
     /// Create a new `DatabaseExplorer` with a connection and database client
     pub fn new(
         connection: Connection,
-        database: Option<Box<dyn Database>>,
+        database: Option<Arc<dyn Database>>,
     ) -> Self {
         Self {
             connection,

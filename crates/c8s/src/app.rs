@@ -36,9 +36,10 @@ use crate::{
     app_state::{AppState, ResourceKind},
     docker::{
         ContainerRow, ImageRow, NetworkRow, ProcessRow, VolumeRow,
-        client::DockerClient,
+        client::{DaemonHealth, DockerClient},
     },
     error::{Result, err},
+    in_flight::{DAEMON_KEY, InFlight},
     log_dedup::DedupMode,
     ui::widgets::hotkeys::LIST_HOTKEYS,
 };
@@ -76,6 +77,25 @@ pub enum BackgroundEvent {
     ProcessError(String),
     /// Message for the status line from a background task.
     Status(String),
+    /// Lifecycle action finished (start/stop/restart/remove, etc.).
+    ActionDone {
+        key: String,
+        message: String,
+    },
+    ActionFailed {
+        key: String,
+        message: String,
+    },
+    /// Inspect finished; switch to the describe view.
+    DescribeReady {
+        key: String,
+        name: String,
+        text: String,
+    },
+    /// Daemon connect succeeded.
+    Connected(DockerClient),
+    ConnectFailed(String),
+    DaemonHealthOk(DaemonHealth),
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -137,6 +157,7 @@ pub struct App {
     /// Height of the last-rendered describe viewport, used to clamp scrolling.
     pub(crate) describe_viewport_height: usize,
     pub(crate) build_info: String,
+    pub(crate) in_flight: InFlight,
 
     pub(crate) bg_tx: UnboundedSender<BackgroundEvent>,
     pub(crate) bg_rx: UnboundedReceiver<BackgroundEvent>,
@@ -186,6 +207,7 @@ impl App {
             describe_scroll: 0,
             describe_viewport_height: 0,
             build_info: format!("Name: {PKG_NAME}\nVersion: {PKG_VERSION}"),
+            in_flight: InFlight::default(),
             bg_tx,
             bg_rx,
             log_task: None,
@@ -211,25 +233,27 @@ impl App {
     }
 
     /// Attempt to connect to the daemon and, on success, start polling.
-    pub async fn connect(&mut self) {
-        match DockerClient::connect() {
-            Ok(client) => match client.ping().await {
-                Ok(()) => {
-                    self.docker = Some(client);
-                    self.state = AppState::List;
-                    self.start_polling();
-                }
-                Err(e) => {
-                    self.state = AppState::ConnectError(format!(
-                        "Docker unreachable: {e}"
-                    ));
-                }
-            },
-            Err(e) => {
-                self.state =
-                    AppState::ConnectError(format!("Docker unreachable: {e}"));
-            }
+    pub fn connect(&mut self) {
+        if !self.in_flight.try_begin(DAEMON_KEY) {
+            self.set_status("Already connecting…");
+            return;
         }
+        self.state = AppState::Connecting;
+        let tx = self.bg_tx.clone();
+        tokio::spawn(async move {
+            let result = match DockerClient::connect() {
+                Ok(client) => match client.ping().await {
+                    Ok(()) => BackgroundEvent::Connected(client),
+                    Err(e) => BackgroundEvent::ConnectFailed(format!(
+                        "Docker unreachable: {e}"
+                    )),
+                },
+                Err(e) => BackgroundEvent::ConnectFailed(format!(
+                    "Docker unreachable: {e}"
+                )),
+            };
+            let _ = tx.send(result);
+        });
     }
 
     fn start_polling(&mut self) {
@@ -333,19 +357,19 @@ impl App {
     }
 
     /// Run the application's main loop.
-    pub async fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
+    pub fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
-        self.connect().await;
+        self.connect();
 
         while self.running {
             terminal.draw(|frame| self.render(frame))?;
             self.drain_background_events();
-            self.poll_terminal_event(&mut terminal).await?;
+            self.poll_terminal_event(&mut terminal)?;
         }
         Ok(())
     }
 
-    fn drain_background_events(&mut self) {
+    pub(crate) fn drain_background_events(&mut self) {
         while let Ok(event) = self.bg_rx.try_recv() {
             match event {
                 BackgroundEvent::Containers(mut rows) => {
@@ -398,13 +422,38 @@ impl App {
                         self.log_scroll = self.log_scroll.saturating_sub(drop);
                     }
                 }
+                BackgroundEvent::ActionDone { key, message }
+                | BackgroundEvent::ActionFailed { key, message } => {
+                    self.in_flight.end(&key);
+                    self.set_status(message);
+                }
+                BackgroundEvent::DescribeReady { key, name, text } => {
+                    self.in_flight.end(&key);
+                    self.describe_scroll = 0;
+                    self.state = AppState::Describe { name, text };
+                }
+                BackgroundEvent::Connected(client) => {
+                    self.in_flight.end(DAEMON_KEY);
+                    self.docker = Some(client);
+                    self.state = AppState::List;
+                    self.start_polling();
+                    self.set_status("Connected to Docker");
+                }
+                BackgroundEvent::ConnectFailed(msg) => {
+                    self.in_flight.end(DAEMON_KEY);
+                    self.state = AppState::ConnectError(msg);
+                }
+                BackgroundEvent::DaemonHealthOk(health) => {
+                    self.in_flight.end(DAEMON_KEY);
+                    self.state = AppState::Info(health);
+                }
             }
         }
     }
 
     /// Poll crossterm for an input event with a short timeout so the loop
     /// keeps spinning to pick up background updates (poller, log tail).
-    async fn poll_terminal_event(
+    fn poll_terminal_event(
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> Result<()> {
@@ -413,7 +462,7 @@ impl App {
         }
         match read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                self.on_key_event(key, terminal).await?;
+                self.on_key_event(key, terminal)?;
             }
             Event::Key(_)
             | Event::FocusGained
@@ -550,14 +599,30 @@ impl App {
     }
 
     /// Fetch a cheap daemon-level summary and switch to the info panel.
-    pub(crate) async fn open_daemon_health(&mut self) {
+    pub(crate) fn open_daemon_health(&mut self) {
+        use DAEMON_KEY;
+
+        let key = DAEMON_KEY;
+        if !self.in_flight.try_begin(key) {
+            self.set_status("Daemon busy…");
+            return;
+        }
         let Some(docker) = self.docker.clone() else {
+            self.in_flight.end(key);
             return;
         };
-        match docker.daemon_health().await {
-            Ok(health) => self.state = AppState::Info(health),
-            Err(e) => self.set_status(format!("Daemon info failed: {e}")),
-        }
+        self.set_status("Loading daemon info…");
+        let tx = self.bg_tx.clone();
+        tokio::spawn(async move {
+            let event = match docker.daemon_health().await {
+                Ok(h) => BackgroundEvent::DaemonHealthOk(h),
+                Err(e) => BackgroundEvent::ActionFailed {
+                    key: key.to_string(),
+                    message: format!("Daemon info failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
     }
 
     /// Enter the process view and poll `docker top` while it is open.
@@ -628,46 +693,60 @@ impl App {
     }
 
     /// Fetch and show full inspect details for a resource of any kind.
-    pub(crate) async fn open_describe(
+    pub(crate) fn open_describe(
         &mut self,
         kind: ResourceKind,
         id: &str,
         name: &str,
     ) {
-        use crate::docker::{
-            describe_image_text, describe_network_text, describe_text,
-            describe_volume_text,
+        use crate::{
+            app::BackgroundEvent,
+            docker::{
+                describe_image_text, describe_network_text, describe_text,
+                describe_volume_text,
+            },
+            in_flight::resource_key,
         };
+
+        let key = resource_key(kind, id);
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status("Already busy with this resource");
+            return;
+        }
         let Some(docker) = self.docker.clone() else {
+            self.in_flight.end(&key);
             return;
         };
-        let text = match kind {
-            ResourceKind::Containers => {
-                docker.inspect(id).await.map(|i| describe_text(&i))
-            }
-            ResourceKind::Images => docker
-                .inspect_image(id)
-                .await
-                .map(|i| describe_image_text(&i)),
-            ResourceKind::Volumes => docker
-                .inspect_volume(id)
-                .await
-                .map(|v| describe_volume_text(&v)),
-            ResourceKind::Networks => docker
-                .inspect_network(id)
-                .await
-                .map(|n| describe_network_text(&n)),
-        };
-        match text {
-            Ok(text) => {
-                self.describe_scroll = 0;
-                self.state = AppState::Describe {
-                    name: name.to_string(),
-                    text,
-                };
-            }
-            Err(e) => self.set_status(format!("Inspect failed: {e}")),
-        }
+        let tx = self.bg_tx.clone();
+        let id = id.to_string();
+        let name = name.to_string();
+        tokio::spawn(async move {
+            let text = match kind {
+                ResourceKind::Containers => {
+                    docker.inspect(&id).await.map(|i| describe_text(&i))
+                }
+                ResourceKind::Images => docker
+                    .inspect_image(&id)
+                    .await
+                    .map(|i| describe_image_text(&i)),
+                ResourceKind::Volumes => docker
+                    .inspect_volume(&id)
+                    .await
+                    .map(|v| describe_volume_text(&v)),
+                ResourceKind::Networks => docker
+                    .inspect_network(&id)
+                    .await
+                    .map(|n| describe_network_text(&n)),
+            };
+            let event = match text {
+                Ok(text) => BackgroundEvent::DescribeReady { key, name, text },
+                Err(e) => BackgroundEvent::ActionFailed {
+                    key,
+                    message: format!("Inspect failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
     }
 
     /// Leave the describe view.
@@ -703,5 +782,19 @@ fn apply_table_update<T: TableData + Clone>(
         }
         None if len > 0 => table.view.state.select(Some(0)),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{app_state::AppState, in_flight::DAEMON_KEY};
+
+    #[tokio::test]
+    async fn connect_is_non_blocking_and_locks_daemon_key() {
+        let mut app = App::new();
+        app.connect();
+        assert!(app.in_flight.contains(DAEMON_KEY));
+        assert_eq!(app.state, AppState::Connecting);
     }
 }

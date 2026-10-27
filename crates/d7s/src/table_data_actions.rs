@@ -38,44 +38,35 @@ impl App<'_> {
     }
 
     /// Remove client-only draft rows and refetch the current page from the server.
-    pub(crate) async fn reload_current_table_data(&mut self) -> Result<()> {
+    pub(crate) fn reload_current_table_data(
+        &mut self,
+        success_status: Option<String>,
+    ) {
         self.strip_draft_rows_from_table_data();
         let DatabaseExplorerState::TableData(schema, table) =
             self.database_explorer.state.clone()
         else {
-            return Ok(());
+            return;
         };
         let offset = self
             .database_explorer
             .table_data_virtual
             .as_ref()
             .map_or(0, |m| m.window_start);
-        let page_size = self
-            .database_explorer
-            .table_data_virtual
-            .as_ref()
-            .map_or(self.page_size, |m| m.page_size);
         let total_rows = self
             .database_explorer
             .table_data_virtual
             .as_ref()
             .and_then(|m| m.total_rows);
-        let Some(database) = self.database_explorer.database.as_ref() else {
-            return Ok(());
-        };
-        match database
-            .get_table_data_page(&schema, &table, offset, page_size)
-            .await
-        {
-            Ok(page) => {
-                self.replace_explorer_table_page(
-                    page, offset, page_size, total_rows,
-                );
-                self.set_status("Refreshed.");
-            }
-            Err(e) => self.status_action_failed("Refresh", e),
-        }
-        Ok(())
+        self.spawn_table_page_load(
+            &schema,
+            &table,
+            offset,
+            total_rows,
+            false,
+            None,
+            success_status.or_else(|| Some("Refreshed.".into())),
+        );
     }
 
     pub(crate) fn discard_table_draft(&mut self) -> bool {
@@ -119,28 +110,6 @@ impl App<'_> {
         } else {
             all_editable_columns(num_cols)
         }
-    }
-
-    async fn refresh_table_column_meta(
-        &mut self,
-        schema: &str,
-        table: &str,
-    ) -> Result<()> {
-        let Some(db) = self.database_explorer.database.as_ref() else {
-            return Ok(());
-        };
-        let columns = db
-            .get_columns(schema, table)
-            .await
-            .map_err(|e| err(e.to_string()))?;
-        let pk = db
-            .get_primary_key_columns(schema, table)
-            .await
-            .unwrap_or_default();
-        let explorer = &mut self.database_explorer;
-        explorer.table_columns = Some(columns);
-        explorer.table_pk_names = Some(pk);
-        Ok(())
     }
 
     pub(crate) const fn is_cell_editing(&self) -> bool {
@@ -229,17 +198,14 @@ impl App<'_> {
         }
     }
 
-    // ponytail: Tab awaits a full cell UPDATE on the UI path; dirty-grid or
-    // background write if remote Postgres Tab latency becomes sticky.
-    async fn finish_cell_edit_and_move_editable_column(
-        &mut self,
-        forward: bool,
-    ) -> Result<()> {
+    // ponytail: Tab spawns cell UPDATE off the UI thread; batch or dirty-grid
+    // if rapid Tab on remote Postgres still feels sticky.
+    fn finish_cell_edit_and_move_editable_column(&mut self, forward: bool) {
         let row_index = self.cell_edit.as_ref().map(|s| s.row_index);
         let from_col = self.cell_edit.as_ref().map_or(0, |s| s.col_index);
-        self.finish_cell_edit().await?;
+        self.finish_cell_edit();
         if self.cell_edit.is_some() {
-            return Ok(());
+            return;
         }
         let cols = self.editable_columns_for_current_table();
         let next_col = if forward {
@@ -248,7 +214,7 @@ impl App<'_> {
             prev_editable_column(&cols, from_col)
         };
         let Some(fd) = self.database_explorer.table_data.as_mut() else {
-            return Ok(());
+            return;
         };
         if let Some(col) = next_col {
             fd.table.view.state.select_column(Some(col));
@@ -257,7 +223,6 @@ impl App<'_> {
             }
         }
         self.begin_cell_edit(None);
-        Ok(())
     }
 
     fn open_cell_value_modal_from_cell_edit(&mut self) {
@@ -387,7 +352,7 @@ impl App<'_> {
     }
 
     /// `Ok(Some(n))` = draft created with `n` columns using schema defaults.
-    pub(crate) async fn table_data_add_defaults_draft(
+    pub(crate) fn table_data_add_defaults_draft(
         &mut self,
     ) -> Result<Option<usize>> {
         let DatabaseExplorerState::TableData(schema, table) =
@@ -402,7 +367,20 @@ impl App<'_> {
             self.set_status("Clear filter before adding a row.");
             return Ok(None);
         }
-        self.refresh_table_column_meta(&schema, &table).await?;
+        if self.database_explorer.table_columns.is_some()
+            && self.database_explorer.table_pk_names.is_some()
+        {
+            return self.insert_defaults_draft_from_meta();
+        }
+        if self.spawn_table_column_meta(&schema, &table) {
+            self.pending_defaults_draft = true;
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn insert_defaults_draft_from_meta(
+        &mut self,
+    ) -> Result<Option<usize>> {
         let columns = self
             .database_explorer
             .table_columns
@@ -444,7 +422,7 @@ impl App<'_> {
         Ok(Some(defaults_n))
     }
 
-    fn begin_cell_edit_on_first_editable_column(&mut self) {
+    pub(crate) fn begin_cell_edit_on_first_editable_column(&mut self) {
         let cols = self.editable_columns_for_current_table();
         let col = cols.iter().find(|c| c.editable).map(|c| c.index);
         if let Some(col) = col
@@ -533,7 +511,7 @@ impl App<'_> {
         Ok(true)
     }
 
-    pub(crate) async fn table_data_commit_draft(&mut self) -> Result<()> {
+    pub(crate) fn table_data_commit_draft(&mut self) -> Result<()> {
         let DatabaseExplorerState::TableData(schema, table) =
             self.database_explorer.state.clone()
         else {
@@ -560,25 +538,7 @@ impl App<'_> {
             .get(sel)
             .map(|r| r.values.clone())
             .ok_or_else(|| err("no draft row"))?;
-        let Some(db) = self.database_explorer.database.as_ref() else {
-            return Ok(());
-        };
-        {
-            let n = db.insert_table_row(&schema, &table, &values).await;
-            match n {
-                Ok(count) if count > 0 => {}
-                Ok(_) => {
-                    self.set_status("Insert affected 0 rows.");
-                    return Ok(());
-                }
-                Err(e) => {
-                    self.status_action_failed("Insert", e);
-                    return Ok(());
-                }
-            }
-        }
-        self.set_status("Row inserted.");
-        self.reload_current_table_data().await?;
+        self.spawn_table_row_insert(&schema, &table, values);
         Ok(())
     }
 
@@ -724,55 +684,24 @@ impl App<'_> {
         self.modal_manager.open_sql_execution_confirmation_modal(p);
     }
 
-    /// After confirmation: delete persisted rows, then refetch.
-    pub(crate) async fn execute_pending_row_deletes(&mut self) -> Result<()> {
+    /// After confirmation: delete persisted rows off the UI thread, then refetch.
+    pub(crate) fn spawn_pending_row_deletes(&mut self) {
         let Some(specs) = self.pending_row_deletes.take() else {
-            return Ok(());
+            return;
         };
         if specs.is_empty() {
-            return Ok(());
+            return;
         }
         let DatabaseExplorerState::TableData(schema, table) =
-            &self.database_explorer.state
+            self.database_explorer.state.clone()
         else {
-            return Ok(());
+            return;
         };
-        let Some(db) = self.database_explorer.database.as_ref() else {
-            return Ok(());
-        };
-        let mut any_ok = false;
-        let mut errs = 0u32;
-        for spec in specs {
-            match db
-                .delete_table_row(
-                    schema,
-                    table,
-                    &spec.primary_key,
-                    spec.row_id_fallback,
-                )
-                .await
-            {
-                Ok(n) if n > 0 => any_ok = true,
-                _ => errs += 1,
-            }
-        }
-        if any_ok {
-            if errs > 0 {
-                self.set_status(format!(
-                    "Some deletes failed ({errs}). Refetching."
-                ));
-            } else {
-                self.set_status("Row(s) deleted.");
-            }
-            self.reload_current_table_data().await?;
-        } else if errs > 0 {
-            self.set_status("Delete failed.");
-        }
-        Ok(())
+        self.spawn_table_row_deletes(&schema, &table, specs);
     }
 
     #[allow(clippy::wildcard_enum_match_arm)]
-    pub(crate) async fn handle_table_data_hotkeys(
+    pub(crate) fn handle_table_data_hotkeys(
         &mut self,
         key: KeyEvent,
     ) -> Result<bool> {
@@ -789,16 +718,15 @@ impl App<'_> {
         // reject other modifiers (Ctrl/Alt chords).
         if self.cell_edit.is_some() {
             if key.code == KeyCode::Tab {
-                self.finish_cell_edit_and_move_editable_column(true).await?;
+                self.finish_cell_edit_and_move_editable_column(true);
                 return Ok(true);
             }
             if key.code == KeyCode::BackTab {
-                self.finish_cell_edit_and_move_editable_column(false)
-                    .await?;
+                self.finish_cell_edit_and_move_editable_column(false);
                 return Ok(true);
             }
             if key.code == KeyCode::Enter {
-                self.finish_cell_edit().await?;
+                self.finish_cell_edit();
                 return Ok(true);
             }
             if matches!(
@@ -822,7 +750,7 @@ impl App<'_> {
         }
         match key.code {
             KeyCode::Char('r' | 'R') => {
-                self.reload_current_table_data().await?;
+                self.reload_current_table_data(None);
                 Ok(true)
             }
             KeyCode::Char('n' | 'a') => {
@@ -832,7 +760,7 @@ impl App<'_> {
                 Ok(true)
             }
             KeyCode::Char('N') => {
-                if let Some(n) = self.table_data_add_defaults_draft().await? {
+                if let Some(n) = self.table_data_add_defaults_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                     // Set after begin so EDIT status does not clobber the count.
                     self.set_status(format!(
@@ -852,7 +780,7 @@ impl App<'_> {
                 Ok(true)
             }
             KeyCode::Char('s') => {
-                self.table_data_commit_draft().await?;
+                self.table_data_commit_draft()?;
                 Ok(true)
             }
             KeyCode::Char('D') => {

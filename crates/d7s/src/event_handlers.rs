@@ -3,10 +3,7 @@ use core::time::Duration;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
-use k9tui::{
-    theme,
-    widgets::{navigation::TableNavigationHandler, table::TableDataState},
-};
+use k9tui::{theme, widgets::navigation::TableNavigationHandler};
 use ratatui::{
     style::{Color, Style},
     widgets::{Block, Borders, TableState},
@@ -16,8 +13,10 @@ use ratatui_textarea::TextArea;
 use crate::{
     app::App,
     app_state::{AppState, DatabaseExplorerState},
+    bg::BgEvent,
     db::connection::ConnectionType,
     error::Result,
+    in_flight::connection_test_key,
     services::{ConnectionService, PasswordService, PreferencesService},
     sql::safety::split_statements,
     ui::widgets::connection_modal::{ModalAction, TestResult},
@@ -46,7 +45,7 @@ impl App<'_> {
     /// If your application needs to perform work in between handling events, you can use the
     /// [`event::poll`] function to check if there are any events available with a timeout.
     #[allow(clippy::future_not_send)]
-    pub async fn handle_crossterm_events(&mut self) -> Result<()> {
+    pub fn handle_crossterm_events(&mut self) -> Result<()> {
         // Short timeout (rather than a blocking read) so the run loop keeps
         // spinning to pick up watch-mode ticks between keypresses.
         if !event::poll(Duration::from_millis(200))? {
@@ -67,7 +66,7 @@ impl App<'_> {
                 {
                     self.draft_discard_pending = false;
                 }
-                self.on_key_event(key).await?;
+                self.on_key_event(key)?;
             }
             // Ignore non-press key events
             // Terminal resize is handled automatically by ratatui
@@ -103,7 +102,7 @@ impl App<'_> {
 
     /// Handles the key events and updates the state of [`App`].
     #[allow(clippy::future_not_send, clippy::too_many_lines)]
-    pub async fn on_key_event(&mut self, key: KeyEvent) -> Result<()> {
+    pub fn on_key_event(&mut self, key: KeyEvent) -> Result<()> {
         // Help view: only toggle/close and quit
         if self.show_help {
             match (key.modifiers, key.code) {
@@ -168,7 +167,8 @@ impl App<'_> {
 
         // `:` command bar shares the search bar's slot
         if self.command_mode && self.search_filter.is_some() {
-            return self.handle_command_key(key).await;
+            self.handle_command_key(key);
+            return Ok(());
         }
 
         // Handle search filter input first
@@ -196,14 +196,15 @@ impl App<'_> {
 
         // Handle modal events
         if self.modal_manager.is_any_modal_open() {
-            return self.handle_modal_events(key).await;
+            self.handle_modal_events(key);
+            return Ok(());
         }
 
         // Handle application shortcuts (q, n, d, e, t, s, Esc, Enter)
-        if self.handle_table_data_hotkeys(key).await? {
+        if self.handle_table_data_hotkeys(key)? {
             return Ok(());
         }
-        if self.handle_hotkeys(key).await? {
+        if self.handle_hotkeys(key) {
             return Ok(());
         }
 
@@ -213,7 +214,7 @@ impl App<'_> {
                 self.database_explorer.state,
                 DatabaseExplorerState::TableData(..)
             )
-            && self.try_step_virtual_table_page(key).await?
+            && self.try_step_virtual_table_page(key)
         {
             return Ok(());
         }
@@ -227,16 +228,16 @@ impl App<'_> {
     /// Handle application shortcuts (q, n, d, e, E, t, Esc, Enter)
     /// Returns true if the key was handled and should stop processing
     #[allow(clippy::too_many_lines, clippy::future_not_send)]
-    async fn handle_hotkeys(&mut self, key: KeyEvent) -> Result<bool> {
+    fn handle_hotkeys(&mut self, key: KeyEvent) -> bool {
         match (key.modifiers, key.code) {
             (_, KeyCode::Char('q'))
             | (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
                 self.quit();
-                Ok(true)
+                true
             }
             (_, KeyCode::Char('y')) => {
                 self.copy();
-                Ok(true)
+                true
             }
             (_, KeyCode::Char('Y')) => {
                 if matches!(
@@ -245,14 +246,14 @@ impl App<'_> {
                         | DatabaseExplorerState::SqlResults(_)
                 ) {
                     self.copy_row_tsv();
-                    Ok(true)
+                    true
                 } else {
-                    Ok(false)
+                    false
                 }
             }
             (_, KeyCode::Char('?')) => {
                 self.open_help();
-                Ok(true)
+                true
             }
             (_, KeyCode::Char(c @ '1'..='5')) => {
                 if self.state == AppState::DatabaseConnected {
@@ -260,11 +261,11 @@ impl App<'_> {
                     if let Some((schema, table)) =
                         self.database_explorer.recent_tables.get(idx).cloned()
                     {
-                        self.load_table_data(&schema, &table).await?;
+                        self.load_table_data(&schema, &table);
                     }
-                    Ok(true)
+                    true
                 } else {
-                    Ok(false)
+                    false
                 }
             }
             (_, KeyCode::Char('o')) => {
@@ -272,9 +273,9 @@ impl App<'_> {
                     self.database_explorer.state,
                     DatabaseExplorerState::Connections
                 ) {
-                    self.connect_to_database().await?;
+                    self.connect_to_database();
                 }
-                Ok(true)
+                true
             }
             (_, KeyCode::Char('O')) => {
                 if matches!(
@@ -283,16 +284,16 @@ impl App<'_> {
                 ) {
                     if let Some(name) = PreferencesService::last_connection() {
                         let before = self.state;
-                        self.connect_to_named_connection(&name).await?;
+                        self.connect_to_named_connection(&name);
                         if self.state == AppState::DatabaseConnected
                             && before != AppState::DatabaseConnected
                         {
                             self.set_status(format!("Reconnected to {name}"));
                         }
                     }
-                    Ok(true)
+                    true
                 } else {
-                    Ok(false)
+                    false
                 }
             }
             (_, KeyCode::Char('n')) => {
@@ -302,17 +303,17 @@ impl App<'_> {
                 ) {
                     self.modal_manager.open_new_connection_modal();
                 }
-                Ok(true)
+                true
             }
             (_, KeyCode::Char('p')) => {
                 if matches!(
                     self.database_explorer.state,
                     DatabaseExplorerState::Connections
                 ) {
-                    self.check_connections_health().await;
-                    Ok(true)
+                    self.check_connections_health();
+                    true
                 } else {
-                    Ok(false)
+                    false
                 }
             }
             (_, KeyCode::Char('D')) => {
@@ -321,9 +322,9 @@ impl App<'_> {
                     DatabaseExplorerState::Connections
                 ) {
                     self.handle_delete_connection();
-                    return Ok(true);
+                    return true;
                 }
-                Ok(false)
+                false
             }
             (_, KeyCode::Char('e')) => {
                 if matches!(
@@ -334,23 +335,14 @@ impl App<'_> {
                 } else if self.state == AppState::DatabaseConnected {
                     self.request_editor();
                 }
-                Ok(true)
+                true
             }
-            (_, KeyCode::Char('d')) => {
-                let rows = self.build_describe_rows().await;
-                if rows.is_empty() {
-                    Ok(false)
-                } else {
-                    self.describe_table = TableDataState::new(rows);
-                    self.show_describe = true;
-                    Ok(true)
-                }
-            }
+            (_, KeyCode::Char('d')) => self.spawn_describe_rows(),
             (_, KeyCode::Char('t')) => {
                 if self.state == AppState::DatabaseConnected {
-                    self.handle_toggle_table_view().await?;
+                    self.handle_toggle_table_view();
                 }
-                Ok(true)
+                true
             }
             (_, KeyCode::Char('E')) => {
                 if matches!(
@@ -364,16 +356,16 @@ impl App<'_> {
                         self.set_status(
                             "No SQL statements found in editor file.",
                         );
-                        return Ok(true);
+                        return true;
                     }
                     let options = statements
                         .into_iter()
                         .map(|s| s.text)
                         .collect::<Vec<_>>();
                     self.modal_manager.open_sql_query_selection_modal(options);
-                    return Ok(true);
+                    return true;
                 }
-                Ok(false)
+                false
             }
             (_, KeyCode::Char('w'))
                 if matches!(
@@ -382,17 +374,17 @@ impl App<'_> {
                 ) =>
             {
                 self.toggle_watch();
-                Ok(true)
+                true
             }
             (_, KeyCode::Char('W')) => {
                 self.toggle_column_width_mode();
-                Ok(true)
+                true
             }
             (_, KeyCode::Char('L'))
                 if self.state == AppState::DatabaseConnected =>
             {
                 self.open_query_log_view();
-                Ok(true)
+                true
             }
             (_, KeyCode::Char('A'))
                 if self.state == AppState::DatabaseConnected
@@ -402,8 +394,8 @@ impl App<'_> {
                         .r#type
                         .has_activity_view() =>
             {
-                self.open_activity_view().await;
-                Ok(true)
+                self.open_activity_view();
+                true
             }
             (KeyModifiers::CONTROL, KeyCode::Char('s' | 'S'))
             | (_, KeyCode::Char('x'))
@@ -413,11 +405,11 @@ impl App<'_> {
                 ) =>
             {
                 self.export_sql_results_tsv();
-                Ok(true)
+                true
             }
             (_, KeyCode::Char(':')) => {
                 self.open_command_bar();
-                Ok(true)
+                true
             }
             (_, KeyCode::Char('#'))
                 if self.state == AppState::DatabaseConnected
@@ -428,7 +420,7 @@ impl App<'_> {
                     && !self.has_active_filter() =>
             {
                 self.modal_manager.open_jump_to_row_modal();
-                Ok(true)
+                true
             }
             (_, KeyCode::Esc) => {
                 // Cell-edit Esc is handled in `handle_cell_edit_key` (table data
@@ -470,26 +462,26 @@ impl App<'_> {
                     } else if self.has_active_filter() {
                         self.clear_filter();
                     } else {
-                        self.go_back_in_database().await;
+                        self.go_back_in_database();
                     }
                 } else if self.state == AppState::ConnectionList {
                     self.clear_filter();
                 }
 
-                Ok(true)
+                true
             }
             (_, KeyCode::Enter) => {
                 if matches!(
                     self.database_explorer.state,
                     DatabaseExplorerState::Connections
                 ) {
-                    self.connect_to_database().await?;
+                    self.connect_to_database();
                 } else {
-                    self.handle_database_navigation().await?;
+                    self.handle_database_navigation();
                 }
-                Ok(true)
+                true
             }
-            _ => Ok(false),
+            _ => false,
         }
     }
 
@@ -588,23 +580,15 @@ impl App<'_> {
     }
 
     /// Handle toggle between table data and columns view
-    async fn handle_toggle_table_view(&mut self) -> Result<()> {
+    fn handle_toggle_table_view(&mut self) {
         let state = self.database_explorer.state.clone();
 
         match state {
             DatabaseExplorerState::TableData(schema_name, table_name) => {
-                if let Err(e) =
-                    self.load_columns(&schema_name, &table_name).await
-                {
-                    self.status_load_failed("columns", e);
-                }
+                self.load_columns(&schema_name, &table_name);
             }
             DatabaseExplorerState::Columns(schema_name, table_name) => {
-                if let Err(e) =
-                    self.load_table_data(&schema_name, &table_name).await
-                {
-                    self.status_load_failed("table data", e);
-                }
+                self.load_table_data(&schema_name, &table_name);
             }
             DatabaseExplorerState::Connections
             | DatabaseExplorerState::Databases
@@ -612,41 +596,40 @@ impl App<'_> {
             | DatabaseExplorerState::Tables(_)
             | DatabaseExplorerState::SqlResults(_) => {}
         }
-        Ok(())
     }
 
     /// Handle modal events
-    pub async fn handle_modal_events(&mut self, key: KeyEvent) -> Result<()> {
+    pub fn handle_modal_events(&mut self, key: KeyEvent) {
         let action = self.modal_manager.handle_key_events_ui(key);
 
         match action {
             ModalAction::Save => {
                 if let Some(apply) = self.modal_manager.take_cell_value_apply()
                 {
-                    if self.apply_cell_value_edit(apply).await? {
+                    if self.spawn_cell_value_edit(&apply) {
                         self.cell_edit = None;
                     }
                     self.modal_manager.cleanup_closed_modals();
-                    return Ok(());
+                    return;
                 }
                 if let Some(row) =
                     self.modal_manager.was_jump_to_row_confirmed()
                     && matches!(key.code, KeyCode::Enter)
                 {
-                    self.jump_to_table_row(row).await?;
+                    self.jump_to_table_row(row);
                     self.modal_manager.cleanup_closed_modals();
-                    return Ok(());
+                    return;
                 }
-                if self.handle_password_modal_save().await? {
-                    return Ok(());
+                if self.handle_password_modal_save() {
+                    return;
                 }
                 if let Some(statement) =
                     self.modal_manager.was_sql_query_selected()
                     && matches!(key.code, KeyCode::Enter)
                 {
-                    self.prepare_sql_statement_execution(statement).await;
+                    self.prepare_sql_statement_execution(statement);
                     self.modal_manager.cleanup_closed_modals();
-                    return Ok(());
+                    return;
                 }
                 if self.pending_row_deletes.is_some()
                     && self
@@ -655,32 +638,32 @@ impl App<'_> {
                         .is_some()
                     && matches!(key.code, KeyCode::Enter)
                 {
-                    self.execute_pending_row_deletes().await?;
+                    self.spawn_pending_row_deletes();
                     self.modal_manager.cleanup_closed_modals();
-                    return Ok(());
+                    return;
                 }
                 if let Some(statement) =
                     self.modal_manager.was_sql_execution_confirmed()
                     && matches!(key.code, KeyCode::Enter)
                 {
-                    self.execute_sql_statement_now(statement).await;
+                    self.execute_sql_statement_now(statement);
                     self.modal_manager.cleanup_closed_modals();
-                    return Ok(());
+                    return;
                 }
                 if self
                     .modal_manager
                     .get_connection_modal()
                     .is_some_and(|m| m.is_open)
                 {
-                    self.handle_connection_modal_save().await;
+                    self.handle_connection_modal_save();
                 }
             }
             ModalAction::Test => {
-                self.handle_connection_modal_test().await;
+                self.spawn_connection_modal_test();
             }
             ModalAction::Cancel => {
                 if self.modal_manager.was_connection_modal_closed() {
-                    self.refresh_connections().await;
+                    self.refresh_connections();
                 }
                 self.pending_row_deletes = None;
             }
@@ -703,78 +686,37 @@ impl App<'_> {
             if let Err(e) = ConnectionService::delete(&connection.name) {
                 self.set_status(format!("Failed to delete connection: {e}"));
             } else {
-                self.refresh_connections().await;
+                self.refresh_connections();
             }
         }
 
         // Clean up closed modals
         self.modal_manager.cleanup_closed_modals();
-
-        Ok(())
     }
 
     /// Handle password modal save action
-    async fn handle_password_modal_save(&mut self) -> Result<bool> {
-        // Extract data from modal before attempting connection
-        // This releases the mutable borrow so we can call connect_with_password
+    fn handle_password_modal_save(&mut self) -> bool {
         let Some(connection) =
             self.modal_manager.password_connection().cloned()
         else {
-            return Ok(false);
+            return false;
         };
 
-        let (connection, password) = {
+        let password = {
             let Some(password_modal) =
                 self.modal_manager.get_password_modal_mut()
             else {
-                return Ok(false);
+                return false;
             };
-
-            (connection, password_modal.input_value())
+            password_modal.input_value()
         };
 
-        // Store the state before attempting connection to check if it changed
-        let state_before = self.state;
-
-        // Try to connect with the password (don't store in session yet)
-        let password_clone = password.clone();
-        let _ = self
-            .connect_with_password(connection.clone(), password_clone)
-            .await;
-
-        // Check if connection succeeded by checking if state changed to DatabaseConnected
-        if self.state == AppState::DatabaseConnected
-            && state_before != AppState::DatabaseConnected
-        {
-            self.password_service
-                .store_session_password(&connection, password);
-            if let Some(password_modal) =
-                self.modal_manager.get_password_modal_mut()
-            {
-                password_modal.close();
-            }
-            let msg = self.connect_status_message(
-                &connection.name,
-                connection.environment,
-            );
-            self.set_status(msg);
-        } else {
-            // Connection failed, keep modal open so user can retry
-            // Remove any password from session that might have been stored
-            self.password_service.remove_session_password(&connection);
-            // The error message is already set by connect_with_password
-            // Clear the password field so user can retry
-            if let Some(password_modal) =
-                self.modal_manager.get_password_modal_mut()
-            {
-                password_modal.clear_input();
-            }
-        }
-        Ok(true)
+        self.spawn_connect(connection, Some(password));
+        true
     }
 
     /// Handle connection modal save action
-    async fn handle_connection_modal_save(&mut self) {
+    fn handle_connection_modal_save(&mut self) {
         let Some(modal) = self.modal_manager.get_connection_modal_mut() else {
             return;
         };
@@ -822,11 +764,11 @@ impl App<'_> {
             }
         }
         // Drop modal borrow before await (status is runtime-only; refresh re-pings).
-        self.refresh_connections().await;
+        self.refresh_connections();
     }
 
-    /// Handle connection modal test action
-    async fn handle_connection_modal_test(&mut self) {
+    /// Handle connection modal test action (off the UI thread).
+    fn spawn_connection_modal_test(&mut self) {
         let Some(modal) = self.modal_manager.get_connection_modal_mut() else {
             return;
         };
@@ -837,13 +779,26 @@ impl App<'_> {
             return;
         };
 
+        let key = connection_test_key(&connection.name);
+        if !self.in_flight.try_begin(key.clone()) {
+            return;
+        }
+
         modal.test_result = TestResult::Testing;
-        let success = ConnectionService::test(&connection).await;
-        modal.test_result = if success {
-            TestResult::Success
-        } else {
-            TestResult::Failed("Connection failed".to_string())
-        };
+        let tx = self.bg_tx.clone();
+        tokio::spawn(async move {
+            let success = ConnectionService::test(&connection).await;
+            let message = if success {
+                String::new()
+            } else {
+                "Connection failed".into()
+            };
+            let _ = tx.send(BgEvent::ConnectionTestResult {
+                key,
+                success,
+                message,
+            });
+        });
     }
 }
 
@@ -857,11 +812,11 @@ mod tests {
     async fn p_is_only_handled_on_the_connection_list() {
         let p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE);
         let mut app = App::default();
-        assert!(app.handle_hotkeys(p).await.unwrap());
+        assert!(app.handle_hotkeys(p));
 
         // Anywhere else the key must fall through, not be swallowed.
         app.database_explorer.state =
             app_state::DatabaseExplorerState::Tables("s".into());
-        assert!(!app.handle_hotkeys(p).await.unwrap());
+        assert!(!app.handle_hotkeys(p));
     }
 }

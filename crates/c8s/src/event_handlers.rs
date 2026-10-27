@@ -19,15 +19,18 @@ use crate::{
 };
 
 impl App {
-    pub async fn on_key_event<B: Backend>(
+    pub fn on_key_event<B: Backend>(
         &mut self,
         key: KeyEvent,
         terminal: &mut Terminal<B>,
     ) -> Result<()> {
         match &self.state {
-            AppState::ConnectError(_) => self.on_key_connect_error(key).await,
+            AppState::ConnectError(_) => {
+                self.on_key_connect_error(key);
+                Ok(())
+            }
             AppState::Connecting => Ok(()),
-            AppState::List => self.on_key_list(key, terminal).await,
+            AppState::List => self.on_key_list(key, terminal),
             AppState::Logs { .. } => {
                 self.on_key_logs(key);
                 Ok(())
@@ -116,11 +119,10 @@ impl App {
         }
     }
 
-    async fn on_key_connect_error(&mut self, key: KeyEvent) -> Result<()> {
+    fn on_key_connect_error(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
             (_, KeyCode::Char('r') | KeyCode::Enter) => {
-                self.state = AppState::Connecting;
-                self.connect().await;
+                self.connect();
             }
             (_, KeyCode::Char('q'))
             | (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
@@ -128,7 +130,6 @@ impl App {
             }
             _ => {}
         }
-        Ok(())
     }
 
     #[allow(clippy::wildcard_enum_match_arm)]
@@ -296,7 +297,7 @@ impl App {
 
     #[allow(clippy::wildcard_enum_match_arm)]
     #[allow(clippy::too_many_lines)] // flat key-dispatch match
-    async fn on_key_list<B: Backend>(
+    fn on_key_list<B: Backend>(
         &mut self,
         key: KeyEvent,
         terminal: &mut Terminal<B>,
@@ -306,7 +307,7 @@ impl App {
                 DialogAction::Submit => {
                     self.confirm_dialog = None;
                     if let Some((kind, id)) = self.pending_remove.take() {
-                        self.remove_resource(kind, &id).await;
+                        self.remove_resource(kind, &id);
                     }
                 }
                 DialogAction::Cancel => {
@@ -347,9 +348,9 @@ impl App {
             {
                 if let Some(row) = self.selected_container().cloned() {
                     if row.is_running() {
-                        self.stop_container(&row.id).await;
+                        self.stop_container(&row.id);
                     } else {
-                        self.start_container(&row.id).await;
+                        self.start_container(&row.id);
                     }
                 }
             }
@@ -357,7 +358,7 @@ impl App {
                 if self.view == ResourceKind::Containers =>
             {
                 if let Some(row) = self.selected_container().cloned() {
-                    self.restart_container(&row.id).await;
+                    self.restart_container(&row.id);
                 }
             }
             (_, KeyCode::Char('p'))
@@ -375,7 +376,7 @@ impl App {
                 }
             }
             (_, KeyCode::Char('d') | KeyCode::Enter) => {
-                self.describe_selected().await;
+                self.describe_selected();
             }
             (_, KeyCode::Char('e'))
                 if self.view == ResourceKind::Containers =>
@@ -385,7 +386,7 @@ impl App {
                 }
             }
             (_, KeyCode::Char('i')) => {
-                self.open_daemon_health().await;
+                self.open_daemon_health();
             }
             (_, KeyCode::Char('D') | KeyCode::Delete) => {
                 self.prompt_remove_selected();
@@ -433,11 +434,11 @@ impl App {
     }
 
     /// `d`/`Enter`: describe whatever is selected in the active view.
-    async fn describe_selected(&mut self) {
+    fn describe_selected(&mut self) {
         let Some((id, name)) = self.selected_target() else {
             return;
         };
-        self.open_describe(self.view, &id, &name).await;
+        self.open_describe(self.view, &id, &name);
     }
 
     /// (docker id-or-name, display label) of the selection in the active view.
@@ -477,50 +478,133 @@ impl App {
         ));
     }
 
-    async fn start_container(&mut self, id: &str) {
+    fn start_container(&mut self, id: &str) {
+        use crate::{app::BackgroundEvent, in_flight::container_key};
+
+        let key = container_key(id);
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status("Already busy with this container");
+            return;
+        }
         let Some(docker) = self.docker.clone() else {
+            self.in_flight.end(&key);
             return;
         };
-        match docker.start(id).await {
-            Ok(()) => self.set_status("Starting container"),
-            Err(e) => self.set_status(format!("Start failed: {e}")),
-        }
+        self.set_status(format!("Starting {id}…"));
+        let tx = self.bg_tx.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            let event = match docker.start(&id).await {
+                Ok(()) => BackgroundEvent::ActionDone {
+                    key,
+                    message: "Container started".into(),
+                },
+                Err(e) => BackgroundEvent::ActionFailed {
+                    key,
+                    message: format!("Start failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
     }
 
-    async fn stop_container(&mut self, id: &str) {
+    fn stop_container(&mut self, id: &str) {
+        use crate::{app::BackgroundEvent, in_flight::container_key};
+
+        let key = container_key(id);
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status("Already busy with this container");
+            return;
+        }
         let Some(docker) = self.docker.clone() else {
+            self.in_flight.end(&key);
             return;
         };
-        match docker.stop(id).await {
-            Ok(()) => self.set_status("Stopping container"),
-            Err(e) => self.set_status(format!("Stop failed: {e}")),
-        }
+        self.set_status(format!("Stopping {id}…"));
+        let tx = self.bg_tx.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            let event = match docker.stop(&id).await {
+                Ok(()) => BackgroundEvent::ActionDone {
+                    key,
+                    message: "Container stopped".into(),
+                },
+                Err(e) => BackgroundEvent::ActionFailed {
+                    key,
+                    message: format!("Stop failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
     }
 
-    async fn restart_container(&mut self, id: &str) {
+    fn restart_container(&mut self, id: &str) {
+        use crate::{app::BackgroundEvent, in_flight::container_key};
+
+        let key = container_key(id);
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status("Already busy with this container");
+            return;
+        }
         let Some(docker) = self.docker.clone() else {
+            self.in_flight.end(&key);
             return;
         };
-        match docker.restart(id).await {
-            Ok(()) => self.set_status("Restarting container"),
-            Err(e) => self.set_status(format!("Restart failed: {e}")),
-        }
+        self.set_status(format!("Restarting {id}…"));
+        let tx = self.bg_tx.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            let event = match docker.restart(&id).await {
+                Ok(()) => BackgroundEvent::ActionDone {
+                    key,
+                    message: "Container restarted".into(),
+                },
+                Err(e) => BackgroundEvent::ActionFailed {
+                    key,
+                    message: format!("Restart failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
     }
 
-    async fn remove_resource(&mut self, kind: ResourceKind, id: &str) {
+    fn remove_resource(&mut self, kind: ResourceKind, id: &str) {
+        use crate::{app::BackgroundEvent, in_flight::resource_key};
+
+        let key = resource_key(kind, id);
+        if !self.in_flight.try_begin(key.clone()) {
+            self.set_status(format!(
+                "Already busy with this {}",
+                singular(kind).to_lowercase()
+            ));
+            return;
+        }
         let Some(docker) = self.docker.clone() else {
+            self.in_flight.end(&key);
             return;
         };
-        let result = match kind {
-            ResourceKind::Containers => docker.remove(id).await,
-            ResourceKind::Images => docker.remove_image(id).await,
-            ResourceKind::Volumes => docker.remove_volume(id).await,
-            ResourceKind::Networks => docker.remove_network(id).await,
-        };
-        match result {
-            Ok(()) => self.set_status(format!("{} removed", singular(kind))),
-            Err(e) => self.set_status(format!("Remove failed: {e}")),
-        }
+        self.set_status(format!("Removing {id}…"));
+        let tx = self.bg_tx.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            let result = match kind {
+                ResourceKind::Containers => docker.remove(&id).await,
+                ResourceKind::Images => docker.remove_image(&id).await,
+                ResourceKind::Volumes => docker.remove_volume(&id).await,
+                ResourceKind::Networks => docker.remove_network(&id).await,
+            };
+            let event = match result {
+                Ok(()) => BackgroundEvent::ActionDone {
+                    key,
+                    message: format!("{} removed", singular(kind)),
+                },
+                Err(e) => BackgroundEvent::ActionFailed {
+                    key,
+                    message: format!("Remove failed: {e}"),
+                },
+            };
+            let _ = tx.send(event);
+        });
     }
 }
 
@@ -540,15 +624,21 @@ const fn singular(kind: ResourceKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use core::time::Duration;
+    use std::time::Instant;
+
     use k9tui::widgets::table::TableDataState;
     use ratatui::{backend::TestBackend, buffer::Cell};
+    use tokio::time::sleep;
 
     use super::*;
     use crate::{
+        app::BackgroundEvent,
         docker::{
             ContainerRow, ImageRow, NetworkRow, VolumeRow,
             client::{DaemonHealth, DockerClient},
         },
+        in_flight::container_key,
         ui::widgets::hotkeys::RESOURCE_HOTKEYS,
     };
 
@@ -599,6 +689,19 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    /// Drain until spawned work settles; wall-clock bound so slow CI runners
+    /// (blocking pool, unreachable daemon) still finish.
+    async fn flush_background(app: &mut App) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            app.drain_background_events();
+            if app.in_flight.is_empty() {
+                return;
+            }
+            sleep(Duration::from_millis(1)).await;
+        }
+    }
+
     fn screen(app: &mut App, term: &mut Term) -> String {
         term.draw(|f| app.render(f)).unwrap();
         let buf = term.backend().buffer();
@@ -622,9 +725,8 @@ mod tests {
             let mut app = app();
             let mut t = term();
             app.switch_view(kind);
-            app.on_key_event(key(KeyCode::Char('i')), &mut t)
-                .await
-                .unwrap();
+            app.on_key_event(key(KeyCode::Char('i')), &mut t).unwrap();
+            flush_background(&mut app).await;
             assert_eq!(app.state, AppState::List, "{kind:?}");
             let out = screen(&mut app, &mut t);
             assert!(out.contains("Daemon info failed"), "{kind:?}: {out}");
@@ -638,7 +740,7 @@ mod tests {
             let mut t = term();
             app.running = true;
             app.state = AppState::Info(DaemonHealth::default());
-            app.on_key_event(key(code), &mut t).await.unwrap();
+            app.on_key_event(key(code), &mut t).unwrap();
             assert_eq!(app.state, AppState::List, "{code:?}");
             assert!(app.running, "{code:?} must not quit");
         }
@@ -650,7 +752,6 @@ mod tests {
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
             &mut t,
         )
-        .await
         .unwrap();
         assert!(!app.running);
     }
@@ -662,7 +763,8 @@ mod tests {
                 let mut app = app();
                 let mut t = term();
                 app.switch_view(kind);
-                app.on_key_event(key(code), &mut t).await.unwrap();
+                app.on_key_event(key(code), &mut t).unwrap();
+                flush_background(&mut app).await;
                 // Reached the inspect call (daemon unreachable) rather than
                 // the old "only available for containers" refusal.
                 let out = screen(&mut app, &mut t);
@@ -678,16 +780,17 @@ mod tests {
             let mut app = app();
             let mut t = term();
             app.switch_view(kind);
-            app.on_key_event(shift_d(), &mut t).await.unwrap();
+            app.on_key_event(shift_d(), &mut t).unwrap();
             assert!(app.confirm_dialog.is_some(), "{kind:?}");
             assert_eq!(app.pending_remove.as_ref().map(|p| p.0), Some(kind));
             assert_eq!(app.state, AppState::List, "D must not describe");
 
             // Default is No: move to Yes, then Enter attempts the removal.
-            app.on_key_event(key(KeyCode::Left), &mut t).await.unwrap();
-            app.on_key_event(key(KeyCode::Enter), &mut t).await.unwrap();
+            app.on_key_event(key(KeyCode::Left), &mut t).unwrap();
+            app.on_key_event(key(KeyCode::Enter), &mut t).unwrap();
             assert!(app.confirm_dialog.is_none());
             assert!(app.pending_remove.is_none());
+            flush_background(&mut app).await;
             let out = screen(&mut app, &mut t);
             assert!(out.contains("Remove failed"), "{kind:?}: {out}");
         }
@@ -697,8 +800,8 @@ mod tests {
     async fn enter_on_default_no_does_not_remove() {
         let mut app = app();
         let mut t = term();
-        app.on_key_event(shift_d(), &mut t).await.unwrap();
-        app.on_key_event(key(KeyCode::Enter), &mut t).await.unwrap();
+        app.on_key_event(shift_d(), &mut t).unwrap();
+        app.on_key_event(key(KeyCode::Enter), &mut t).unwrap();
         assert!(app.confirm_dialog.is_none() && app.pending_remove.is_none());
         let out = screen(&mut app, &mut t);
         assert!(!out.contains("Remove failed"), "{out}");
@@ -709,14 +812,12 @@ mod tests {
         let mut app = app();
         let mut t = term();
         app.switch_view(ResourceKind::Volumes);
-        app.on_key_event(key(KeyCode::Delete), &mut t)
-            .await
-            .unwrap();
+        app.on_key_event(key(KeyCode::Delete), &mut t).unwrap();
         assert_eq!(
             app.pending_remove,
             Some((ResourceKind::Volumes, "data".to_string()))
         );
-        app.on_key_event(key(KeyCode::Esc), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Esc), &mut t).unwrap();
         assert!(app.confirm_dialog.is_none() && app.pending_remove.is_none());
     }
 
@@ -724,8 +825,8 @@ mod tests {
     async fn esc_cancels_confirm_without_removing() {
         let mut app = app();
         let mut t = term();
-        app.on_key_event(shift_d(), &mut t).await.unwrap();
-        app.on_key_event(key(KeyCode::Esc), &mut t).await.unwrap();
+        app.on_key_event(shift_d(), &mut t).unwrap();
+        app.on_key_event(key(KeyCode::Esc), &mut t).unwrap();
         let out = screen(&mut app, &mut t);
         assert!(!out.contains("Remove failed"));
         assert!(app.pending_remove.is_none());
@@ -736,7 +837,7 @@ mod tests {
         let mut app = app();
         let mut t = term();
         app.switch_view(ResourceKind::Networks);
-        app.on_key_event(shift_d(), &mut t).await.unwrap();
+        app.on_key_event(shift_d(), &mut t).unwrap();
         let out = screen(&mut app, &mut t);
         assert!(out.contains("Remove Network?"), "{out}");
         assert!(out.contains("Remove Network 'backend'?"));
@@ -760,20 +861,18 @@ mod tests {
         assert!(out.contains("line-0"));
         assert!(!out.contains("line-99"));
 
-        app.on_key_event(key(KeyCode::Char('G')), &mut t)
-            .await
-            .unwrap();
+        app.on_key_event(key(KeyCode::Char('G')), &mut t).unwrap();
         let out = screen(&mut app, &mut t);
         assert!(out.contains("line-99"));
         assert!(!out.contains("line-0\n") || app.describe_scroll > 0);
 
-        app.on_key_event(key(KeyCode::Esc), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Esc), &mut t).unwrap();
         assert_eq!(app.state, AppState::List);
     }
 
-    async fn type_cmd(app: &mut App, t: &mut Term, s: &str) {
+    fn type_cmd(app: &mut App, t: &mut Term, s: &str) {
         for c in s.chars() {
-            app.on_key_event(key(KeyCode::Char(c)), t).await.unwrap();
+            app.on_key_event(key(KeyCode::Char(c)), t).unwrap();
         }
     }
 
@@ -781,19 +880,17 @@ mod tests {
     async fn colon_bar_types_completes_runs_and_switches_view() {
         let mut app = app();
         let mut t = term();
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
         assert!(app.command_mode && app.list_search_open);
-        type_cmd(&mut app, &mut t, "im").await;
+        type_cmd(&mut app, &mut t, "im");
         assert_eq!(app.command_text, "im");
         assert_eq!(app.list_filter, "", "typing must not filter rows");
         let out = screen(&mut app, &mut t);
         assert!(out.contains(" Command "), "{out}");
         assert!(out.contains(":images"), "dim ghost completion: {out}");
-        app.on_key_event(key(KeyCode::Tab), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Tab), &mut t).unwrap();
         assert_eq!(app.command_text, "images");
-        app.on_key_event(key(KeyCode::Enter), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Enter), &mut t).unwrap();
         assert!(!app.command_mode && !app.list_search_open);
         assert_eq!(app.view, ResourceKind::Images);
         assert_eq!(app.hotkeys.len(), RESOURCE_HOTKEYS.len());
@@ -805,7 +902,7 @@ mod tests {
         let mut app = app();
         let mut t = term();
         let w = KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT);
-        app.on_key_event(w, &mut t).await.unwrap();
+        app.on_key_event(w, &mut t).unwrap();
         assert_eq!(app.column_width_mode, Content);
         assert_eq!(app.status_line.message(), "Column width: Content");
         assert_eq!(app.networks.view.column_width_mode, Content);
@@ -814,7 +911,7 @@ mod tests {
         app.processes = TableDataState::new(Vec::new());
         screen(&mut app, &mut t);
         assert_eq!(app.processes.view.column_width_mode, Content);
-        app.on_key_event(w, &mut t).await.unwrap();
+        app.on_key_event(w, &mut t).unwrap();
         assert_eq!(app.images.view.column_width_mode, Fit);
     }
 
@@ -827,48 +924,37 @@ mod tests {
             ("n", ResourceKind::Networks),
             ("c", ResourceKind::Containers),
         ] {
-            app.on_key_event(key(KeyCode::Char(':')), &mut t)
-                .await
-                .unwrap();
-            type_cmd(&mut app, &mut t, cmd).await;
-            app.on_key_event(key(KeyCode::Enter), &mut t).await.unwrap();
+            app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
+            type_cmd(&mut app, &mut t, cmd);
+            app.on_key_event(key(KeyCode::Enter), &mut t).unwrap();
             assert_eq!(app.view, kind, "{cmd}");
         }
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
-        type_cmd(&mut app, &mut t, "zz").await;
-        app.on_key_event(key(KeyCode::Enter), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
+        type_cmd(&mut app, &mut t, "zz");
+        app.on_key_event(key(KeyCode::Enter), &mut t).unwrap();
         assert_eq!(app.view, ResourceKind::Containers);
         assert!(screen(&mut app, &mut t).contains("Unknown command: zz"));
 
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
-        type_cmd(&mut app, &mut t, "images").await;
-        app.on_key_event(key(KeyCode::Esc), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
+        type_cmd(&mut app, &mut t, "images");
+        app.on_key_event(key(KeyCode::Esc), &mut t).unwrap();
         assert!(!app.command_mode && !app.list_search_open);
         assert_eq!(app.view, ResourceKind::Containers);
 
         app.running = true;
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
         app.on_key_event(
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
             &mut t,
         )
-        .await
         .unwrap();
         assert!(!app.running);
 
-        app.on_key_event(key(KeyCode::Esc), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Esc), &mut t).unwrap();
         app.running = true;
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
-        type_cmd(&mut app, &mut t, "quit").await;
-        app.on_key_event(key(KeyCode::Enter), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
+        type_cmd(&mut app, &mut t, "quit");
+        app.on_key_event(key(KeyCode::Enter), &mut t).unwrap();
         assert!(!app.running);
     }
 
@@ -876,12 +962,8 @@ mod tests {
     async fn colon_is_text_in_search_and_inert_in_other_views() {
         let mut app = app();
         let mut t = term();
-        app.on_key_event(key(KeyCode::Char('/')), &mut t)
-            .await
-            .unwrap();
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
+        app.on_key_event(key(KeyCode::Char('/')), &mut t).unwrap();
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
         assert!(!app.command_mode);
         assert_eq!(app.list_filter, ":");
 
@@ -890,9 +972,7 @@ mod tests {
             name: "web".into(),
             text: "x".into(),
         };
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
         assert!(!app.command_mode && !app.list_search_open);
     }
 
@@ -900,43 +980,35 @@ mod tests {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
-    async fn colon(app: &mut App, t: &mut Term, cmd: &str) {
-        app.on_key_event(key(KeyCode::Char(':')), t).await.unwrap();
-        type_cmd(app, t, cmd).await;
-        app.on_key_event(key(KeyCode::Enter), t).await.unwrap();
+    fn colon(app: &mut App, t: &mut Term, cmd: &str) {
+        app.on_key_event(key(KeyCode::Char(':')), t).unwrap();
+        type_cmd(app, t, cmd);
+        app.on_key_event(key(KeyCode::Enter), t).unwrap();
     }
 
     #[tokio::test]
     async fn colon_whitespace_case_and_unicode_input() {
         let mut app = app();
         let mut t = term();
-        colon(&mut app, &mut t, "  IMAGES  ").await;
+        colon(&mut app, &mut t, "  IMAGES  ");
         assert_eq!(app.view, ResourceKind::Images);
         // Empty and whitespace-only just close the bar, no status noise.
         for cmd in ["", "   "] {
-            colon(&mut app, &mut t, cmd).await;
+            colon(&mut app, &mut t, cmd);
             assert!(!app.command_mode && !app.list_search_open, "{cmd:?}");
             assert_eq!(app.view, ResourceKind::Images);
             assert!(!screen(&mut app, &mut t).contains("Unknown command"));
         }
         // Multibyte / emoji input: Unknown, Backspace removes a whole char.
-        colon(&mut app, &mut t, "🦀é").await;
+        colon(&mut app, &mut t, "🦀é");
         // (wide glyphs render as glyph + filler cell, so only match the prefix)
         assert!(screen(&mut app, &mut t).contains("Unknown command: 🦀"));
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
-        type_cmd(&mut app, &mut t, "🦀é").await;
-        app.on_key_event(key(KeyCode::Backspace), &mut t)
-            .await
-            .unwrap();
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
+        type_cmd(&mut app, &mut t, "🦀é");
+        app.on_key_event(key(KeyCode::Backspace), &mut t).unwrap();
         assert_eq!(app.command_text, "🦀");
-        app.on_key_event(key(KeyCode::Backspace), &mut t)
-            .await
-            .unwrap();
-        app.on_key_event(key(KeyCode::Backspace), &mut t)
-            .await
-            .unwrap();
+        app.on_key_event(key(KeyCode::Backspace), &mut t).unwrap();
+        app.on_key_event(key(KeyCode::Backspace), &mut t).unwrap();
         assert_eq!(app.command_text, "");
         let _ = screen(&mut app, &mut t);
     }
@@ -946,33 +1018,26 @@ mod tests {
         let mut app = app();
         let mut t = term();
         // Applied row filter survives a cancelled command and a `/` after.
-        app.on_key_event(key(KeyCode::Char('/')), &mut t)
-            .await
-            .unwrap();
-        type_cmd(&mut app, &mut t, "web").await;
-        app.on_key_event(key(KeyCode::Enter), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Char('/')), &mut t).unwrap();
+        type_cmd(&mut app, &mut t, "web");
+        app.on_key_event(key(KeyCode::Enter), &mut t).unwrap();
         assert_eq!(app.list_filter, "web");
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
-        type_cmd(&mut app, &mut t, "zz").await;
-        app.on_key_event(ctrl('w'), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
+        type_cmd(&mut app, &mut t, "zz");
+        app.on_key_event(ctrl('w'), &mut t).unwrap();
         app.on_key_event(
             KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT),
             &mut t,
         )
-        .await
         .unwrap();
         assert_eq!(app.command_text, "zz", "Ctrl/Alt chords are not text");
         assert_eq!(app.list_filter, "web", "typing a command never filters");
-        app.on_key_event(key(KeyCode::Esc), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Esc), &mut t).unwrap();
         assert_eq!(app.list_filter, "web", "Esc must not clear the filter");
         assert!(!app.command_mode && app.command_text.is_empty());
-        app.on_key_event(key(KeyCode::Char('/')), &mut t)
-            .await
-            .unwrap();
+        app.on_key_event(key(KeyCode::Char('/')), &mut t).unwrap();
         assert!(app.list_search_open && !app.command_mode);
-        type_cmd(&mut app, &mut t, "x").await;
+        type_cmd(&mut app, &mut t, "x");
         assert_eq!(app.list_filter, "webx", "`/` is a normal filter again");
     }
 
@@ -981,38 +1046,28 @@ mod tests {
         let mut app = app();
         let mut t = term();
         app.running = true;
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
-        type_cmd(&mut app, &mut t, "q").await;
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
+        type_cmd(&mut app, &mut t, "q");
         assert!(app.running, "q is typed, not a quit key, until Enter");
-        app.on_key_event(key(KeyCode::Esc), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Esc), &mut t).unwrap();
 
         // Confirm dialog open: `:` must not open the bar.
-        app.on_key_event(shift_d(), &mut t).await.unwrap();
+        app.on_key_event(shift_d(), &mut t).unwrap();
         assert!(app.confirm_dialog.is_some());
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
         assert!(!app.command_mode && !app.list_search_open);
         assert!(app.confirm_dialog.is_some());
-        app.on_key_event(key(KeyCode::Esc), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Esc), &mut t).unwrap();
 
         // Log view + its search bar: `:` is just text.
         app.state = AppState::Logs {
             id: "c1".into(),
             name: "web".into(),
         };
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
         assert!(!app.command_mode && !app.list_search_open);
-        app.on_key_event(key(KeyCode::Char('/')), &mut t)
-            .await
-            .unwrap();
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
+        app.on_key_event(key(KeyCode::Char('/')), &mut t).unwrap();
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
         assert_eq!(app.log_filter, ":");
         assert!(!app.command_mode);
     }
@@ -1021,21 +1076,54 @@ mod tests {
     async fn colon_bar_renders_at_tiny_and_normal_sizes_with_long_text() {
         let mut app = app();
         let mut t = term();
-        app.on_key_event(key(KeyCode::Char(':')), &mut t)
-            .await
-            .unwrap();
-        type_cmd(&mut app, &mut t, "im").await;
+        app.on_key_event(key(KeyCode::Char(':')), &mut t).unwrap();
+        type_cmd(&mut app, &mut t, "im");
         for (w, h) in [(20, 5), (80, 24), (1, 1), (3, 3), (10, 4)] {
             let mut small = Terminal::new(TestBackend::new(w, h)).unwrap();
             small.draw(|f| app.render(f)).unwrap();
         }
-        type_cmd(&mut app, &mut t, &"x".repeat(200)).await;
+        type_cmd(&mut app, &mut t, &"x".repeat(200));
         let mut small = Terminal::new(TestBackend::new(20, 5)).unwrap();
         small.draw(|f| app.render(f)).unwrap();
         // 120-col hotkey bar still lists the new hint.
-        app.on_key_event(key(KeyCode::Esc), &mut t).await.unwrap();
+        app.on_key_event(key(KeyCode::Esc), &mut t).unwrap();
         let out = screen(&mut app, &mut t);
         assert!(out.contains("command"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn remove_refuses_when_resource_in_flight() {
+        let mut app = App::new();
+        app.docker = Some(DockerClient::unreachable());
+        let key = container_key("x");
+        assert!(app.in_flight.try_begin(key.clone()));
+        app.remove_resource(ResourceKind::Containers, "x");
+        assert!(app.in_flight.contains(&key));
+    }
+
+    #[tokio::test]
+    async fn restart_refuses_when_container_in_flight() {
+        let mut app = App::new();
+        app.docker = Some(DockerClient::unreachable());
+        let id = "abc123";
+        assert!(app.in_flight.try_begin(container_key(id)));
+        app.restart_container(id);
+        assert!(app.in_flight.contains(&container_key(id)));
+    }
+
+    #[tokio::test]
+    async fn action_done_clears_in_flight_and_sets_status() {
+        let mut app = App::new();
+        let key = container_key("c1");
+        assert!(app.in_flight.try_begin(key.clone()));
+        app.bg_tx
+            .send(BackgroundEvent::ActionDone {
+                key: key.clone(),
+                message: "Restarted".into(),
+            })
+            .unwrap();
+        app.drain_background_events();
+        assert!(!app.in_flight.contains(&key));
     }
 }
 

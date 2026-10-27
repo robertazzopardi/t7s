@@ -30,7 +30,7 @@ pub struct RowDeleteSpec {
 }
 
 /// One page of table rows for the explorer, including optional per-row DB locators.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct TableDataPage {
     pub rows: Vec<Vec<String>>,
     pub column_names: Vec<String>,
