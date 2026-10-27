@@ -11,7 +11,6 @@ use crate::{
     app_state::{AppState, DatabaseExplorerState},
     command::{Command, Verb, resolve, suggest},
     db::connection::ConnectionType,
-    error::Result,
     services::PreferencesService,
     ui::widgets::help_content::help_rows,
 };
@@ -95,10 +94,7 @@ impl App<'_> {
         })
     }
 
-    pub(crate) async fn handle_command_key(
-        &mut self,
-        key: KeyEvent,
-    ) -> Result<()> {
+    pub(crate) fn handle_command_key(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
             (_, KeyCode::Esc) => self.close_command_bar(),
@@ -107,7 +103,7 @@ impl App<'_> {
             (_, KeyCode::Enter) => {
                 let text = self.command_text();
                 self.close_command_bar();
-                self.execute_command(&text).await?;
+                self.execute_command(&text);
             }
             (_, KeyCode::Tab) => {
                 if let Some(s) = self.command_suggestion() {
@@ -120,7 +116,6 @@ impl App<'_> {
                 }
             }
         }
-        Ok(())
     }
 
     pub(crate) fn open_help(&mut self) {
@@ -142,7 +137,7 @@ impl App<'_> {
     }
 
     /// Resolve and run a command line.
-    pub(crate) async fn execute_command(&mut self, text: &str) -> Result<()> {
+    pub(crate) fn execute_command(&mut self, text: &str) {
         let tables = self.command_table_names();
         let schemas = self.command_schema_names();
         let table_refs: Vec<&str> = tables.iter().map(String::as_str).collect();
@@ -171,11 +166,11 @@ impl App<'_> {
             } else {
                 "Not connected - open a connection first (Enter on a connection)."
             });
-            return Ok(());
+            return;
         }
         if changes_view && self.has_table_draft_rows() {
             self.set_status(DRAFT_PENDING);
-            return Ok(());
+            return;
         }
         let sqlite =
             self.database_explorer.connection.r#type == ConnectionType::Sqlite;
@@ -206,27 +201,26 @@ impl App<'_> {
                     self.database_explorer.state,
                     DatabaseExplorerState::TableData(_, _)
                 ) {
-                    self.jump_to_table_row(n).await?;
+                    self.jump_to_table_row(n);
                 } else {
                     self.set_status("Row jump needs an open table.");
                 }
             }
-            Command::Verb(v) => self.run_verb(v).await?,
+            Command::Verb(v) => self.run_verb(v),
             Command::Table(candidates) => {
-                self.jump_to_table_by_name(&candidates).await?;
+                self.jump_to_table_by_name(&candidates);
             }
             Command::Schema(candidates) => {
-                self.jump_to_schema_by_name(&candidates).await?;
+                self.jump_to_schema_by_name(&candidates);
             }
         }
-        Ok(())
     }
 
-    async fn run_verb(&mut self, verb: Verb) -> Result<()> {
+    fn run_verb(&mut self, verb: Verb) {
         match verb {
             Verb::Connections => {
                 self.disconnect_from_database();
-                self.refresh_connections().await;
+                self.refresh_connections();
             }
             Verb::Schemas => {
                 if self.database_explorer.connection.r#type
@@ -234,11 +228,11 @@ impl App<'_> {
                 {
                     self.set_status("SQLite has no schemas.");
                 } else {
-                    self.load_schemas().await?;
+                    self.load_schemas();
                 }
             }
             Verb::Tables => match self.command_schema() {
-                Some(schema) => self.load_tables(&schema).await?,
+                Some(schema) => self.load_tables(&schema),
                 None => self.set_status("Open a schema first."),
             },
             Verb::Columns => {
@@ -256,14 +250,13 @@ impl App<'_> {
                     | DatabaseExplorerState::SqlResults(_) => None,
                 };
                 match target {
-                    Some((s, t)) => self.load_columns(&s, &t).await?,
+                    Some((s, t)) => self.load_columns(&s, &t),
                     None => self.set_status("Select a table first."),
                 }
             }
             Verb::Sql => self.request_editor(),
-            Verb::Activity => self.open_activity_view().await,
+            Verb::Activity => self.open_activity_view(),
             Verb::Help | Verb::Log | Verb::Quit => {}
         }
-        Ok(())
     }
 }

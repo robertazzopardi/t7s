@@ -7,6 +7,7 @@ mod command;
 mod docker;
 mod error;
 mod event_handlers;
+mod in_flight;
 mod log_dedup;
 mod rendering;
 mod ui;
@@ -30,7 +31,7 @@ async fn main() -> error::Result<()> {
     }));
 
     let mut app = App::new();
-    let result = app.run(terminal).await;
+    let result = app.run(terminal);
 
     let _ = execute!(stdout(), DisableBracketedPaste);
     ratatui::restore();

@@ -122,11 +122,35 @@ tokio::task_local! {
     static SQL_SINK: RefCell<Vec<String>>;
 }
 
+std::thread_local! {
+    /// `spawn_blocking` rusqlite work reports here; merged into [`SQL_SINK`] after join.
+    static BLOCKING_SQL_SINK: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
 /// Called by backends right before sending a statement. Records the SQL
 /// text only (placeholders, never bound values) for the decorated call in
 /// progress; a no-op when the backend is not wrapped in a [`LoggedDatabase`].
 pub fn report_sql(sql: &str) {
-    let _ = SQL_SINK.try_with(|s| s.borrow_mut().push(sql.to_string()));
+    let s = sql.to_string();
+    let _ = SQL_SINK.try_with(|sink| sink.borrow_mut().push(s.clone()));
+    let _ = BLOCKING_SQL_SINK.try_with(|sink| sink.borrow_mut().push(s));
+}
+
+pub fn clear_blocking_sql_reports() {
+    BLOCKING_SQL_SINK.with(|sink| sink.borrow_mut().clear());
+}
+
+pub fn take_blocking_sql_reports() -> Vec<String> {
+    BLOCKING_SQL_SINK.with(|sink| {
+        let v = sink.borrow().clone();
+        sink.borrow_mut().clear();
+        v
+    })
+}
+
+/// Merge SQL captured on a blocking thread into the current async [`SQL_SINK`].
+pub fn merge_blocking_sql_reports(reports: Vec<String>) {
+    let _ = SQL_SINK.try_with(|sink| sink.borrow_mut().extend(reports));
 }
 
 #[derive(Default)]

@@ -411,6 +411,8 @@ fn plan_fit(
     area_w: usize,
 ) -> ColumnPlan {
     let n = content.len();
+    // A stale column selection (re-run query with fewer columns) falls back to none.
+    let selected = selected.filter(|&s| s < n);
     let mut lens = content.to_vec();
     if let Some(f) = fill.and_then(|f| lens.get_mut(f)) {
         *f = (*f).min(FILL_MIN_LEN);
@@ -1040,6 +1042,13 @@ mod tests {
         }
         let lines = render_with_mode(vec![H], 40, 3, ColumnWidthMode::Fit);
         assert!(lines.first().unwrap().contains("LongHeader"), "{lines:?}");
+    }
+
+    #[test]
+    fn fit_ignores_out_of_range_selected_column() {
+        let plan = plan_fit(&[5, 5, 5], None, Some(10), 0, 40);
+        assert_eq!(plan.rel_selected, None);
+        assert_eq!(plan.cols, vec![0, 1, 2]);
     }
 
     #[test]
