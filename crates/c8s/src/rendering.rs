@@ -17,7 +17,7 @@ use crate::{
     app::{APP_NAME, App},
     app_state::{AppState, ResourceKind},
     command::suggest,
-    docker::client::DaemonHealth,
+    docker::{client::DaemonHealth, short_id},
     log_dedup::fold,
     ui::widgets::hotkeys::{
         GLOBAL_HOTKEYS, VIEW_SWITCH_HOTKEYS, describe_hotkeys, log_hotkeys,
@@ -73,7 +73,7 @@ impl App {
         let hotkeys = process_hotkeys();
         frame.render_widget(
             TopBarView {
-                summary: &format!("Processes: {name}"),
+                summary: &self.container_summary("Processes", name),
                 recent_hotkeys: &[],
                 hotkeys: &hotkeys,
                 global_hotkeys: &[],
@@ -106,6 +106,28 @@ impl App {
         }
 
         frame.render_widget(self.status_line.clone(), footer_area);
+    }
+
+    /// Header info for a per-container view: `{view}: {name}` plus the
+    /// container's live list row, capped to the header's line budget.
+    fn container_summary(&self, view: &str, name: &str) -> String {
+        let mut lines = vec![format!("{view}: {name}")];
+        if let Some(c) = self.containers_all.iter().find(|c| c.name == name) {
+            for (label, value) in [
+                ("ID", short_id(&c.id)),
+                ("Image", c.image.clone()),
+                ("Status", c.status.clone()),
+                ("Uptime", c.uptime.clone()),
+                ("Ports", c.ports.clone()),
+            ] {
+                if !value.is_empty() {
+                    lines.push(format!("{label}: {value}"));
+                }
+            }
+        }
+        // Top bar keeps its last row as a spacer.
+        lines.truncate(usize::from(TOPBAR_HEIGHT - 1));
+        lines.join("\n")
     }
 
     fn render_connecting(frame: &mut Frame) {
@@ -305,7 +327,7 @@ impl App {
         let hotkeys = log_hotkeys();
         frame.render_widget(
             TopBarView {
-                summary: &format!("Logs: {name}"),
+                summary: &self.container_summary("Logs", name),
                 recent_hotkeys: &[],
                 hotkeys: &hotkeys,
                 global_hotkeys: &[],
@@ -414,7 +436,7 @@ impl App {
         let hotkeys = describe_hotkeys();
         frame.render_widget(
             TopBarView {
-                summary: &format!("Describe: {name}"),
+                summary: &self.container_summary("Describe", name),
                 recent_hotkeys: &[],
                 hotkeys: &hotkeys,
                 global_hotkeys: &[],
@@ -592,6 +614,31 @@ mod tests {
         let mut terminal =
             Terminal::new(TestBackend::new(20, 5)).expect("test terminal");
         terminal.draw(|f| app.render(f)).expect("draw");
+    }
+
+    #[test]
+    fn logs_header_shows_container_info() {
+        let mut app = app();
+        if let Some(c) = app.containers_all.first_mut() {
+            c.id = "0123456789abcdef".into();
+            c.status = "running".into();
+            c.uptime = "Up 2 hours".into();
+        }
+        app.state = AppState::Logs {
+            id: "0123456789abcdef".into(),
+            name: "web".into(),
+        };
+        let out = text(&render(&mut app));
+        for want in [
+            "Logs: web",
+            "ID: 0123456789ab",
+            "Image: nginx",
+            "Status: running",
+            "Uptime: Up 2 hours",
+        ] {
+            assert!(out.contains(want), "missing {want:?} in:\n{out}");
+        }
+        assert!(!out.contains("Ports:"), "empty values are skipped");
     }
 
     #[test]
