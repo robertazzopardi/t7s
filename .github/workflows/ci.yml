@@ -44,7 +44,7 @@ jobs:
           components: clippy
           install-linux-dbus: "true"
       - name: Run clippy action
-        uses: clechasseur/rs-clippy-check@d626afd6670c78ecef6c7872e1c9e1221065d5c5 # v6.1.0
+        uses: clechasseur/rs-clippy-check@ac75e246ebbd78d106ac9460c668ab7c8044ebe3 # v6.1.1
         with:
           args: --workspace --all-features --all-targets -- -D warnings -W clippy::all -W clippy::pedantic -W clippy::nursery -W clippy::cargo -A clippy::multiple_crate_versions
   doc:
