@@ -1,3 +1,4 @@
+use core::mem::take;
 use std::sync::Arc;
 
 use tokio::task::spawn_blocking;
@@ -142,14 +143,20 @@ impl App<'_> {
         let connection_env = connection.environment;
         let conn_type = connection.r#type;
         self.hotkeys = database_hotkeys(conn_type);
+        // Keep the saved list: `:table conn.db.schema.table` resolves against it.
+        let connections = take(&mut self.database_explorer.connections);
         self.database_explorer =
             DatabaseExplorer::new(connection, Some(database));
+        self.database_explorer.connections = connections;
         self.state = AppState::DatabaseConnected;
         let _ = PreferencesService::set_last_connection(&connection_name);
         let msg = self.connect_status_message(&connection_name, connection_env);
         self.set_status(msg);
 
         if conn_type == ConnectionType::Sqlite {
+            // No database level: `apply_tables_loaded` drops results in `Databases`.
+            self.database_explorer.state =
+                DatabaseExplorerState::Tables("sqlite_schema".into());
             self.load_tables("sqlite_schema");
         } else {
             self.load_databases();

@@ -67,6 +67,7 @@ Tab completes; Esc cancels. Unique prefixes work (`:sch`). Draft row pending blo
 | `:schema <name>` | Open schema (exact → prefix → substring). SQLite: no schemas |
 | `:tables` / `:table` | Tables in current schema |
 | `:table <name>` | Open table (same match rules; spaces ok) |
+| `:table conn.db.schema.table` | Jump across connections, databases and schemas (each part matched like above). SQLite: `conn.table`. MySQL: schema = database. Tab completes each level of the current context |
 | `:columns` / `:cols` | Columns |
 | `:sql` / `:editor` | SQL editor |
 | `:log` / `:querylog` | Query log |
