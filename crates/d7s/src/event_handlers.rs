@@ -3,7 +3,9 @@ use core::time::Duration;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
-use k9tui::{theme, widgets::navigation::TableNavigationHandler};
+use k9tui::{
+    event::poll_input, theme, widgets::navigation::TableNavigationHandler,
+};
 use ratatui::{
     style::{Color, Style},
     widgets::{Block, Borders, TableState},
@@ -46,8 +48,10 @@ impl App<'_> {
     /// [`event::poll`] function to check if there are any events available with a timeout.
     pub fn handle_crossterm_events(&mut self) -> Result<()> {
         // Short timeout (rather than a blocking read) so the run loop keeps
-        // spinning to pick up watch-mode ticks between keypresses.
-        if !event::poll(Duration::from_millis(200))? {
+        // spinning to pick up watch-mode ticks between keypresses; wakes early
+        // when a background result is queued so it is drawn right away.
+        let bg_rx = &self.bg_rx;
+        if !poll_input(Duration::from_millis(200), || !bg_rx.is_empty())? {
             return Ok(());
         }
         match event::read()? {

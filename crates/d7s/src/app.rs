@@ -221,9 +221,9 @@ impl App<'_> {
         self.running = true;
         self.ping_connections_if_any();
         while self.running {
-            terminal.draw(|frame| self.render(frame))?;
             self.drain_bg_events();
             self.tick_watch();
+            terminal.draw(|frame| self.render(frame))?;
             self.handle_crossterm_events()?;
 
             self.handle_external_terminal(&mut terminal)?;

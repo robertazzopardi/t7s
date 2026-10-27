@@ -5,8 +5,7 @@ use ansi_to_tui::IntoText;
 use crossterm::{
     ExecutableCommand,
     event::{
-        DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind, poll,
-        read,
+        DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind, read,
     },
     execute,
     terminal::{
@@ -14,12 +13,15 @@ use crossterm::{
         enable_raw_mode,
     },
 };
-use k9tui::widgets::{
-    constraint_len_calculator,
-    hotkey::Hotkey,
-    modal::ConfirmDialog,
-    status_line::StatusLine,
-    table::{ColumnWidthMode, TableData, TableDataState, filter_rows},
+use k9tui::{
+    event::poll_input,
+    widgets::{
+        constraint_len_calculator,
+        hotkey::Hotkey,
+        modal::ConfirmDialog,
+        status_line::StatusLine,
+        table::{ColumnWidthMode, TableData, TableDataState, filter_rows},
+    },
 };
 use ratatui::{
     DefaultTerminal, Terminal,
@@ -382,8 +384,8 @@ impl App {
         self.connect();
 
         while self.running {
-            terminal.draw(|frame| self.render(frame))?;
             self.drain_background_events();
+            terminal.draw(|frame| self.render(frame))?;
             self.poll_terminal_event(&mut terminal)?;
         }
         Ok(())
@@ -477,12 +479,14 @@ impl App {
     }
 
     /// Poll crossterm for an input event with a short timeout so the loop
-    /// keeps spinning to pick up background updates (poller, log tail).
+    /// keeps spinning to pick up background updates (poller, log tail); wakes
+    /// early when one is queued so it is drawn right away.
     fn poll_terminal_event(
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> Result<()> {
-        if !poll(Duration::from_millis(100))? {
+        let bg_rx = &self.bg_rx;
+        if !poll_input(Duration::from_millis(100), || !bg_rx.is_empty())? {
             return Ok(());
         }
         match read()? {
