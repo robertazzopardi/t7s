@@ -196,10 +196,7 @@ impl App {
     pub(crate) fn toggle_column_width_mode(&mut self) {
         self.column_width_mode = self.column_width_mode.toggle();
         self.sync_column_width_mode();
-        self.set_status(format!(
-            "Column width: {}",
-            self.column_width_mode.label()
-        ));
+        self.set_status(format!("Column width: {}", self.column_width_mode));
     }
 
     /// Push the session width mode onto every table, including `processes`,

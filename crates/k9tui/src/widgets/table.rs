@@ -70,13 +70,14 @@ impl ColumnWidthMode {
             Self::Content => Self::Fit,
         }
     }
+}
 
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
+impl fmt::Display for ColumnWidthMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
             Self::Fit => "Fit",
             Self::Content => "Content",
-        }
+        })
     }
 }
 
@@ -88,22 +89,16 @@ const fn fit_soft_cap(area_width: usize) -> usize {
     if soft == 0 { 1 } else { soft }
 }
 
-fn capped_lens_for_mode(
-    content_lens: &[usize],
-    area_width: usize,
-    mode: ColumnWidthMode,
-) -> Vec<usize> {
-    match mode {
-        ColumnWidthMode::Content => content_lens.to_vec(),
-        ColumnWidthMode::Fit => {
-            let hard = area_width.max(1);
-            let soft = fit_soft_cap(area_width);
-            content_lens
-                .iter()
-                .map(|&len| len.min(hard).min(soft))
-                .collect()
-        }
-    }
+/// Fit soft cap, in place; returns the capped total. The soft cap is at most
+/// `area_width`, so it doubles as the hard (viewport) cap.
+fn cap_fit_lens(lens: &mut [usize], area_width: usize) -> usize {
+    let cap = fit_soft_cap(area_width);
+    lens.iter_mut()
+        .map(|l| {
+            *l = (*l).min(cap);
+            *l
+        })
+        .sum()
 }
 
 /// View state for the table (UI state like selection, scrolling)
@@ -386,20 +381,16 @@ fn plan_content(
         let gaps = cols.len().saturating_sub(1);
         usize::from(area_w).saturating_sub(others + gaps).max(1)
     });
-    let constraints = cols
+    let (constraints, trunc) = cols
         .iter()
-        .map(|&idx| {
-            if fill == Some(idx) {
-                Constraint::Fill(1)
+        .map(|&i| {
+            if fill == Some(i) {
+                (Constraint::Fill(1), fill_width)
             } else {
-                length(lens.get(idx).unwrap_or(&0) + 1)
+                (length(lens.get(i).unwrap_or(&0) + 1), None)
             }
         })
-        .collect();
-    let trunc = cols
-        .iter()
-        .map(|&i| if fill == Some(i) { fill_width } else { None })
-        .collect();
+        .unzip();
     ColumnPlan {
         cols,
         constraints,
@@ -425,13 +416,15 @@ fn plan_fit(
         *f = (*f).min(FILL_MIN_LEN);
     }
     // Soft-cap only when the uncapped content (+ gaps) overflows; otherwise show it all.
-    if lens.iter().sum::<usize>() + n.saturating_sub(1) > area_w {
-        lens = capped_lens_for_mode(&lens, area_w, ColumnWidthMode::Fit);
+    let mut total: usize = lens.iter().sum();
+    if total + n.saturating_sub(1) > area_w {
+        total = cap_fit_lens(&mut lens, area_w);
     }
     // Pack with gap-aware units (cell + 1 spacing), so budget is `area_w + 1`.
     let units: Vec<usize> = lens.iter().map(|&l| l + 1).collect();
     let budget0 = area_w + 1;
-    let all_fit = units.iter().map(|&l| col_width(l)).sum::<usize>() <= budget0;
+    // Same as summing `col_width(unit)`: each column costs `len + 2`.
+    let all_fit = total + 2 * n <= budget0;
     // Too narrow for peeks to be useful; fall back to plain packing.
     let peeks = area_w >= 4 * PEEK_COLS;
 
@@ -469,8 +462,11 @@ fn plan_fit(
         "selected column must be in the packed window"
     );
 
-    let mut cols = Vec::new();
-    let mut widths = Vec::new();
+    // `cols` is `[left peek?] + packed + [right peek?]`, so packed index `p`
+    // sits at `p + off`.
+    let off = usize::from(left);
+    let mut cols = Vec::with_capacity(packed.len() + 2);
+    let mut widths = Vec::with_capacity(packed.len() + 2);
     if left {
         cols.push(start - 1);
         widths.push(PEEK_COLS);
@@ -479,57 +475,48 @@ fn plan_fit(
         cols.push(i);
         widths.push(col_width(lens.get(i).copied().unwrap_or(0)));
     }
+    let used: usize = widths.iter().sum();
     // Under Fit the fill target absorbs spare width (only when nothing is peeked on the right).
-    let target = (!right).then(|| {
-        fill.filter(|f| packed.contains(f))
-            .or_else(|| packed.last().copied())
-    });
-    let target_pos = target
+    let target_pos = (!right)
+        .then(|| {
+            fill.and_then(|f| packed.iter().position(|&i| i == f))
+                .or_else(|| packed.len().checked_sub(1))
+        })
         .flatten()
-        .and_then(|t| cols.iter().position(|&c| c == t));
-    let gaps = cols.len().saturating_sub(1) + usize::from(right);
+        .map(|p| p + off);
     if right {
-        let used: usize = widths.iter().sum::<usize>() + gaps;
+        let w = area_w.saturating_sub(used + cols.len()).max(1);
         cols.push(packed.last().map_or(0, |&i| i + 1));
-        widths.push(area_w.saturating_sub(used).max(1));
+        widths.push(w);
     }
-    if let Some(p) = target_pos {
-        let total: usize = widths.iter().sum();
-        if let Some(w) = widths.get_mut(p) {
-            let others = total - *w;
-            *w = area_w.saturating_sub(others + cols.len() - 1).max(1);
-        }
+    if let Some(w) = target_pos.and_then(|p| widths.get_mut(p)) {
+        let others = used - *w;
+        *w = area_w.saturating_sub(others + cols.len() - 1).max(1);
     }
 
     let last = cols.len() - 1;
-    let constraints = widths
+    // Leave the spacing cell free between columns; the last one may use its full width.
+    let (constraints, trunc) = widths
         .iter()
         .enumerate()
         .map(|(j, &w)| {
-            if Some(j) == target_pos {
+            let c = if Some(j) == target_pos {
                 Constraint::Fill(1)
             } else {
                 length(w)
-            }
+            };
+            (
+                c,
+                Some(if j == last {
+                    w
+                } else {
+                    w.saturating_sub(1).max(1)
+                }),
+            )
         })
-        .collect();
-    // Leave the spacing cell free between columns; the last one may use its full width.
-    let trunc = widths
-        .iter()
-        .enumerate()
-        .map(|(j, &w)| {
-            Some(if j == last {
-                w
-            } else {
-                w.saturating_sub(1).max(1)
-            })
-        })
-        .collect();
-    let rel_selected = selected.map(|s| {
-        cols.iter()
-            .position(|&c| c == s)
-            .unwrap_or_else(|| usize::from(left))
-    });
+        .unzip();
+    let rel_selected = selected
+        .map(|s| packed.iter().position(|&c| c == s).map_or(off, |p| p + off));
     ColumnPlan {
         cols,
         constraints,
@@ -1207,33 +1194,25 @@ mod tests {
         assert_eq!(ColumnWidthMode::default(), ColumnWidthMode::Fit);
         assert_eq!(ColumnWidthMode::Fit.toggle(), ColumnWidthMode::Content);
         assert_eq!(ColumnWidthMode::Content.toggle(), ColumnWidthMode::Fit);
-        assert_eq!(ColumnWidthMode::Fit.label(), "Fit");
-        assert_eq!(ColumnWidthMode::Content.label(), "Content");
+        assert_eq!(ColumnWidthMode::Fit.to_string(), "Fit");
+        assert_eq!(ColumnWidthMode::Content.to_string(), "Content");
     }
 
     #[test]
-    fn capped_lens_fit_hard_and_soft_caps() {
-        // area 30 → soft = 10; hard = 30
-        let content = vec![5usize, 100, 8];
-        let capped = capped_lens_for_mode(&content, 30, ColumnWidthMode::Fit);
-        assert_eq!(capped, vec![5, 10, 8]);
+    fn cap_fit_lens_soft_caps_and_returns_total() {
+        // area 30 → soft = 10
+        let mut lens = vec![5usize, 100, 8];
+        assert_eq!(cap_fit_lens(&mut lens, 30), 23);
+        assert_eq!(lens, vec![5, 10, 8]);
     }
 
     #[test]
-    fn capped_lens_fit_never_exceeds_viewport() {
-        let content = vec![500usize];
-        let capped = capped_lens_for_mode(&content, 20, ColumnWidthMode::Fit);
-        assert!(capped.first().copied().unwrap() <= 20);
-        assert_eq!(capped.first().copied().unwrap(), fit_soft_cap(20)); // 20/3 = 6
-    }
-
-    #[test]
-    fn capped_lens_content_is_identity() {
-        let content = vec![5usize, 100, 8];
-        assert_eq!(
-            capped_lens_for_mode(&content, 30, ColumnWidthMode::Content),
-            content
-        );
+    fn cap_fit_lens_never_exceeds_viewport() {
+        for area in [0usize, 1, 2, 20] {
+            let mut lens = vec![500usize];
+            cap_fit_lens(&mut lens, area);
+            assert!(lens.iter().all(|&l| l <= area.max(1)), "area {area}");
+        }
     }
 
     #[test]
