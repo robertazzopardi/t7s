@@ -1,4 +1,4 @@
-use core::time::Duration;
+use core::{future::Future, time::Duration};
 use std::{io::stdout, process::Command};
 
 use ansi_to_tui::IntoText;
@@ -96,6 +96,26 @@ pub enum BackgroundEvent {
     Connected(DockerClient),
     ConnectFailed(String),
     DaemonHealthOk(DaemonHealth),
+}
+
+/// `tokio::spawn` for work holding an in-flight `key`: if the task panics, an
+/// `ActionFailed` still releases the key so the resource is not left busy.
+pub fn spawn_keyed<F>(
+    tx: UnboundedSender<BackgroundEvent>,
+    key: String,
+    task: F,
+) where
+    F: Future<Output = ()> + Send + 'static,
+{
+    let handle = tokio::spawn(task);
+    tokio::spawn(async move {
+        if handle.await.is_err() {
+            let _ = tx.send(BackgroundEvent::ActionFailed {
+                key,
+                message: "Background task failed unexpectedly".into(),
+            });
+        }
+    });
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -240,7 +260,7 @@ impl App {
         }
         self.state = AppState::Connecting;
         let tx = self.bg_tx.clone();
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), DAEMON_KEY.into(), async move {
             let result = match DockerClient::connect() {
                 Ok(client) => match client.ping().await {
                     Ok(()) => BackgroundEvent::Connected(client),
@@ -613,7 +633,7 @@ impl App {
         };
         self.set_status("Loading daemon info…");
         let tx = self.bg_tx.clone();
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.into(), async move {
             let event = match docker.daemon_health().await {
                 Ok(h) => BackgroundEvent::DaemonHealthOk(h),
                 Err(e) => BackgroundEvent::ActionFailed {
@@ -720,7 +740,7 @@ impl App {
         let tx = self.bg_tx.clone();
         let id = id.to_string();
         let name = name.to_string();
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let text = match kind {
                 ResourceKind::Containers => {
                     docker.inspect(&id).await.map(|i| describe_text(&i))
@@ -787,6 +807,8 @@ fn apply_table_update<T: TableData + Clone>(
 
 #[cfg(test)]
 mod tests {
+    use tokio::time::sleep;
+
     use super::*;
     use crate::{app_state::AppState, in_flight::DAEMON_KEY};
 
@@ -796,5 +818,20 @@ mod tests {
         app.connect();
         assert!(app.in_flight.contains(DAEMON_KEY));
         assert_eq!(app.state, AppState::Connecting);
+    }
+
+    #[tokio::test]
+    async fn spawn_keyed_releases_key_when_task_panics() {
+        let mut app = App::new();
+        assert!(app.in_flight.try_begin("k"));
+        spawn_keyed(app.bg_tx.clone(), "k".into(), async { panic!("boom") });
+        for _ in 0..1000 {
+            app.drain_background_events();
+            if !app.in_flight.contains("k") {
+                return;
+            }
+            sleep(Duration::from_millis(1)).await;
+        }
+        panic!("key still in flight");
     }
 }

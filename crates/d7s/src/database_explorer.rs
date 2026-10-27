@@ -12,7 +12,7 @@ use crate::{
     app_state::DatabaseExplorerState,
     bg::{
         BgEvent, SqlExecuteOk, TableColumnMetaOk, TableMutationReload,
-        TablePageLoadOk,
+        TablePageLoadOk, spawn_keyed,
     },
     db::{
         Column, Database, DatabaseInfo, DbRowId, RowDeleteSpec, Schema, Table,
@@ -173,7 +173,7 @@ impl App<'_> {
             &table,
             Some(format!("UPDATED {set_column}")),
         );
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let event = match database
                 .update_table_cell(
                     &schema,
@@ -229,7 +229,7 @@ impl App<'_> {
             &table,
             Some("Row inserted.".into()),
         );
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let event =
                 match database.insert_table_row(&schema, &table, &values).await
                 {
@@ -269,7 +269,7 @@ impl App<'_> {
         };
         let schema = schema.to_string();
         let table = table.to_string();
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let mut any_ok = false;
             let mut errs = 0u32;
             for spec in specs {
@@ -323,7 +323,7 @@ impl App<'_> {
         ) else {
             return;
         };
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             match database.get_databases().await {
                 Ok(databases) => {
                     let _ =
@@ -360,7 +360,7 @@ impl App<'_> {
         let query_log = self.query_log.clone();
         let tx = self.bg_tx.clone();
         self.set_status(format!("Opening database {database_name}…"));
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let mut conn = connection;
             conn.selected_database = Some(db_name.clone());
             let db: Box<dyn Database> = conn.to_database();
@@ -403,7 +403,7 @@ impl App<'_> {
         ) else {
             return;
         };
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             match database.get_schemas().await {
                 Ok(schemas) => {
                     let _ = tx.send(BgEvent::SchemasLoaded { key, schemas });
@@ -434,7 +434,7 @@ impl App<'_> {
         ) else {
             return;
         };
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             match database.get_tables(&schema).await {
                 Ok(tables) => {
                     let _ = tx.send(BgEvent::TablesLoaded {
@@ -473,7 +473,7 @@ impl App<'_> {
         ) else {
             return;
         };
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             match database.get_columns(&schema, &table).await {
                 Ok(columns) => {
                     let _ = tx.send(BgEvent::ColumnsLoaded {
@@ -516,7 +516,7 @@ impl App<'_> {
         ) else {
             return false;
         };
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let columns = match database.get_columns(&schema, &table).await {
                 Ok(columns) => columns,
                 Err(e) => {
@@ -584,7 +584,7 @@ impl App<'_> {
         ) else {
             return;
         };
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let total_rows = if window_start == 0 && total_rows.is_none() {
                 database.get_table_row_count(&schema, &table).await.ok()
             } else {
@@ -1079,7 +1079,7 @@ impl App<'_> {
         self.set_status("Running query…");
 
         let tx = self.bg_tx.clone();
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let result = match database.execute_sql(&sql).await {
                 Ok(results) => {
                     let Some(first) = results.first() else {

@@ -5,7 +5,7 @@ use tokio::task::spawn_blocking;
 use crate::{
     app::App,
     app_state::{AppState, DatabaseExplorerState},
-    bg::BgEvent,
+    bg::{BgEvent, spawn_keyed},
     database_explorer_state::DatabaseExplorer,
     db::{
         Database,
@@ -77,6 +77,7 @@ impl App<'_> {
             return;
         }
 
+        self.latest_connect_key = Some(key.clone());
         self.set_status("Connecting…");
         let query_log = self.query_log.clone();
         let tx = self.bg_tx.clone();
@@ -85,7 +86,7 @@ impl App<'_> {
         let resolve_keyring =
             password.is_none() && conn_type != ConnectionType::Sqlite;
 
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let result = if conn_type == ConnectionType::Sqlite {
                 build_sqlite_database(query_log, connection).await
             } else {
@@ -211,7 +212,7 @@ impl App<'_> {
             }
             let tx = self.bg_tx.clone();
             let name = connection.name.clone();
-            tokio::spawn(async move {
+            spawn_keyed(tx.clone(), key.clone(), async move {
                 let up = ConnectionService::ping(&connection).await;
                 let status = if up {
                     ConnectionStatus::Up
@@ -342,6 +343,19 @@ mod tests {
 
         drain_connect(&mut app).await;
         assert_eq!(app.state, AppState::DatabaseConnected);
+    }
+
+    #[tokio::test]
+    async fn superseded_connect_result_is_dropped() {
+        let path = temp_sqlite("connect-superseded");
+        write(&path.path, b"").unwrap();
+        let mut app = App::default();
+        app.spawn_connect(sqlite_row("c1", &path.path), None);
+        // The user picked another connection before c1 finished.
+        app.latest_connect_key = Some(conn_key("c2"));
+        drain_connect(&mut app).await;
+        assert!(!app.in_flight.contains(&conn_key("c1")));
+        assert_eq!(app.state, AppState::ConnectionList);
     }
 
     #[tokio::test]

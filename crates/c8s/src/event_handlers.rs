@@ -11,7 +11,7 @@ use k9tui::{
 use ratatui::{Terminal, backend::Backend, style::Style};
 
 use crate::{
-    app::App,
+    app::{App, spawn_keyed},
     app_state::{AppState, ResourceKind},
     command::{Command, resolve, suggest},
     error::Result,
@@ -493,7 +493,7 @@ impl App {
         self.set_status(format!("Starting {id}…"));
         let tx = self.bg_tx.clone();
         let id = id.to_string();
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let event = match docker.start(&id).await {
                 Ok(()) => BackgroundEvent::ActionDone {
                     key,
@@ -523,7 +523,7 @@ impl App {
         self.set_status(format!("Stopping {id}…"));
         let tx = self.bg_tx.clone();
         let id = id.to_string();
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let event = match docker.stop(&id).await {
                 Ok(()) => BackgroundEvent::ActionDone {
                     key,
@@ -553,7 +553,7 @@ impl App {
         self.set_status(format!("Restarting {id}…"));
         let tx = self.bg_tx.clone();
         let id = id.to_string();
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let event = match docker.restart(&id).await {
                 Ok(()) => BackgroundEvent::ActionDone {
                     key,
@@ -586,7 +586,7 @@ impl App {
         self.set_status(format!("Removing {id}…"));
         let tx = self.bg_tx.clone();
         let id = id.to_string();
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let result = match kind {
                 ResourceKind::Containers => docker.remove(&id).await,
                 ResourceKind::Images => docker.remove_image(&id).await,

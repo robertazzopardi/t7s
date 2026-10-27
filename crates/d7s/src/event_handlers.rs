@@ -13,7 +13,7 @@ use ratatui_textarea::TextArea;
 use crate::{
     app::App,
     app_state::{AppState, DatabaseExplorerState},
-    bg::BgEvent,
+    bg::{BgEvent, spawn_keyed},
     db::connection::ConnectionType,
     error::Result,
     in_flight::connection_test_key,
@@ -786,7 +786,7 @@ impl App<'_> {
 
         modal.test_result = TestResult::Testing;
         let tx = self.bg_tx.clone();
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let success = ConnectionService::test(&connection).await;
             let message = if success {
                 String::new()

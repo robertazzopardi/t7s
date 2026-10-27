@@ -1,4 +1,7 @@
+use core::future::Future;
 use std::sync::Arc;
+
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     db::{
@@ -172,4 +175,38 @@ pub enum DescribeTarget {
         table: String,
         row_index: usize,
     },
+}
+
+/// `tokio::spawn` for work holding an in-flight `key`: if the task panics, an
+/// `ActionFailed` still releases the key so the resource is not left busy.
+pub fn spawn_keyed<F>(tx: UnboundedSender<BgEvent>, key: String, task: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    let handle = tokio::spawn(task);
+    tokio::spawn(async move {
+        if handle.await.is_err() {
+            let _ = tx.send(BgEvent::ActionFailed {
+                key,
+                message: "Background task failed unexpectedly".into(),
+            });
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc::unbounded_channel;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn spawn_keyed_releases_key_when_task_panics() {
+        let (tx, mut rx) = unbounded_channel();
+        spawn_keyed(tx, "k".into(), async { panic!("boom") });
+        match rx.recv().await {
+            Some(BgEvent::ActionFailed { key, .. }) => assert_eq!(key, "k"),
+            _ => panic!("expected ActionFailed"),
+        }
+    }
 }

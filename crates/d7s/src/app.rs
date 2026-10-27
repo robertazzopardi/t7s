@@ -32,7 +32,7 @@ use tokio::sync::mpsc::{
 use crate::{
     app,
     app_state::{AppState, DatabaseExplorerState},
-    bg::{BgEvent, DescribeTarget, SqlExecuteOk},
+    bg::{BgEvent, DescribeTarget, SqlExecuteOk, spawn_keyed},
     cell_edit::CellEditSession,
     database_explorer::STATUS_CONNECT_FAILED,
     database_explorer_state::DatabaseExplorer,
@@ -122,6 +122,8 @@ pub struct App<'a> {
     pub(crate) in_flight: InFlight,
     pub(crate) bg_tx: UnboundedSender<BgEvent>,
     pub(crate) bg_rx: UnboundedReceiver<BgEvent>,
+    /// Key of the most recent connect request; results for older ones are dropped.
+    pub(crate) latest_connect_key: Option<String>,
     /// `W`: session-wide column layout (Fit / Content) for every data table.
     pub(crate) column_width_mode: ColumnWidthMode,
 }
@@ -159,6 +161,7 @@ impl Default for App<'_> {
             in_flight: InFlight::default(),
             bg_tx,
             bg_rx,
+            latest_connect_key: None,
             column_width_mode: ColumnWidthMode::Fit,
         }
     }
@@ -228,6 +231,12 @@ impl App<'_> {
         }
         self.save_session_preferences();
         Ok(())
+    }
+
+    /// `false` for a connect result superseded by a later connect request
+    /// (user picked A, then B: a late A must not replace B).
+    fn is_latest_connect(&self, key: &str) -> bool {
+        self.latest_connect_key.as_deref() == Some(key)
     }
 
     /// `false` for a result keyed to a connection other than the active one
@@ -387,6 +396,9 @@ impl App<'_> {
                     database,
                 } => {
                     self.in_flight.end(&key);
+                    if !self.is_latest_connect(&key) {
+                        continue;
+                    }
                     let from_password_modal = self
                         .modal_manager
                         .password_connection()
@@ -414,6 +426,9 @@ impl App<'_> {
                 }
                 BgEvent::ConnectFailed { key, message } => {
                     self.in_flight.end(&key);
+                    if !self.is_latest_connect(&key) {
+                        continue;
+                    }
                     self.set_status(message);
                     if let Some(modal_conn) =
                         self.modal_manager.password_connection().cloned()
@@ -433,6 +448,9 @@ impl App<'_> {
                     prompt,
                 } => {
                     self.in_flight.end(&key);
+                    if !self.is_latest_connect(&key) {
+                        continue;
+                    }
                     self.modal_manager.open_password_modal(connection, prompt);
                 }
                 BgEvent::ConnectionStatus { key, name, status } => {
@@ -683,7 +701,7 @@ impl App<'_> {
         let database = self.database_explorer.database.clone();
         let tx = self.bg_tx.clone();
         self.set_status("Loading describe…");
-        tokio::spawn(async move {
+        spawn_keyed(tx.clone(), key.clone(), async move {
             let rows = build_describe_rows_async(work, database).await;
             let _ = tx.send(BgEvent::DescribeRowsLoaded { key, target, rows });
         });
