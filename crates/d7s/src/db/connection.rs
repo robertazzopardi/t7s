@@ -596,11 +596,8 @@ pub fn parse_server_url(
     let Ok(url) = Url::parse(url_str) else {
         return (default_host, default_port, default_user, default_db);
     };
-    let host = url
-        .host_str()
-        .map(ToString::to_string)
-        .unwrap_or(default_host);
-    let port = url.port().map(|p| p.to_string()).unwrap_or(default_port);
+    let host = url.host_str().map_or(default_host, ToString::to_string);
+    let port = url.port().map_or(default_port, |p| p.to_string());
     let user = url.username().to_string();
     let database = url
         .path()

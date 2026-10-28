@@ -150,11 +150,8 @@ impl ConfirmDialog {
         self.is_open = false;
     }
 
-    const fn next_button(&mut self) {
-        self.selected_button = (self.selected_button + 1) % 2;
-    }
-
-    const fn prev_button(&mut self) {
+    // Two buttons: left and right both just flip the selection.
+    const fn toggle_button(&mut self) {
         self.selected_button = (self.selected_button + 1) % 2;
     }
 
@@ -178,12 +175,8 @@ impl ConfirmDialog {
                 self.close();
                 action
             }
-            (_, KeyCode::Left) => {
-                self.prev_button();
-                DialogAction::None
-            }
-            (_, KeyCode::Right) => {
-                self.next_button();
+            (_, KeyCode::Left | KeyCode::Right) => {
+                self.toggle_button();
                 DialogAction::None
             }
             _ => DialogAction::None,
