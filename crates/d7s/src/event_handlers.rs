@@ -3,9 +3,7 @@ use core::time::Duration;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
-use k9tui::{
-    event::poll_input, widgets::navigation::TableNavigationHandler,
-};
+use k9tui::{event::poll_input, widgets::navigation::TableNavigationHandler};
 use ratatui::{
     style::{Color, Style},
     widgets::TableState,
@@ -193,6 +191,14 @@ impl App<'_> {
                     .first()
                     .map_or_else(String::new, Clone::clone);
                 self.apply_filter_with_query(&query);
+                return Ok(());
+            }
+            // Cursor keys move the text cursor only; without this they also
+            // scrolled the table's columns while typing.
+            if matches!(
+                key.code,
+                KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End
+            ) {
                 return Ok(());
             }
         }
