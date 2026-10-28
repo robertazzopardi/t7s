@@ -42,6 +42,33 @@ impl App<'_> {
         }
     }
 
+    /// Non-empty query of the current view's filter, if any.
+    pub fn active_filter_query(&self) -> Option<&str> {
+        let explorer = &self.database_explorer;
+        let query = match &explorer.state {
+            DatabaseExplorerState::Connections => {
+                Some(&explorer.connections.query)
+            }
+            DatabaseExplorerState::Databases => {
+                explorer.databases.as_ref().map(|d| &d.query)
+            }
+            DatabaseExplorerState::Schemas => {
+                explorer.schemas.as_ref().map(|d| &d.query)
+            }
+            DatabaseExplorerState::Tables(_) => {
+                explorer.tables.as_ref().map(|d| &d.query)
+            }
+            DatabaseExplorerState::Columns(_, _) => {
+                explorer.columns.as_ref().map(|d| &d.query)
+            }
+            DatabaseExplorerState::TableData(_, _) => {
+                explorer.table_data.as_ref().map(|d| &d.query)
+            }
+            DatabaseExplorerState::SqlResults(_) => None,
+        };
+        query.map(String::as_str).filter(|q| !q.is_empty())
+    }
+
     pub fn filter_match_count(&self) -> usize {
         let explorer = &self.database_explorer;
         match &explorer.state {
@@ -73,7 +100,7 @@ impl App<'_> {
     }
 
     pub fn clear_filter(&mut self) {
-        if self.has_active_filter() {
+        if self.has_active_filter() || self.active_filter_query().is_some() {
             let explorer = &mut self.database_explorer;
             match explorer.state {
                 DatabaseExplorerState::Connections => {

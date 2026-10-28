@@ -3,12 +3,10 @@ use core::time::Duration;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
-use k9tui::{
-    event::poll_input, theme, widgets::navigation::TableNavigationHandler,
-};
+use k9tui::{event::poll_input, widgets::navigation::TableNavigationHandler};
 use ratatui::{
     style::{Color, Style},
-    widgets::{Block, Borders, TableState},
+    widgets::TableState,
 };
 use ratatui_textarea::TextArea;
 
@@ -193,6 +191,14 @@ impl App<'_> {
                     .first()
                     .map_or_else(String::new, Clone::clone);
                 self.apply_filter_with_query(&query);
+                return Ok(());
+            }
+            // Cursor keys move the text cursor only; without this they also
+            // scrolled the table's columns while typing.
+            if matches!(
+                key.code,
+                KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End
+            ) {
                 return Ok(());
             }
         }
@@ -544,15 +550,11 @@ impl App<'_> {
             {
                 let mut search_bar = TextArea::default();
                 search_bar.set_cursor_line_style(Style::default());
-                search_bar.set_placeholder_text("/");
                 search_bar.set_style(Style::default().fg(Color::White));
                 search_bar.set_max_histories(0);
-                search_bar.set_block(
-                    Block::default()
-                        .border_style(theme::border())
-                        .borders(Borders::ALL)
-                        .title(" Filter (current view) "),
-                );
+                if let Some(query) = self.active_filter_query() {
+                    search_bar.insert_str(query);
+                }
                 self.search_filter = Some(search_bar);
             }
             _ => {}
