@@ -8,9 +8,11 @@ use crossterm::event::poll;
 /// How often `poll_input` re-checks `wake` while waiting for input.
 const WAKE_CHECK: Duration = Duration::from_millis(10);
 
-/// Waits up to `timeout` for a crossterm input event, returning `Ok(true)`
-/// when one is ready to `read`. Returns `Ok(false)` early once `wake()` is
-/// true (a background result is queued), so the caller redraws it at once
+/// Waits up to `timeout` for a crossterm input event.
+///
+/// Returns `Ok(true)` when one is ready to `read`. Returns `Ok(false)` early
+/// once `wake()` is true (a background result is queued), so the caller
+/// redraws it at once
 /// instead of sitting out the rest of the timeout.
 ///
 /// # Errors
