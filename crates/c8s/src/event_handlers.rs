@@ -165,6 +165,8 @@ impl App {
             (KeyModifiers::NONE, KeyCode::Char('d')) => {
                 self.log_dedup = self.log_dedup.next();
             }
+            (_, KeyCode::Char('H')) => self.load_full_logs(),
+            (_, KeyCode::Char('p')) => self.toggle_previous_logs(),
             (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
             (_, KeyCode::Char('k') | KeyCode::Up) => {
                 self.log_follow = false;
@@ -628,7 +630,7 @@ mod tests {
     use std::time::Instant;
 
     use k9tui::widgets::table::TableDataState;
-    use ratatui::{backend::TestBackend, buffer::Cell};
+    use ratatui::{backend::TestBackend, buffer::Cell, text::Line};
     use tokio::time::sleep;
 
     use super::*;
@@ -1039,6 +1041,67 @@ mod tests {
         assert!(app.list_search_open && !app.command_mode);
         type_cmd(&mut app, &mut t, "x");
         assert_eq!(app.list_filter, "webx", "`/` is a normal filter again");
+    }
+
+    #[tokio::test]
+    async fn restart_moves_lines_to_previous_run_and_p_toggles() {
+        let mut app = app();
+        let mut t = term();
+        app.open_logs("c1", "web");
+        app.on_key_event(key(KeyCode::Char('p')), &mut t).unwrap();
+        assert!(!app.log_show_prev, "nothing to show before a restart");
+
+        let tx = app.bg_tx.clone();
+        tx.send(BackgroundEvent::LogLine("old".into())).unwrap();
+        // A restart of another container must not touch this view.
+        tx.send(BackgroundEvent::LogRestarted {
+            id: "c2".into(),
+            since: 5,
+        })
+        .unwrap();
+        tx.send(BackgroundEvent::LogRestarted {
+            id: "c1".into(),
+            since: 5,
+        })
+        .unwrap();
+        tx.send(BackgroundEvent::LogLine("new".into())).unwrap();
+        app.drain_background_events();
+        let old = vec![Line::from("old")];
+        assert_eq!(app.log_prev(), Some(&old));
+        assert_eq!(app.log_lines, vec![Line::from("new")]);
+
+        app.on_key_event(key(KeyCode::Char('p')), &mut t).unwrap();
+        assert!(app.log_show_prev);
+        app.on_key_event(key(KeyCode::Char('p')), &mut t).unwrap();
+        assert!(!app.log_show_prev);
+
+        // Leaving and reopening the logs keeps the previous run.
+        app.close_logs();
+        app.open_logs("c1", "web");
+        assert_eq!(app.log_prev(), Some(&old));
+        app.on_key_event(key(KeyCode::Char('p')), &mut t).unwrap();
+        assert!(app.log_show_prev);
+    }
+
+    #[tokio::test]
+    async fn shift_h_in_logs_reloads_same_source_keeping_back_state() {
+        let mut app = app();
+        let mut t = term();
+        let back = AppState::Processes {
+            id: "c1".into(),
+            name: "web".into(),
+        };
+        app.state = AppState::Logs {
+            id: "c1".into(),
+            name: "web".into(),
+        };
+        app.logs_back = Some(back.clone());
+        app.log_files = Some(vec!["/var/log/app.log".into()]);
+        app.on_key_event(key(KeyCode::Char('H')), &mut t).unwrap();
+        assert!(matches!(&app.state, AppState::Logs { id, .. } if id == "c1"));
+        assert_eq!(app.logs_back, Some(back));
+        assert_eq!(app.log_files, Some(vec!["/var/log/app.log".into()]));
+        assert_eq!(app.status_line.message(), "Loading full log history…");
     }
 
     #[tokio::test]

@@ -339,11 +339,29 @@ impl App {
                 content_area
             };
 
-        let folded = fold(&self.log_lines, self.log_dedup);
+        // Field borrows (not `log_prev()`) so `log_view_len` stays assignable.
+        let prev = self
+            .log_prev_key
+            .as_ref()
+            .and_then(|k| self.log_prev_runs.get(k))
+            .map(|(_, lines)| lines);
+        let has_prev = prev.is_some();
+        let source = match prev {
+            Some(lines) if self.log_show_prev => lines,
+            _ => &self.log_lines,
+        };
+        let folded = fold(source, self.log_dedup);
         let filtered = filter_and_highlight(&folded, &self.log_filter);
         self.log_view_len = filtered.len();
 
         let dedup = self.log_dedup;
+        let name = if self.log_show_prev {
+            format!("{name} [previous run, p for current]")
+        } else if !has_prev {
+            name.to_string()
+        } else {
+            format!("{name} [restarted, p for previous]")
+        };
         let title = if !self.log_filter.is_empty() {
             format!(
                 " Logs: {name} ({} matches, dedup: {dedup}) ",
