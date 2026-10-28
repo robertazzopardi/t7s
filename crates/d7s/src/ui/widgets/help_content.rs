@@ -139,7 +139,7 @@ const DATABASE_HELP: &[HelpEntry] = &[
     },
     HelpEntry {
         key: ":",
-        desc: "Command bar (:tables, :sql, :log, :table/:schema <name>, :123 ... Tab completes)",
+        desc: "Command bar (:tables, :sql, :log, :table/:schema <name>, :table conn.db.schema.table, :123 ... Tab completes)",
     },
     HelpEntry {
         key: "L",

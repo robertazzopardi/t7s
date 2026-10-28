@@ -675,6 +675,9 @@ impl App<'_> {
             self.set_status("Open a schema first.");
             return;
         };
+        // Pages only land from the tables list (not from another table).
+        self.database_explorer.state =
+            DatabaseExplorerState::Tables(schema.clone());
         self.load_table_data(&schema, table_name);
         if candidates.len() > 1 {
             let shown = candidates.iter().take(4).cloned().collect::<Vec<_>>();
@@ -691,6 +694,8 @@ impl App<'_> {
         let Some(schema_name) = candidates.first() else {
             return;
         };
+        // Tables only land from the schema list (or the same schema).
+        self.database_explorer.state = DatabaseExplorerState::Schemas;
         self.load_tables(schema_name);
         if candidates.len() > 1 {
             let shown = candidates.iter().take(4).cloned().collect::<Vec<_>>();

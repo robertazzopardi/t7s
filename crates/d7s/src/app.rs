@@ -34,6 +34,7 @@ use crate::{
     app_state::{AppState, DatabaseExplorerState},
     bg::{BgEvent, DescribeTarget, SqlExecuteOk, spawn_keyed},
     cell_edit::CellEditSession,
+    command_bar::{NavStep, PendingNav},
     database_explorer::STATUS_CONNECT_FAILED,
     database_explorer_state::DatabaseExplorer,
     db::{
@@ -124,6 +125,8 @@ pub struct App<'a> {
     pub(crate) bg_rx: UnboundedReceiver<BgEvent>,
     /// Key of the most recent connect request; results for older ones are dropped.
     pub(crate) latest_connect_key: Option<String>,
+    /// In-progress `:table conn.db.schema.table` jump; any key cancels it.
+    pub(crate) pending_nav: Option<PendingNav>,
     /// `W`: session-wide column layout (Fit / Content) for every data table.
     pub(crate) column_width_mode: ColumnWidthMode,
 }
@@ -162,6 +165,7 @@ impl Default for App<'_> {
             bg_tx,
             bg_rx,
             latest_connect_key: None,
+            pending_nav: None,
             column_width_mode: ColumnWidthMode::Fit,
         }
     }
@@ -313,12 +317,14 @@ impl App<'_> {
                     self.in_flight.end(&key);
                     if self.is_active_key(&key) {
                         self.apply_databases_loaded(databases);
+                        self.advance_table_path(NavStep::Databases);
                     }
                 }
                 BgEvent::SchemasLoaded { key, schemas } => {
                     self.in_flight.end(&key);
                     if self.is_active_key(&key) {
                         self.apply_schemas_loaded(schemas);
+                        self.advance_table_path(NavStep::Schemas);
                     }
                 }
                 BgEvent::TablesLoaded {
@@ -329,6 +335,7 @@ impl App<'_> {
                     self.in_flight.end(&key);
                     if self.is_active_key(&key) {
                         self.apply_tables_loaded(&schema, tables);
+                        self.advance_table_path(NavStep::Tables);
                     }
                 }
                 BgEvent::ColumnsLoaded {
@@ -381,6 +388,7 @@ impl App<'_> {
                 } => {
                     self.in_flight.end(&key);
                     if self.is_active_key(&key) {
+                        self.pending_nav = None;
                         self.apply_explorer_load_failed(
                             &resource,
                             schema.as_deref(),
@@ -468,6 +476,7 @@ impl App<'_> {
                 }
                 BgEvent::DatabaseSelectFailed { key } => {
                     self.in_flight.end(&key);
+                    self.pending_nav = None;
                     self.set_status(STATUS_CONNECT_FAILED);
                 }
                 BgEvent::DescribeRowsLoaded { key, target, rows } => {
@@ -2521,6 +2530,121 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn table_path_jumps_across_connections() {
+        let one = temp_sqlite("path-one");
+        let two = temp_sqlite("path-two");
+        for (db, sql) in [
+            (&one, "CREATE TABLE users(id);"),
+            (&two, "CREATE TABLE notes(id); CREATE TABLE tags(id);"),
+        ] {
+            RusqliteConnection::open(&db.path)
+                .unwrap()
+                .execute_batch(sql)
+                .unwrap();
+        }
+        let mut app = App::default();
+        app.database_explorer.connections = FilteredData::new(vec![
+            sqlite_conn("one", &one.path),
+            sqlite_conn("two", &two.path),
+        ]);
+        let open = |t: &str| {
+            DatabaseExplorerState::TableData("sqlite_schema".into(), t.into())
+        };
+
+        // From the connection list: connect, then open the table.
+        run_cmd(&mut app, "table two.no").await;
+        assert_eq!(app.database_explorer.connection.name, "two");
+        assert_eq!(app.database_explorer.state, open("notes"));
+
+        // Completion per level: connection, then the current one's tables.
+        app.on_key_event(key(':')).unwrap();
+        type_str(&mut app, "table o");
+        app.on_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.command_text(), "table one.");
+        app.on_key_event(esc()).unwrap();
+        app.on_key_event(key(':')).unwrap();
+        type_str(&mut app, "table two.t");
+        assert_eq!(app.command_suggestion().as_deref(), Some("table two.tags"));
+        app.on_key_event(esc()).unwrap();
+
+        // Same connection: no reconnect, just the table.
+        run_cmd(&mut app, "table two.tags").await;
+        assert_eq!(app.database_explorer.state, open("tags"));
+
+        // Across connections while connected.
+        run_cmd(&mut app, "table one.users").await;
+        assert_eq!(app.database_explorer.connection.name, "one");
+        assert_eq!(app.database_explorer.state, open("users"));
+
+        run_cmd(&mut app, "table one.nope").await;
+        assert!(render_text(&mut app).contains("No table matching 'nope'"));
+        run_cmd(&mut app, "table zzz.users").await;
+        assert!(render_text(&mut app).contains("No connection matching 'zzz'"));
+        run_cmd(&mut app, "table one.main.users").await;
+        assert!(render_text(&mut app).contains("Bad path 'one.main.users'"));
+        assert_eq!(app.database_explorer.state, open("users"));
+        let _ = remove_file(&one.path);
+        let _ = remove_file(&two.path);
+    }
+
+    #[tokio::test]
+    async fn table_path_filter_cancel_and_stale_events() {
+        let one = temp_sqlite("path-edge-one");
+        let two = temp_sqlite("path-edge-two");
+        for (db, sql) in [
+            (&one, "CREATE TABLE users(id);"),
+            (&two, "CREATE TABLE notes(id);"),
+        ] {
+            RusqliteConnection::open(&db.path)
+                .unwrap()
+                .execute_batch(sql)
+                .unwrap();
+        }
+        let mut app = App::default();
+        app.database_explorer.connections = FilteredData::new(vec![
+            sqlite_conn("one", &one.path),
+            sqlite_conn("two", &two.path),
+        ]);
+        let open = |t: &str| {
+            DatabaseExplorerState::TableData("sqlite_schema".into(), t.into())
+        };
+
+        // A list filter hiding the target doesn't block the jump.
+        app.database_explorer.connections.apply_filter("one");
+        run_cmd(&mut app, "table two.notes").await;
+        assert_eq!(app.database_explorer.connection.name, "two");
+        assert_eq!(app.database_explorer.state, open("notes"));
+
+        // A load from the old connection landing mid-connect is ignored
+        // (no second connect attempt), then the jump completes.
+        app.on_key_event(key(':')).unwrap();
+        type_str(&mut app, "table one.users");
+        app.on_key_event(enter()).unwrap();
+        assert_eq!(app.status_line.message(), "Connecting…");
+        app.advance_table_path(NavStep::Tables);
+        assert_eq!(app.status_line.message(), "Connecting…");
+        drain_bg_work(&mut app).await;
+        assert_eq!(app.database_explorer.connection.name, "one");
+        assert_eq!(app.database_explorer.state, open("users"));
+
+        // Any key while the jump is loading cancels the rest of it.
+        app.on_key_event(key(':')).unwrap();
+        type_str(&mut app, "table two.notes");
+        app.on_key_event(enter()).unwrap();
+        app.on_key_event(key('j')).unwrap();
+        drain_bg_work(&mut app).await;
+        assert_eq!(app.database_explorer.connection.name, "two");
+        assert_eq!(
+            app.database_explorer.state,
+            DatabaseExplorerState::Tables("sqlite_schema".into()),
+            "connected, but the table hop was cancelled"
+        );
+        let _ = remove_file(&one.path);
+        let _ = remove_file(&two.path);
+    }
+
+    #[tokio::test]
     async fn table_argument_tab_completion_and_spaces() {
         let mut app = named_tables_app(
             "cmd_table_tab",
@@ -2874,6 +2998,111 @@ mod tests {
         );
         run_cmd(&mut app, "conn").await;
         assert_eq!(app.state, AppState::ConnectionList);
+    }
+
+    /// Needs `just docker-up`: `cargo test -p d7s -- --ignored pg_table_path`
+    #[tokio::test]
+    #[ignore = "requires docker compose Postgres"]
+    async fn pg_table_path_hops_database_and_schema() {
+        let conn = Connection {
+            name: "it".into(),
+            r#type: ConnectionType::Postgres,
+            url: "postgres://d7s_user@localhost:5432/d7s_test".into(),
+            password_storage: Some("dont_save".into()),
+            ..Connection::default()
+        };
+        let mut app = App::default();
+        app.password_service
+            .store_session_password(&conn, "d7s_password".into());
+        app.database_explorer.connections = FilteredData::new(vec![conn]);
+        let open = |s: &str, t: &str| {
+            DatabaseExplorerState::TableData(s.into(), t.into())
+        };
+
+        // Connection list -> connect -> database -> schema -> table.
+        run_cmd(&mut app, "table it.d7s_test.public.users").await;
+        assert_eq!(
+            app.database_explorer
+                .connection
+                .selected_database
+                .as_deref(),
+            Some("d7s_test")
+        );
+        assert_eq!(app.database_explorer.state, open("public", "users"));
+
+        // Completion for the current database's schemas.
+        app.on_key_event(key(':')).unwrap();
+        type_str(&mut app, "table it.d7s_test.test_");
+        assert_eq!(
+            app.command_suggestion().as_deref(),
+            Some("table it.d7s_test.test_schema.")
+        );
+        app.on_key_event(esc()).unwrap();
+
+        // Relative to the current database; fuzzy parts.
+        run_cmd(&mut app, "table edge.empty").await;
+        assert_eq!(
+            app.database_explorer.state,
+            open("edge_cases", "empty_table")
+        );
+
+        // Other database, then back (relative to the connection).
+        run_cmd(&mut app, "table it.postgres.public.nope").await;
+        assert_eq!(
+            app.database_explorer
+                .connection
+                .selected_database
+                .as_deref(),
+            Some("postgres")
+        );
+        assert!(render_text(&mut app).contains("No table matching 'nope'"));
+        run_cmd(&mut app, "table d7s_test.test_schema.categories").await;
+        assert_eq!(
+            app.database_explorer.state,
+            open("test_schema", "categories")
+        );
+        run_cmd(&mut app, "table it.zzz.public.users").await;
+        assert!(render_text(&mut app).contains("No database matching 'zzz'"));
+    }
+
+    /// Needs `just docker-up` (MySQL on 13306):
+    /// `cargo test -p d7s -- --ignored mysql_table_path`
+    #[tokio::test]
+    #[ignore = "requires docker compose MySQL"]
+    async fn mysql_table_path_with_password_prompt() {
+        let mut app = App::default();
+        app.database_explorer.connections =
+            FilteredData::new(vec![Connection {
+                name: "my".into(),
+                r#type: ConnectionType::Mysql,
+                url: "mysql://root@localhost:13306/d7s_test".into(),
+                password_storage: Some("dont_save".into()),
+                ..Connection::default()
+            }]);
+        let open = |s: &str, t: &str| {
+            DatabaseExplorerState::TableData(s.into(), t.into())
+        };
+
+        // No saved password: the jump waits behind the prompt, then resumes.
+        run_cmd(&mut app, "table my.shop.orders").await;
+        assert!(app.modal_manager.password_connection().is_some());
+        type_str(&mut app, "d7s_password");
+        app.on_key_event(enter()).unwrap();
+        drain_bg_work(&mut app).await;
+        assert_eq!(app.database_explorer.state, open("shop", "orders"));
+
+        // Relative `db.table`, with completion of the database level.
+        app.on_key_event(key(':')).unwrap();
+        type_str(&mut app, "table d7s");
+        assert_eq!(
+            app.command_suggestion().as_deref(),
+            Some("table d7s_test.")
+        );
+        app.on_key_event(esc()).unwrap();
+        run_cmd(&mut app, "table d7s_test.users").await;
+        assert_eq!(app.database_explorer.state, open("d7s_test", "users"));
+        run_cmd(&mut app, "table shop.order_i").await;
+        assert_eq!(app.database_explorer.state, open("shop", "order_items"));
     }
 
     #[test]

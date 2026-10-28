@@ -202,6 +202,7 @@ impl App<'_> {
             self.handle_modal_events(key);
             return Ok(());
         }
+        self.pending_nav = None;
 
         // Handle application shortcuts (q, n, d, e, t, s, Esc, Enter)
         if self.handle_table_data_hotkeys(key)? {

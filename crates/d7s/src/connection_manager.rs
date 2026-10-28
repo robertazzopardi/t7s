@@ -1,3 +1,4 @@
+use core::mem::take;
 use std::sync::Arc;
 
 use tokio::task::spawn_blocking;
@@ -33,10 +34,13 @@ impl App<'_> {
 
     /// Connect to the selected database (spawns work; does not await).
     pub fn connect_to_database(&mut self) {
-        let Some(connection) = self.get_selected_connection().cloned() else {
-            return;
-        };
+        if let Some(connection) = self.get_selected_connection().cloned() {
+            self.connect_to(connection);
+        }
+    }
 
+    /// Connect, prompting for the password first when it isn't saved.
+    fn connect_to(&mut self, connection: Connection) {
         if connection.r#type == ConnectionType::Sqlite {
             self.spawn_connect(connection, None);
             return;
@@ -142,14 +146,20 @@ impl App<'_> {
         let connection_env = connection.environment;
         let conn_type = connection.r#type;
         self.hotkeys = database_hotkeys(conn_type);
+        // Keep the saved list: `:table conn.db.schema.table` resolves against it.
+        let connections = take(&mut self.database_explorer.connections);
         self.database_explorer =
             DatabaseExplorer::new(connection, Some(database));
+        self.database_explorer.connections = connections;
         self.state = AppState::DatabaseConnected;
         let _ = PreferencesService::set_last_connection(&connection_name);
         let msg = self.connect_status_message(&connection_name, connection_env);
         self.set_status(msg);
 
         if conn_type == ConnectionType::Sqlite {
+            // No database level: `apply_tables_loaded` drops results in `Databases`.
+            self.database_explorer.state =
+                DatabaseExplorerState::Tables("sqlite_schema".into());
             self.load_tables("sqlite_schema");
         } else {
             self.load_databases();
@@ -174,27 +184,29 @@ impl App<'_> {
         }
     }
 
-    /// Connect to a named connection from the connection list (CLI `-c`).
+    /// Connect to a named connection (CLI `-c`, `:table conn.…`), even when a
+    /// filter hides it; selects its row when visible.
     pub fn connect_to_named_connection(&mut self, name: &str) {
-        let idx = self
-            .database_explorer
-            .connections
+        let connections = &mut self.database_explorer.connections;
+        let Some(connection) = connections
+            .original
+            .iter()
+            .find(|c| c.name == name)
+            .cloned()
+        else {
+            self.set_status(format!("Connection not found: {name}"));
+            return;
+        };
+        if let Some(idx) = connections
             .table
             .model
             .items
             .iter()
-            .position(|c| c.name == name);
-        let Some(idx) = idx else {
-            self.set_status(format!("Connection not found: {name}"));
-            return;
-        };
-        self.database_explorer
-            .connections
-            .table
-            .view
-            .state
-            .select(Some(idx));
-        self.connect_to_database();
+            .position(|c| c.name == name)
+        {
+            connections.table.view.state.select(Some(idx));
+        }
+        self.connect_to(connection);
     }
 
     /// Ping every saved connection concurrently; does not block the UI loop.
