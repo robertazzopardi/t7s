@@ -45,7 +45,7 @@ pub enum Error {
 #[cfg(not(debug_assertions))]
 impl From<keyring::Error> for Error {
     fn from(err: keyring::Error) -> Self {
-        Error::KeyringError(err)
+        Self::KeyringError(err)
     }
 }
 
@@ -73,7 +73,7 @@ impl StdError for Error {}
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
-            Error::KeyringError(e) => write!(f, "{}", e),
+            Self::KeyringError(e) => write!(f, "{e}"),
         }
     }
 }

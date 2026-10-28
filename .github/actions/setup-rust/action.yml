@@ -1,5 +1,5 @@
 name: Setup Rust
-description: Install Rust toolchain, cache dependencies, and Linux system libs.
+description: Install Rust toolchain and cache dependencies.
 
 inputs:
   toolchain:
@@ -14,10 +14,6 @@ inputs:
     description: Enable Cargo cache.
     required: false
     default: "true"
-  install-linux-dbus:
-    description: Install libdbus-1-dev on Linux.
-    required: false
-    default: "false"
 
 runs:
   using: composite
@@ -31,8 +27,3 @@ runs:
     - name: Cache Cargo dependencies
       if: inputs.cache == 'true'
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-
-    - name: Install system dependencies (Linux)
-      if: inputs.install-linux-dbus == 'true' && runner.os == 'Linux'
-      shell: bash
-      run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
