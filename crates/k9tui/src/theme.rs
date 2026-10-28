@@ -14,21 +14,19 @@ pub fn title() -> Style {
 
 #[must_use]
 pub fn muted() -> Style {
-    Style::default().fg(Color::DarkGray)
+    border()
 }
 
 // No hue here by design — color is reserved for state (env tags, errors,
 // the cursor row), not decoration. Weight carries emphasis instead.
 #[must_use]
 pub fn accent() -> Style {
-    Style::default()
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD)
+    title()
 }
 
 #[must_use]
 pub fn info_label() -> Style {
-    Style::default().fg(Color::DarkGray)
+    border()
 }
 
 #[must_use]
@@ -38,7 +36,7 @@ pub fn info_value() -> Style {
 
 #[must_use]
 pub fn hotkey_key() -> Style {
-    Style::default().fg(Color::White)
+    info_value()
 }
 
 #[must_use]
@@ -86,12 +84,12 @@ pub const fn multi_select_bg() -> Color {
 
 #[must_use]
 pub fn status_idle() -> Style {
-    Style::default().fg(Color::DarkGray)
+    border()
 }
 
 #[must_use]
 pub fn status_message() -> Style {
-    Style::default().fg(Color::Cyan)
+    selection_col()
 }
 
 #[must_use]
@@ -101,17 +99,17 @@ pub fn error() -> Style {
 
 #[must_use]
 pub fn success() -> Style {
-    Style::default().fg(Color::Green)
+    draft_row()
 }
 
 #[must_use]
 pub fn modal_default_border() -> Style {
-    Style::default().fg(Color::Cyan)
+    selection_col()
 }
 
 #[must_use]
 pub fn modal_danger_border() -> Style {
-    Style::default().fg(Color::Red)
+    error()
 }
 
 #[must_use]
@@ -127,10 +125,10 @@ pub fn modal_connection_border() -> Style {
 #[must_use]
 pub fn header_row() -> Style {
     // Plain, unbold — no background bar, no weight.
-    Style::default().fg(Color::White)
+    info_value()
 }
 
 #[must_use]
 pub fn null_cell() -> Style {
-    Style::default().fg(Color::DarkGray)
+    border()
 }

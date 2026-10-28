@@ -802,13 +802,11 @@ impl App<'_> {
                 && meta.has_more_after
             {
                 Some(true)
-            } else if matches!(code, KeyCode::Char('k') | KeyCode::Up)
-                && selected == 0
-                && meta.has_more_before
-            {
-                Some(false)
             } else {
-                None
+                (matches!(code, KeyCode::Char('k') | KeyCode::Up)
+                    && selected == 0
+                    && meta.has_more_before)
+                    .then_some(false)
             }
         };
 
