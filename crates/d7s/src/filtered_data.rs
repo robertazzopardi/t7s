@@ -30,22 +30,22 @@ impl<T: TableData + Clone> FilteredData<T> {
         // Filter from `original` so deleting characters widens the result.
         self.table.model.items = filter_rows(&self.original, query);
         query.clone_into(&mut self.query);
-        self.table.multi_row_selection.clear();
-        TableNavigationHandler::wrap_rows(
-            &mut self.table.view.state,
-            &self.table.model.items,
-        );
+        self.select_first_row();
     }
 
     /// Clear the filter and restore original data
     pub fn clear_filter(&mut self) {
         self.table.model.items.clone_from(&self.original);
         self.query.clear();
+        self.select_first_row();
+    }
+
+    /// Cursor to the top row (k9s-style). An empty result clears the
+    /// selection, so it must be re-set here or j/k stay dead afterwards.
+    fn select_first_row(&mut self) {
         self.table.multi_row_selection.clear();
-        TableNavigationHandler::wrap_rows(
-            &mut self.table.view.state,
-            &self.table.model.items,
-        );
+        let first = (!self.table.model.items.is_empty()).then_some(0);
+        self.table.view.state.select(first);
     }
 
     /// Navigate the table using a key event
@@ -93,5 +93,23 @@ mod tests {
         assert_eq!(names(&fd), ["users"]);
         fd.apply_filter("");
         assert_eq!(names(&fd), ["users", "orders"]);
+    }
+
+    #[test]
+    fn no_match_then_match_reselects_a_row() {
+        let mut fd = FilteredData::new(
+            ["users", "orders"]
+                .iter()
+                .map(|n| Table {
+                    name: (*n).to_string(),
+                    schema: "main".into(),
+                    size: None,
+                })
+                .collect(),
+        );
+        fd.apply_filter("zzz");
+        assert_eq!(fd.table.view.state.selected(), None);
+        fd.apply_filter("or");
+        assert_eq!(fd.table.view.state.selected(), Some(0));
     }
 }
