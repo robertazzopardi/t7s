@@ -4,11 +4,11 @@ use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
 use k9tui::{
-    event::poll_input, theme, widgets::navigation::TableNavigationHandler,
+    event::poll_input, widgets::navigation::TableNavigationHandler,
 };
 use ratatui::{
     style::{Color, Style},
-    widgets::{Block, Borders, TableState},
+    widgets::TableState,
 };
 use ratatui_textarea::TextArea;
 
@@ -547,12 +547,6 @@ impl App<'_> {
                 search_bar.set_placeholder_text("/");
                 search_bar.set_style(Style::default().fg(Color::White));
                 search_bar.set_max_histories(0);
-                search_bar.set_block(
-                    Block::default()
-                        .border_style(theme::border())
-                        .borders(Borders::ALL)
-                        .title(" Filter (current view) "),
-                );
                 self.search_filter = Some(search_bar);
             }
             _ => {}
