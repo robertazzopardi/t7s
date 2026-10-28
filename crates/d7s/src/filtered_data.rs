@@ -1,7 +1,7 @@
 use crossterm::event::KeyCode;
 use k9tui::widgets::{
     navigation::TableNavigationHandler,
-    table::{TableData, TableDataState},
+    table::{TableData, TableDataState, filter_rows},
 };
 
 /// A wrapper for managing filtered data with original data preservation
@@ -24,7 +24,8 @@ impl<T: TableData + Clone> FilteredData<T> {
 
     /// Apply a filter to the data
     pub fn apply_filter(&mut self, query: &str) {
-        self.table.model.items = self.table.filter(query);
+        // Filter from `original` so deleting characters widens the result.
+        self.table.model.items = filter_rows(&self.original, query);
         self.table.multi_row_selection.clear();
         TableNavigationHandler::wrap_rows(
             &mut self.table.view.state,
@@ -54,5 +55,38 @@ impl<T: TableData + Clone> FilteredData<T> {
     /// Check if the data is currently filtered
     pub const fn is_filtered(&self) -> bool {
         self.table.model.items.len() != self.original.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FilteredData;
+    use crate::db::Table;
+
+    fn names(fd: &FilteredData<Table>) -> Vec<&str> {
+        fd.table
+            .model
+            .items
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn shortening_query_restores_rows() {
+        let mut fd = FilteredData::new(
+            ["users", "orders"]
+                .iter()
+                .map(|n| Table {
+                    name: (*n).to_string(),
+                    schema: "main".into(),
+                    size: None,
+                })
+                .collect(),
+        );
+        fd.apply_filter("us");
+        assert_eq!(names(&fd), ["users"]);
+        fd.apply_filter("");
+        assert_eq!(names(&fd), ["users", "orders"]);
     }
 }
