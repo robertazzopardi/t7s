@@ -421,7 +421,7 @@ pub fn describe_network_text(inspect: &NetworkInspect) -> String {
     out
 }
 
-fn short_id(id: &str) -> String {
+pub fn short_id(id: &str) -> String {
     id.get(..12.min(id.len())).unwrap_or(id).to_string()
 }
 
