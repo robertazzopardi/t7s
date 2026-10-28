@@ -1,5 +1,7 @@
 //! k9s-style `:` command resolution. Pure: no app state, easy to test.
 
+use crate::db::connection::ConnectionType;
+
 /// A view/action a bare command word maps to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verb {
@@ -44,21 +46,23 @@ pub struct Scope<'a> {
     pub schemas: &'a [&'a str],
     /// Databases of the current connection.
     pub databases: &'a [&'a str],
-    /// Saved connections as `(name, is_sqlite)`.
-    pub connections: &'a [(&'a str, bool)],
+    /// Saved connections and their types.
+    pub connections: &'a [(&'a str, ConnectionType)],
     /// Current connection, database and schema (`""` when none).
     pub conn: &'a str,
     pub db: &'a str,
     pub schema: &'a str,
 }
 
-/// `:table conn.db.schema.table` (SQLite: `conn.table`). `conn` is the
-/// resolved connection name; the other parts are matched as each level loads.
+/// `:table conn.db.schema.table` (MySQL: `conn.db.table`, SQLite:
+/// `conn.table`). `conn` is the resolved connection name; the other parts are
+/// matched as each level loads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TablePath {
     pub conn: String,
-    /// `None` for SQLite (no database/schema levels).
+    /// `None` for SQLite (no database level).
     pub db: Option<String>,
+    /// `None` for MySQL (schema == database) and SQLite.
     pub schema: Option<String>,
     pub table: String,
 }
@@ -78,6 +82,9 @@ pub enum Command {
     TablePath(TablePath),
     /// The path's first segment matched no saved connection.
     NoConnection(String),
+    /// The path's first segment matched several connections (never guessed:
+    /// a wrong pick could open prod).
+    AmbiguousConnection(Vec<String>),
     /// Dotted path with the wrong number of parts for its connection type.
     BadTablePath(String),
     /// `:schema <name>`: best match first, then the other same-tier candidates.
@@ -132,48 +139,45 @@ fn resolve_named_arg(
 }
 
 /// Split `conn.rest`: the longest saved connection name followed by `.` wins
-/// (names may contain dots); with `fuzzy`, else match the first segment.
+/// (names may contain dots).
 fn split_conn<'n, 'a>(
     arg: &'a str,
-    connections: &[(&'n str, bool)],
-    fuzzy: bool,
-) -> Option<(&'n str, bool, &'a str)> {
-    let exact = connections
+    connections: &[(&'n str, ConnectionType)],
+) -> Option<(&'n str, ConnectionType, &'a str)> {
+    connections
         .iter()
-        .filter_map(|&(name, sqlite)| {
+        .filter_map(|&(name, ty)| {
             let head = arg.get(..name.len())?;
             let rest = arg.get(name.len()..)?.strip_prefix('.')?;
-            head.eq_ignore_ascii_case(name)
-                .then_some((name, sqlite, rest))
+            head.eq_ignore_ascii_case(name).then_some((name, ty, rest))
         })
-        .max_by_key(|(name, ..)| name.len());
-    if exact.is_some() || !fuzzy {
-        return exact;
-    }
-    let (head, rest) = arg.split_once('.')?;
-    let names: Vec<&str> = connections.iter().map(|c| c.0).collect();
-    let hit = *match_name_candidates(&names, head).first()?;
-    let &(name, sqlite) = connections.iter().find(|c| c.0 == hit)?;
-    Some((name, sqlite, rest))
+        .max_by_key(|(name, ..)| name.len())
 }
 
-/// Connected to a server (non-SQLite) connection: relative paths allowed.
-fn in_server(scope: &Scope) -> bool {
-    !scope.conn.is_empty()
-        && scope
-            .connections
-            .iter()
-            .any(|&(name, sqlite)| name == scope.conn && !sqlite)
+/// Type of the connected connection (`None` on the connection list).
+fn current_type(scope: &Scope) -> Option<ConnectionType> {
+    scope
+        .connections
+        .iter()
+        .find(|c| !scope.conn.is_empty() && c.0 == scope.conn)
+        .map(|c| c.1)
 }
 
 /// Path parts after `conn`, or `None` when the count doesn't fit its type.
-fn table_path(conn: &str, sqlite: bool, parts: &[&str]) -> Option<TablePath> {
+fn table_path(
+    conn: &str,
+    ty: ConnectionType,
+    parts: &[&str],
+) -> Option<TablePath> {
     if parts.iter().any(|p| p.is_empty()) {
         return None;
     }
-    let (db, schema, table) = match (sqlite, parts) {
-        (true, [table]) => (None, None, table),
-        (false, [db, schema, table]) => (Some(db), Some(schema), table),
+    let (db, schema, table) = match (ty, parts) {
+        (ConnectionType::Sqlite, [table]) => (None, None, table),
+        (ConnectionType::Mysql, [db, table]) => (Some(db), None, table),
+        (ConnectionType::Postgres, [db, schema, table]) => {
+            (Some(db), Some(schema), table)
+        }
         _ => return None,
     };
     Some(TablePath {
@@ -189,9 +193,10 @@ fn path_parts(s: &str) -> Vec<&str> {
 }
 
 /// `table <arg>`: a current-schema table name, or a dotted path. A table
-/// literally named with a dot wins when typed exactly. Inside a server
-/// connection, `schema.table` and `db.schema.table` are relative to it,
-/// unless the path starts with an exact connection name and fits it.
+/// literally named with a dot wins when typed exactly. An exact connection
+/// prefix that fits its type is absolute; inside a server connection,
+/// Postgres `schema.table` / `db.schema.table` and MySQL `db.table` are
+/// relative to it; otherwise the first part is a fuzzy connection name.
 fn resolve_table_arg(arg: &str, scope: &Scope) -> Command {
     let arg = arg.trim();
     if !arg.contains('.')
@@ -204,41 +209,38 @@ fn resolve_table_arg(arg: &str, scope: &Scope) -> Command {
             Command::NoTable,
         );
     }
-    if let Some(path) = split_conn(arg, scope.connections, false).and_then(
-        |(conn, sqlite, rest)| table_path(conn, sqlite, &path_parts(rest)),
-    ) {
+    let bad = || Command::BadTablePath(arg.into());
+    if let Some(path) = split_conn(arg, scope.connections)
+        .and_then(|(conn, ty, rest)| table_path(conn, ty, &path_parts(rest)))
+    {
         return Command::TablePath(path);
     }
     let parts = path_parts(arg);
-    if in_server(scope) && (2..=3).contains(&parts.len()) {
-        if parts.iter().any(|p| p.is_empty()) {
-            return Command::BadTablePath(arg.into());
+    let relative = match (current_type(scope), parts.len()) {
+        (Some(ConnectionType::Postgres), 2) => {
+            Some([&[scope.db], &parts[..]].concat())
         }
-        let (db, rest) = match parts.as_slice() {
-            [db, rest @ ..] if parts.len() == 3 => (Some(*db), rest),
-            rest => ((!scope.db.is_empty()).then_some(scope.db), rest),
-        };
-        let [schema, table] = rest else {
-            return Command::BadTablePath(arg.into());
-        };
-        return Command::TablePath(TablePath {
-            conn: scope.conn.into(),
-            db: db.map(String::from),
-            schema: Some((*schema).into()),
-            table: (*table).into(),
-        });
+        (Some(ConnectionType::Postgres), 3)
+        | (Some(ConnectionType::Mysql), 2) => Some(parts.clone()),
+        _ => None,
+    };
+    if let (Some(rel), Some(ty)) = (relative, current_type(scope)) {
+        return table_path(scope.conn, ty, &rel)
+            .map_or_else(bad, Command::TablePath);
     }
-    match split_conn(arg, scope.connections, true) {
-        None => {
-            let head = arg.split('.').next().unwrap_or(arg);
-            Command::NoConnection(head.into())
-        }
-        Some((conn, sqlite, rest)) => {
-            table_path(conn, sqlite, &path_parts(rest)).map_or_else(
-                || Command::BadTablePath(arg.into()),
-                Command::TablePath,
-            )
-        }
+    let (head, rest) = arg.split_once('.').unwrap_or((arg, ""));
+    let names: Vec<&str> = scope.connections.iter().map(|c| c.0).collect();
+    match match_name_candidates(&names, head).as_slice() {
+        [] => Command::NoConnection(head.trim().into()),
+        [hit] => scope
+            .connections
+            .iter()
+            .find(|c| c.0 == *hit)
+            .and_then(|&(conn, ty)| table_path(conn, ty, &path_parts(rest)))
+            .map_or_else(bad, Command::TablePath),
+        many => Command::AmbiguousConnection(
+            many.iter().map(|n| (*n).into()).collect(),
+        ),
     }
 }
 
@@ -277,23 +279,32 @@ fn complete_level(
 
 /// Completion for `table <arg>`: current tables, then connection names, then
 /// each path level whose parents are the current context (absolute first,
-/// then relative `schema.table` / `db.schema.table` inside a server).
+/// then the relative forms inside a server connection).
 fn suggest_table_arg(arg: &str, scope: &Scope) -> Option<String> {
     if let Some(t) = complete_name(scope.tables, arg, false) {
         return Some(t);
     }
     let typed = arg.rsplit('.').next()?;
     let done = arg.get(..arg.len() - typed.len())?;
-    let server = [scope.databases, scope.schemas, scope.tables];
-    let absolute = split_conn(arg, scope.connections, false)
-        .filter(|(conn, ..)| conn.eq_ignore_ascii_case(scope.conn))
-        .and_then(|(_, sqlite, rest)| {
-            let parts: Vec<&str> = rest.split('.').collect();
-            if sqlite {
-                complete_level(&[scope.tables], &[], &parts)
-            } else {
-                complete_level(&server, &[scope.db, scope.schema], &parts)
+    // Levels below the connection, and the current names above each.
+    let levels = |ty| -> (Vec<&[&str]>, Vec<&str>) {
+        match ty {
+            ConnectionType::Sqlite => (vec![scope.tables], vec![]),
+            ConnectionType::Mysql => {
+                (vec![scope.databases, scope.tables], vec![scope.db])
             }
+            ConnectionType::Postgres => (
+                vec![scope.databases, scope.schemas, scope.tables],
+                vec![scope.db, scope.schema],
+            ),
+        }
+    };
+    let absolute = split_conn(arg, scope.connections)
+        .filter(|(conn, ..)| conn.eq_ignore_ascii_case(scope.conn))
+        .and_then(|(_, ty, rest)| {
+            let parts: Vec<&str> = rest.split('.').collect();
+            let (lv, ctx) = levels(ty);
+            complete_level(&lv, &ctx, &parts)
         });
     let completed = absolute
         .or_else(|| {
@@ -305,16 +316,21 @@ fn suggest_table_arg(arg: &str, scope: &Scope) -> Option<String> {
         })
         .or_else(|| {
             let parts: Vec<&str> = arg.split('.').collect();
-            in_server(scope).then(|| {
-                complete_level(
-                    &[scope.schemas, scope.tables],
-                    &[scope.schema],
-                    &parts,
-                )
-                .or_else(|| {
-                    complete_level(&server, &[scope.db, scope.schema], &parts)
+            let ty =
+                current_type(scope).filter(|t| *t != ConnectionType::Sqlite)?;
+            let schema_first = (ty == ConnectionType::Postgres)
+                .then(|| {
+                    complete_level(
+                        &[scope.schemas, scope.tables],
+                        &[scope.schema],
+                        &parts,
+                    )
                 })
-            })?
+                .flatten();
+            schema_first.or_else(|| {
+                let (lv, ctx) = levels(ty);
+                complete_level(&lv, &ctx, &parts)
+            })
         })?;
     // `completed` replaces only the last typed part.
     Some(format!("{done}{completed}"))
@@ -451,11 +467,15 @@ mod tests {
         )
     }
 
-    const CONNS: [(&str, bool); 4] = [
-        ("pg", false),
-        ("pg.prod", false),
-        ("lite", true),
-        ("mysql-local", false),
+    use crate::db::connection::ConnectionType::{Mysql, Postgres, Sqlite};
+
+    const CONNS: [(&str, ConnectionType); 6] = [
+        ("pg", Postgres),
+        ("pg.prod", Postgres),
+        ("lite", Sqlite),
+        ("mysql-local", Mysql),
+        ("pg-dev", Postgres),
+        ("pg-prod", Postgres),
     ];
 
     /// Connected to `pg`, inside database `app`, schema `public`.
@@ -493,10 +513,23 @@ mod tests {
             r("table pg.prod.db.s.t"),
             path("pg.prod", Some("db"), Some("s"), "t")
         );
-        // Fuzzy first segment; parts after it are kept raw.
+        // MySQL has no separate schema level: `conn.db.table`.
         assert_eq!(
-            r("table MYSQL.Shop.Shop.Orders"),
-            path("mysql-local", Some("Shop"), Some("Shop"), "Orders")
+            r("table MySQL-Local.Shop.Orders"),
+            path("mysql-local", Some("Shop"), None, "Orders")
+        );
+        // Fuzzy connection only when relative forms don't fit (4 parts here).
+        assert_eq!(
+            r("table dev.a.b.c"),
+            path("pg-dev", Some("a"), Some("b"), "c")
+        );
+        // Several connections match: refuse rather than guess.
+        assert_eq!(
+            r("table pg-.a.b.c"),
+            Command::AmbiguousConnection(vec![
+                "pg-dev".into(),
+                "pg-prod".into()
+            ])
         );
         assert_eq!(r("table lite.notes"), path("lite", None, None, "notes"));
         assert_eq!(r("table nope.a.b.c"), Command::NoConnection("nope".into()));
@@ -541,6 +574,26 @@ mod tests {
                 "{bad}"
             );
         }
+        assert_eq!(
+            r("table my.shop.orders"),
+            path("mysql-local", Some("shop"), None, "orders")
+        );
+        assert_eq!(
+            r("table mysql-local.shop.x.orders"),
+            Command::BadTablePath("mysql-local.shop.x.orders".into())
+        );
+        // Inside MySQL, `db.table` is relative to the connection.
+        let in_my = Scope {
+            connections: &CONNS,
+            conn: "mysql-local",
+            db: "shop",
+            schema: "shop",
+            ..Scope::default()
+        };
+        assert_eq!(
+            super::resolve("table crm.leads", &in_my),
+            path("mysql-local", Some("crm"), None, "leads")
+        );
         let in_lite = Scope {
             connections: &CONNS,
             conn: "lite",
@@ -595,6 +648,28 @@ mod tests {
         );
         assert_eq!(s("table analytics.pu"), None, "db not loaded");
         assert_eq!(s("table info.us"), None, "schema not current");
+        // MySQL: databases then tables, absolute and relative.
+        let my = Scope {
+            tables: &["orders"],
+            databases: &["crm", "shop"],
+            schemas: &["shop"],
+            connections: &CONNS,
+            conn: "mysql-local",
+            db: "shop",
+            schema: "shop",
+        };
+        let s = |q: &str| super::suggest(q, &my);
+        assert_eq!(
+            s("table mysql-local.sh").as_deref(),
+            Some("table mysql-local.shop.")
+        );
+        assert_eq!(
+            s("table mysql-local.shop.o").as_deref(),
+            Some("table mysql-local.shop.orders")
+        );
+        assert_eq!(s("table cr").as_deref(), Some("table crm."));
+        assert_eq!(s("table shop.o").as_deref(), Some("table shop.orders"));
+        assert_eq!(s("table crm.o"), None, "crm tables not loaded");
         let lite = Scope {
             tables: &["notes"],
             connections: &CONNS,

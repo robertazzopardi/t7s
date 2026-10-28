@@ -34,10 +34,13 @@ impl App<'_> {
 
     /// Connect to the selected database (spawns work; does not await).
     pub fn connect_to_database(&mut self) {
-        let Some(connection) = self.get_selected_connection().cloned() else {
-            return;
-        };
+        if let Some(connection) = self.get_selected_connection().cloned() {
+            self.connect_to(connection);
+        }
+    }
 
+    /// Connect, prompting for the password first when it isn't saved.
+    fn connect_to(&mut self, connection: Connection) {
         if connection.r#type == ConnectionType::Sqlite {
             self.spawn_connect(connection, None);
             return;
@@ -181,27 +184,29 @@ impl App<'_> {
         }
     }
 
-    /// Connect to a named connection from the connection list (CLI `-c`).
+    /// Connect to a named connection (CLI `-c`, `:table conn.…`), even when a
+    /// filter hides it; selects its row when visible.
     pub fn connect_to_named_connection(&mut self, name: &str) {
-        let idx = self
-            .database_explorer
-            .connections
+        let connections = &mut self.database_explorer.connections;
+        let Some(connection) = connections
+            .original
+            .iter()
+            .find(|c| c.name == name)
+            .cloned()
+        else {
+            self.set_status(format!("Connection not found: {name}"));
+            return;
+        };
+        if let Some(idx) = connections
             .table
             .model
             .items
             .iter()
-            .position(|c| c.name == name);
-        let Some(idx) = idx else {
-            self.set_status(format!("Connection not found: {name}"));
-            return;
-        };
-        self.database_explorer
-            .connections
-            .table
-            .view
-            .state
-            .select(Some(idx));
-        self.connect_to_database();
+            .position(|c| c.name == name)
+        {
+            connections.table.view.state.select(Some(idx));
+        }
+        self.connect_to(connection);
     }
 
     /// Ping every saved connection concurrently; does not block the UI loop.

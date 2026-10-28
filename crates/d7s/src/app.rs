@@ -2589,6 +2589,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn table_path_filter_cancel_and_stale_events() {
+        let one = temp_sqlite("path-edge-one");
+        let two = temp_sqlite("path-edge-two");
+        for (db, sql) in [
+            (&one, "CREATE TABLE users(id);"),
+            (&two, "CREATE TABLE notes(id);"),
+        ] {
+            RusqliteConnection::open(&db.path)
+                .unwrap()
+                .execute_batch(sql)
+                .unwrap();
+        }
+        let mut app = App::default();
+        app.database_explorer.connections = FilteredData::new(vec![
+            sqlite_conn("one", &one.path),
+            sqlite_conn("two", &two.path),
+        ]);
+        let open = |t: &str| {
+            DatabaseExplorerState::TableData("sqlite_schema".into(), t.into())
+        };
+
+        // A list filter hiding the target doesn't block the jump.
+        app.database_explorer.connections.apply_filter("one");
+        run_cmd(&mut app, "table two.notes").await;
+        assert_eq!(app.database_explorer.connection.name, "two");
+        assert_eq!(app.database_explorer.state, open("notes"));
+
+        // A load from the old connection landing mid-connect is ignored
+        // (no second connect attempt), then the jump completes.
+        app.on_key_event(key(':')).unwrap();
+        type_str(&mut app, "table one.users");
+        app.on_key_event(enter()).unwrap();
+        assert_eq!(app.status_line.message(), "Connecting…");
+        app.advance_table_path(NavStep::Tables);
+        assert_eq!(app.status_line.message(), "Connecting…");
+        drain_bg_work(&mut app).await;
+        assert_eq!(app.database_explorer.connection.name, "one");
+        assert_eq!(app.database_explorer.state, open("users"));
+
+        // Any key while the jump is loading cancels the rest of it.
+        app.on_key_event(key(':')).unwrap();
+        type_str(&mut app, "table two.notes");
+        app.on_key_event(enter()).unwrap();
+        app.on_key_event(key('j')).unwrap();
+        drain_bg_work(&mut app).await;
+        assert_eq!(app.database_explorer.connection.name, "two");
+        assert_eq!(
+            app.database_explorer.state,
+            DatabaseExplorerState::Tables("sqlite_schema".into()),
+            "connected, but the table hop was cancelled"
+        );
+        let _ = remove_file(&one.path);
+        let _ = remove_file(&two.path);
+    }
+
+    #[tokio::test]
     async fn table_argument_tab_completion_and_spaces() {
         let mut app = named_tables_app(
             "cmd_table_tab",
@@ -3007,6 +3063,46 @@ mod tests {
         );
         run_cmd(&mut app, "table it.zzz.public.users").await;
         assert!(render_text(&mut app).contains("No database matching 'zzz'"));
+    }
+
+    /// Needs `just docker-up` (MySQL on 13306):
+    /// `cargo test -p d7s -- --ignored mysql_table_path`
+    #[tokio::test]
+    #[ignore = "requires docker compose MySQL"]
+    async fn mysql_table_path_with_password_prompt() {
+        let mut app = App::default();
+        app.database_explorer.connections =
+            FilteredData::new(vec![Connection {
+                name: "my".into(),
+                r#type: ConnectionType::Mysql,
+                url: "mysql://root@localhost:13306/d7s_test".into(),
+                password_storage: Some("dont_save".into()),
+                ..Connection::default()
+            }]);
+        let open = |s: &str, t: &str| {
+            DatabaseExplorerState::TableData(s.into(), t.into())
+        };
+
+        // No saved password: the jump waits behind the prompt, then resumes.
+        run_cmd(&mut app, "table my.shop.orders").await;
+        assert!(app.modal_manager.password_connection().is_some());
+        type_str(&mut app, "d7s_password");
+        app.on_key_event(enter()).unwrap();
+        drain_bg_work(&mut app).await;
+        assert_eq!(app.database_explorer.state, open("shop", "orders"));
+
+        // Relative `db.table`, with completion of the database level.
+        app.on_key_event(key(':')).unwrap();
+        type_str(&mut app, "table d7s");
+        assert_eq!(
+            app.command_suggestion().as_deref(),
+            Some("table d7s_test.")
+        );
+        app.on_key_event(esc()).unwrap();
+        run_cmd(&mut app, "table d7s_test.users").await;
+        assert_eq!(app.database_explorer.state, open("d7s_test", "users"));
+        run_cmd(&mut app, "table shop.order_i").await;
+        assert_eq!(app.database_explorer.state, open("shop", "order_items"));
     }
 
     #[test]

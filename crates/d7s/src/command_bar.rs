@@ -96,7 +96,7 @@ impl App<'_> {
                 .connections
                 .original
                 .iter()
-                .map(|c| (c.name.clone(), c.r#type == ConnectionType::Sqlite))
+                .map(|c| (c.name.clone(), c.r#type))
                 .collect(),
             conn: if connected {
                 ex.connection.name.clone()
@@ -215,6 +215,10 @@ impl App<'_> {
             self.database_explorer.connection.r#type == ConnectionType::Sqlite;
         match cmd {
             Command::Empty | Command::TablePath(_) => {}
+            Command::AmbiguousConnection(c) => self.set_status(format!(
+                "Ambiguous connection: {} - type more of the name",
+                c.join(", ")
+            )),
             Command::NoConnection(x) => {
                 self.set_status(format!("No connection matching '{x}'"));
             }
@@ -321,6 +325,11 @@ impl App<'_> {
         if self.state != AppState::DatabaseConnected
             || ex.connection.name != path.conn
         {
+            if loaded != NavStep::Start {
+                // The old connection's load landed mid-connect: keep waiting.
+                self.await_nav(path, loaded);
+                return;
+            }
             // `apply_connected` loads databases (SQLite: tables) next.
             let conn = path.conn.clone();
             let next = if path.db.is_some() {
@@ -358,7 +367,14 @@ impl App<'_> {
                 return;
             }
         }
-        if let Some(schema) = path.schema.take() {
+        // MySQL: the schema is the database just opened.
+        let ex = &self.database_explorer;
+        let schema = path.schema.take().or_else(|| {
+            (ex.connection.r#type == ConnectionType::Mysql)
+                .then(|| ex.connection.selected_database.clone())
+                .flatten()
+        });
+        if let Some(schema) = schema {
             let names = self.command_schema_names();
             let refs: Vec<&str> = names.iter().map(String::as_str).collect();
             let hits = match_name_candidates(&refs, &schema);
@@ -411,7 +427,7 @@ struct ScopeNames {
     tables: Vec<String>,
     schemas: Vec<String>,
     databases: Vec<String>,
-    connections: Vec<(String, bool)>,
+    connections: Vec<(String, ConnectionType)>,
     conn: String,
     db: String,
     schema: String,
@@ -425,7 +441,7 @@ impl ScopeNames {
         let tables = refs(&self.tables);
         let schemas = refs(&self.schemas);
         let databases = refs(&self.databases);
-        let connections: Vec<(&str, bool)> = self
+        let connections: Vec<(&str, ConnectionType)> = self
             .connections
             .iter()
             .map(|(n, s)| (n.as_str(), *s))
