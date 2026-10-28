@@ -97,6 +97,7 @@ impl App<'_> {
         explorer.table_data = Some(FilteredData {
             original: table_state.model.items.clone(),
             table: table_state,
+            query: String::new(),
         });
         explorer.table_data_virtual = Some(meta);
     }

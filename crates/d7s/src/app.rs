@@ -2673,6 +2673,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reopening_filter_bar_restores_active_query() {
+        let mut app = named_tables_app("filter_reopen", &["orders", "users"]);
+        app.database_explorer.state = DatabaseExplorerState::Tables("x".into());
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let bar_text = |a: &App| {
+            a.search_filter
+                .as_ref()
+                .and_then(|t| t.lines().first().cloned())
+        };
+        app.on_key_event(key('/')).unwrap();
+        type_str(&mut app, "ord");
+        app.on_key_event(enter).unwrap();
+        app.on_key_event(key('/')).unwrap();
+        assert_eq!(bar_text(&app).as_deref(), Some("ord"));
+        app.on_key_event(esc()).unwrap();
+        app.on_key_event(key('/')).unwrap();
+        assert_eq!(bar_text(&app).as_deref(), Some(""), "Esc forgets query");
+    }
+
+    #[tokio::test]
     async fn table_argument_tab_completion_and_spaces() {
         let mut app = named_tables_app(
             "cmd_table_tab",

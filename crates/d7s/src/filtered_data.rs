@@ -11,6 +11,8 @@ pub struct FilteredData<T: TableData + Clone> {
     pub original: Vec<T>,
     /// Table state with potentially filtered items
     pub table: TableDataState<T>,
+    /// Last applied filter query, restored when `/` reopens the bar
+    pub query: String,
 }
 
 impl<T: TableData + Clone> FilteredData<T> {
@@ -19,6 +21,7 @@ impl<T: TableData + Clone> FilteredData<T> {
         Self {
             original: data.clone(),
             table: TableDataState::new(data),
+            query: String::new(),
         }
     }
 
@@ -26,6 +29,7 @@ impl<T: TableData + Clone> FilteredData<T> {
     pub fn apply_filter(&mut self, query: &str) {
         // Filter from `original` so deleting characters widens the result.
         self.table.model.items = filter_rows(&self.original, query);
+        query.clone_into(&mut self.query);
         self.table.multi_row_selection.clear();
         TableNavigationHandler::wrap_rows(
             &mut self.table.view.state,
@@ -36,6 +40,7 @@ impl<T: TableData + Clone> FilteredData<T> {
     /// Clear the filter and restore original data
     pub fn clear_filter(&mut self) {
         self.table.model.items.clone_from(&self.original);
+        self.query.clear();
         self.table.multi_row_selection.clear();
         TableNavigationHandler::wrap_rows(
             &mut self.table.view.state,

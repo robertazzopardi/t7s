@@ -552,6 +552,9 @@ impl App<'_> {
                 search_bar.set_cursor_line_style(Style::default());
                 search_bar.set_style(Style::default().fg(Color::White));
                 search_bar.set_max_histories(0);
+                if let Some(query) = self.active_filter_query() {
+                    search_bar.insert_str(query);
+                }
                 self.search_filter = Some(search_bar);
             }
             _ => {}
