@@ -544,7 +544,6 @@ impl App<'_> {
             {
                 let mut search_bar = TextArea::default();
                 search_bar.set_cursor_line_style(Style::default());
-                search_bar.set_placeholder_text("/");
                 search_bar.set_style(Style::default().fg(Color::White));
                 search_bar.set_max_histories(0);
                 self.search_filter = Some(search_bar);

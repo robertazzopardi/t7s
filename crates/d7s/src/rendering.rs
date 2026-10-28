@@ -142,20 +142,19 @@ impl App<'_> {
                     .title_style(theme::title());
                 let inner = filter_block.inner(search_layout_rect);
                 frame.render_widget(filter_block, search_layout_rect);
+                let [prompt, text] = Layout::horizontal([
+                    Constraint::Length(1),
+                    Constraint::Min(0),
+                ])
+                .areas(inner);
+                let prompt_char = if self.command_mode { ":" } else { "/" };
+                frame.render_widget(
+                    Paragraph::new(prompt_char).style(theme::accent()),
+                    prompt,
+                );
+                frame.render_widget(textarea, text);
                 if self.command_mode {
-                    let [prompt, text] = Layout::horizontal([
-                        Constraint::Length(1),
-                        Constraint::Min(0),
-                    ])
-                    .areas(inner);
-                    frame.render_widget(
-                        Paragraph::new(":").style(theme::accent()),
-                        prompt,
-                    );
-                    frame.render_widget(textarea, text);
                     self.render_command_ghost(frame, text);
-                } else {
-                    frame.render_widget(textarea, inner);
                 }
             }
 
