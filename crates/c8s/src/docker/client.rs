@@ -224,17 +224,19 @@ impl DockerClient {
         })
     }
 
-    /// Stream `tail -F` of a file inside the container into `tx`.
+    /// Stream `tail -F` of a file inside the container into `tx`, starting
+    /// from the last `lines` lines (`tail -n` syntax, `+1` for the whole file).
     // shortcut: aborting this drops the local `docker exec`; the remote
     // `tail` exits on its next write (SIGPIPE), not immediately.
     pub async fn tail_file(
         &self,
         id: &str,
         path: &str,
+        lines: &str,
         tx: UnboundedSender<String>,
     ) {
         let child = Command::new("docker")
-            .args(["exec", id, "tail", "-n", "200", "-F", path])
+            .args(["exec", id, "tail", "-n", lines, "-F", path])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true)
@@ -373,14 +375,32 @@ impl DockerClient {
             .await?)
     }
 
-    /// Stream log lines for `id` into `tx` until the stream ends or the
-    /// receiver is dropped (e.g. the user left the log view).
-    pub async fn tail_logs(&self, id: &str, tx: UnboundedSender<String>) {
+    /// Whether container `id` is currently running; errors if it is gone.
+    pub async fn is_running(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .inspect(id)
+            .await?
+            .state
+            .and_then(|s| s.running)
+            .unwrap_or(false))
+    }
+
+    /// Stream log lines for `id` (the last `tail` lines, or `"all"`, from
+    /// UNIX time `since`, 0 for any time) into `tx` until the stream ends or
+    /// the receiver is dropped (e.g. the user left the log view).
+    pub async fn tail_logs(
+        &self,
+        id: &str,
+        since: i32,
+        tail: &str,
+        tx: &UnboundedSender<String>,
+    ) {
         let options = LogsOptions {
             follow: true,
             stdout: true,
             stderr: true,
-            tail: "200".to_string(),
+            since,
+            tail: tail.to_string(),
             ..Default::default()
         };
         let mut stream = self.docker.logs(id, Some(options));

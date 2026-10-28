@@ -1,5 +1,10 @@
-use core::{future::Future, time::Duration};
-use std::{io::stdout, process::Command};
+use core::{future::Future, mem, time::Duration};
+use std::{
+    collections::HashMap,
+    io::stdout,
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use ansi_to_tui::IntoText;
 use crossterm::{
@@ -59,6 +64,13 @@ pub const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
+/// Current UNIX time in seconds, as Docker's log `since` filter takes it.
+fn unix_now() -> i32 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i32::try_from(d.as_secs()).unwrap_or(i32::MAX))
+}
+
 /// Update pushed from a background task into the app's event loop.
 pub enum BackgroundEvent {
     /// Container list refreshed by the poller.
@@ -73,6 +85,12 @@ pub enum BackgroundEvent {
     PollError(String),
     /// One log line from the active log-tail task.
     LogLine(String),
+    /// Container `id` restarted and its log stream reattached from UNIX
+    /// time `since`.
+    LogRestarted {
+        id: String,
+        since: i32,
+    },
     /// Process list refreshed by the active process-view poller.
     Processes(Vec<ProcessRow>),
     /// `docker top` failed (e.g. the container is not running).
@@ -139,6 +157,8 @@ pub struct App {
     pub(crate) process_task: Option<JoinHandle<()>>,
     /// Where `q` goes from the log view when it was not opened from the list.
     pub(crate) logs_back: Option<AppState>,
+    /// Files the open log view was asked to tail, kept for `H` reloads.
+    pub(crate) log_files: Option<Vec<String>>,
     /// Unfiltered rows from the last poll, kept so the `/` filter can be
     /// re-applied (or cleared) without waiting for the next poll tick.
     pub(crate) containers_all: Vec<ContainerRow>,
@@ -161,6 +181,13 @@ pub struct App {
     /// Resource kind + id pending removal once the confirm dialog resolves.
     pub(crate) pending_remove: Option<(ResourceKind, String)>,
     pub(crate) log_lines: Vec<Line<'static>>,
+    /// Per container id: when its current run's logs start (UNIX time) and
+    /// the lines of its run before that restart. Kept for the app lifetime.
+    pub(crate) log_prev_runs: HashMap<String, (i32, Vec<Line<'static>>)>,
+    /// Container id whose previous run `p` shows; `None` for file tails.
+    pub(crate) log_prev_key: Option<String>,
+    /// True while the log view shows the previous run.
+    pub(crate) log_show_prev: bool,
     /// Absolute index of the first visible log line, synced each render.
     pub(crate) log_scroll: usize,
     /// True while the log view tracks new output; false once the user scrolls up.
@@ -206,6 +233,7 @@ impl App {
             column_width_mode: ColumnWidthMode::Fit,
             process_task: None,
             logs_back: None,
+            log_files: None,
             containers_all: Vec::new(),
             images_all: Vec::new(),
             volumes_all: Vec::new(),
@@ -219,6 +247,9 @@ impl App {
             confirm_dialog: None,
             pending_remove: None,
             log_lines: Vec::new(),
+            log_prev_runs: HashMap::new(),
+            log_prev_key: None,
+            log_show_prev: false,
             log_scroll: 0,
             log_follow: true,
             log_viewport_height: 0,
@@ -428,6 +459,19 @@ impl App {
                     apply_table_update(&mut self.processes, rows);
                 }
                 BackgroundEvent::Status(msg) => self.set_status(msg),
+                BackgroundEvent::LogRestarted { id, since } => {
+                    if self.log_prev_key.as_deref() != Some(id.as_str()) {
+                        continue;
+                    }
+                    let lines = mem::take(&mut self.log_lines);
+                    self.log_prev_runs.insert(id, (since, lines));
+                    self.log_show_prev = false;
+                    self.log_scroll = 0;
+                    self.log_follow = true;
+                    self.set_status(
+                        "Container restarted; p shows the previous run",
+                    );
+                }
                 BackgroundEvent::ProcessError(e) => {
                     self.set_status(format!("Processes unavailable: {e}"));
                 }
@@ -441,7 +485,10 @@ impl App {
                     if self.log_lines.len() > MAX_LOG_LINES {
                         let drop = self.log_lines.len() - MAX_LOG_LINES;
                         self.log_lines.drain(..drop);
-                        self.log_scroll = self.log_scroll.saturating_sub(drop);
+                        if !self.log_show_prev {
+                            self.log_scroll =
+                                self.log_scroll.saturating_sub(drop);
+                        }
                     }
                 }
                 BackgroundEvent::ActionDone { key, message }
@@ -532,7 +579,7 @@ impl App {
 
     /// Enter the log view and start tailing the container's logs.
     pub(crate) fn open_logs(&mut self, id: &str, name: &str) {
-        self.start_logs(id, name, None, None);
+        self.start_logs(id, name, None, None, false);
     }
 
     /// Show the output of the process selected in the process view: its log
@@ -557,12 +604,12 @@ impl App {
         };
         if let Some(path) = row.files.first() {
             let label = format!("{name}: {} {path}", row.pid);
-            self.start_logs(&id, &label, Some(row.files.clone()), back);
+            self.start_logs(&id, &label, Some(row.files.clone()), back, false);
         } else if row.stdout.starts_with("pipe:")
             && rows.iter().any(|r| r.pid == "1" && r.stdout == row.stdout)
         {
             self.set_status("Shares container output (all processes)");
-            self.start_logs(&id, &name, None, back);
+            self.start_logs(&id, &name, None, back, false);
         } else {
             self.set_status("No readable output for this process");
         }
@@ -570,19 +617,24 @@ impl App {
 
     /// Enter the log view tailing the container's logs, or the first
     /// readable of `files` inside it (container logs if none is readable).
-    /// `back` is the state `q` returns to (the list when `None`).
+    /// `back` is the state `q` returns to (the list when `None`). `full`
+    /// loads the whole history instead of the last 200 lines.
     fn start_logs(
         &mut self,
         id: &str,
         name: &str,
         files: Option<Vec<String>>,
         back: Option<AppState>,
+        full: bool,
     ) {
         let Some(docker) = self.docker.clone() else {
             return;
         };
         self.logs_back = back;
+        self.log_files.clone_from(&files);
         self.log_lines.clear();
+        self.log_prev_key = files.is_none().then(|| id.to_string());
+        self.log_show_prev = false;
         self.log_scroll = 0;
         self.log_follow = true;
         self.log_filter.clear();
@@ -596,6 +648,16 @@ impl App {
         }
         let tx = self.bg_tx.clone();
         let id = id.to_string();
+        // After a seen restart, open on the current run only (`p` has the rest).
+        let since = match self.log_prev_runs.get(&id) {
+            Some((since, _)) if !full && files.is_none() => *since,
+            _ => 0,
+        };
+        let (tail, file_lines) = if full || since > 0 {
+            ("all", "+1")
+        } else {
+            ("200", "200")
+        };
         self.log_task = Some(tokio::spawn(async move {
             let (line_tx, mut line_rx) = unbounded_channel::<String>();
             let status_tx = tx.clone();
@@ -604,7 +666,9 @@ impl App {
                 for path in files.iter().flatten() {
                     match docker.probe_file(&id, path).await {
                         Ok(()) => {
-                            docker.tail_file(&id, path, line_tx).await;
+                            docker
+                                .tail_file(&id, path, file_lines, line_tx)
+                                .await;
                             return;
                         }
                         Err(e) => errors.push(e),
@@ -616,7 +680,41 @@ impl App {
                         errors.join("; ")
                     )));
                 }
-                docker.tail_logs(&id, line_tx).await;
+                // The stream ends when the container stops; reattach once it
+                // runs again (e.g. restarted outside c8s), skipping old lines.
+                let mut since = since;
+                let mut tail = tail;
+                loop {
+                    docker.tail_logs(&id, since, tail, &line_tx).await;
+                    since = unix_now();
+                    tail = "all";
+                    let _ = status_tx.send(BackgroundEvent::Status(
+                        "Container stopped; showing saved logs, waiting for \
+                         restart…"
+                            .into(),
+                    ));
+                    loop {
+                        if line_tx.is_closed() {
+                            return;
+                        }
+                        sleep(POLL_INTERVAL).await;
+                        match docker.is_running(&id).await {
+                            Ok(true) => break,
+                            Ok(false) => {}
+                            Err(e) => {
+                                let _ =
+                                    status_tx.send(BackgroundEvent::Status(
+                                        format!("Log stream ended: {e}"),
+                                    ));
+                                return;
+                            }
+                        }
+                    }
+                    let _ = status_tx.send(BackgroundEvent::LogRestarted {
+                        id: id.clone(),
+                        since,
+                    });
+                }
             });
             while let Some(line) = line_rx.recv().await {
                 if tx.send(BackgroundEvent::LogLine(line)).is_err() {
@@ -625,6 +723,34 @@ impl App {
             }
             follower.abort();
         }));
+    }
+
+    /// Lines of the open container's run before its last seen restart.
+    pub(crate) fn log_prev(&self) -> Option<&Vec<Line<'static>>> {
+        let key = self.log_prev_key.as_ref()?;
+        self.log_prev_runs.get(key).map(|(_, lines)| lines)
+    }
+
+    /// Switch the log view between the current and previous run (`p`).
+    pub(crate) fn toggle_previous_logs(&mut self) {
+        if self.log_prev().is_none() {
+            self.set_status("No previous run since the logs were opened");
+            return;
+        }
+        self.log_show_prev = !self.log_show_prev;
+        self.log_scroll = 0;
+        self.log_follow = true;
+    }
+
+    /// Reload the open log view with its whole history (`H`).
+    pub(crate) fn load_full_logs(&mut self) {
+        let AppState::Logs { id, name } = self.state.clone() else {
+            return;
+        };
+        let back = self.logs_back.clone();
+        let files = self.log_files.clone();
+        self.start_logs(&id, &name, files, back, true);
+        self.set_status("Loading full log history…");
     }
 
     /// Fetch a cheap daemon-level summary and switch to the info panel.
