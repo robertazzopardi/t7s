@@ -1,7 +1,7 @@
 [package]
 name = "d7s"
 version = "0.5.0"
-description = "A k9s-style TUI database client for PostgreSQL and SQLite"
+description = "A k9s-style TUI database client for PostgreSQL, MySQL/MariaDB, and SQLite"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -13,7 +13,7 @@ keywords = [
     "tui",
     "postgresql",
     "sqlite",
-    "terminal",
+    "mysql",
 ]
 categories = [
     "command-line-utilities",

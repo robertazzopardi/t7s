@@ -36,12 +36,12 @@ Prebuilt binaries are on [GitHub Releases](https://github.com/robertazzopardi/t7
 The flake provides a dev shell (the pinned toolchain plus the tools `just` uses) and packages for both apps.
 
 ```sh
-nix develop    # rustc, cargo, just, clippy, rustfmt, rust-analyzer
-just           # list project commands
+nix develop       # rustc, cargo, just, clippy, rustfmt, rust-analyzer
+just              # list project commands
 
-nix build      # d7s
-nix build .#c8s
-nix run .#d7s
+nix build         # build d7s (default package)
+nix build .#c8s   # build c8s
+nix run .#d7s     # run d7s
 ```
 
 `direnv allow` activates the shell automatically (see `.envrc`).
