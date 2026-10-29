@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use k9tui::bg::KeyedFailure;
-pub use k9tui::bg::spawn_keyed;
 
 use crate::{
     db::{
@@ -185,6 +184,7 @@ impl KeyedFailure for BgEvent {
 
 #[cfg(test)]
 mod tests {
+    use k9tui::bg::spawn_keyed;
     use tokio::sync::mpsc::unbounded_channel;
 
     use super::*;

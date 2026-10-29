@@ -3,7 +3,10 @@
 use alloc::collections::BTreeSet;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use k9tui::widgets::navigation::TableNavigationHandler;
+use k9tui::{
+    error::{Result, err},
+    widgets::navigation::TableNavigationHandler,
+};
 
 use crate::{
     app::App,
@@ -19,7 +22,6 @@ use crate::{
         draft_cell_from_column_default, should_omit_for_insert_default,
         sole_pk, sqlite_rowid_pk_omit,
     },
-    error::{Result, err},
     ui::widgets::raw_table::{RawTableRow, RawTableStateExt},
 };
 

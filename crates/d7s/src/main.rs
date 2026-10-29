@@ -13,7 +13,6 @@ mod connection_manager;
 mod database_explorer;
 mod database_explorer_state;
 mod db;
-mod error;
 mod event_handlers;
 mod filtered_data;
 mod filtering;
@@ -26,7 +25,10 @@ mod ui;
 mod virtual_table;
 
 use app::{App, PKG_NAME, PKG_VERSION};
-use k9tui::terminal::run;
+use k9tui::{
+    error::{Result, err},
+    terminal::run,
+};
 
 fn print_usage() {
     eprintln!(
@@ -45,7 +47,7 @@ Options:
 }
 
 /// `None` = run TUI; `Some(name)` = connect on launch; exits process on --help/--version.
-fn parse_launch_args() -> error::Result<Option<String>> {
+fn parse_launch_args() -> Result<Option<String>> {
     let mut args = env::args().skip(1);
     let mut connection: Option<String> = None;
     while let Some(arg) = args.next() {
@@ -59,9 +61,9 @@ fn parse_launch_args() -> error::Result<Option<String>> {
                 exit(0);
             }
             "-c" | "--connection" => {
-                let name = args.next().ok_or_else(|| {
-                    error::err("--connection requires a name")
-                })?;
+                let name = args
+                    .next()
+                    .ok_or_else(|| err("--connection requires a name"))?;
                 connection = Some(name);
             }
             other => {
@@ -75,7 +77,7 @@ fn parse_launch_args() -> error::Result<Option<String>> {
 }
 
 #[tokio::main]
-async fn main() -> error::Result<()> {
+async fn main() -> Result<()> {
     let launch_connection = parse_launch_args()?;
     run(|terminal| {
         let mut app = App::default().init()?;

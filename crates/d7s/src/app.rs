@@ -11,6 +11,9 @@ use std::{
 
 use crossterm::{clipboard, execute};
 use k9tui::{
+    bg::spawn_keyed,
+    error::Result,
+    in_flight::InFlight,
     terminal::suspend,
     widgets::{
         hotkey::Hotkey,
@@ -27,7 +30,7 @@ use tokio::sync::mpsc::{
 use crate::{
     app,
     app_state::{AppState, DatabaseExplorerState},
-    bg::{BgEvent, DescribeTarget, SqlExecuteOk, spawn_keyed},
+    bg::{BgEvent, DescribeTarget, SqlExecuteOk},
     cell_edit::CellEditSession,
     command_bar::{NavStep, PendingNav},
     database_explorer::STATUS_CONNECT_FAILED,
@@ -38,9 +41,8 @@ use crate::{
         query_log::{QueryLog, QueryLogEntry},
         sqlite::init_db,
     },
-    error::Result,
     filtered_data::FilteredData,
-    in_flight::{InFlight, describe_key, key_connection, sql_key},
+    in_flight::{describe_key, key_connection, sql_key},
     services::{ConnectionService, PasswordService, PreferencesService},
     sql::safety::{StatementSafety, classify_statement, split_statements},
     ui::widgets::{

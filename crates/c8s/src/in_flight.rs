@@ -1,5 +1,3 @@
-pub use k9tui::in_flight::InFlight;
-
 use crate::app_state::ResourceKind;
 
 pub fn container_key(id: &str) -> String {
@@ -26,33 +24,5 @@ pub fn resource_key(kind: ResourceKind, id: &str) -> String {
         ResourceKind::Images => image_key(id),
         ResourceKind::Volumes => volume_key(id),
         ResourceKind::Networks => network_key(id),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn try_begin_refuses_duplicate() {
-        let mut f = InFlight::default();
-        assert!(f.try_begin(container_key("abc")));
-        assert!(!f.try_begin(container_key("abc")));
-        assert!(f.try_begin(container_key("def")));
-    }
-
-    #[test]
-    fn end_clears_so_retry_works() {
-        let mut f = InFlight::default();
-        let k = container_key("abc");
-        assert!(f.try_begin(&k));
-        f.end(&k);
-        assert!(f.try_begin(&k));
-    }
-
-    #[test]
-    fn end_on_missing_key_is_ok() {
-        let mut f = InFlight::default();
-        f.end("container:missing");
     }
 }

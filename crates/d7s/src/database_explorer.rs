@@ -2,8 +2,10 @@ use core::fmt;
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use k9tui::widgets::{
-    navigation::TableNavigationHandler, table::TableDataState,
+use k9tui::{
+    bg::spawn_keyed,
+    error::Result,
+    widgets::{navigation::TableNavigationHandler, table::TableDataState},
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -12,13 +14,12 @@ use crate::{
     app_state::DatabaseExplorerState,
     bg::{
         BgEvent, SqlExecuteOk, TableColumnMetaOk, TableMutationReload,
-        TablePageLoadOk, spawn_keyed,
+        TablePageLoadOk,
     },
     db::{
         Column, Database, DatabaseInfo, DbRowId, RowDeleteSpec, Schema, Table,
         TableDataPage, connection::ConnectionType, query_log::QueryOrigin,
     },
-    error::Result,
     filtered_data::FilteredData,
     in_flight::{
         database_key, schema_key, schemas_key, select_database_key, sql_key,

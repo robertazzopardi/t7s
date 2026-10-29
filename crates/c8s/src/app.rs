@@ -7,10 +7,11 @@ use std::{
 
 use ansi_to_tui::IntoText;
 use crossterm::event::{Event, KeyEventKind, read};
-pub use k9tui::bg::spawn_keyed;
 use k9tui::{
-    bg::KeyedFailure,
+    bg::{KeyedFailure, spawn_keyed},
+    error::Result,
     event::poll_input,
+    in_flight::InFlight,
     terminal::suspend,
     widgets::{
         constraint_len_calculator,
@@ -37,8 +38,7 @@ use crate::{
         ContainerRow, ImageRow, NetworkRow, ProcessRow, VolumeRow,
         client::{DaemonHealth, DockerClient},
     },
-    error::Result,
-    in_flight::{DAEMON_KEY, InFlight},
+    in_flight::DAEMON_KEY,
     log_dedup::DedupMode,
     ui::widgets::hotkeys::LIST_HOTKEYS,
 };

@@ -17,6 +17,7 @@ use bollard::{
     },
 };
 use futures_util::{StreamExt, future::join_all};
+use k9tui::error::{Result, err};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
@@ -27,7 +28,6 @@ use tokio::{
 use super::{
     ContainerRow, ImageRow, NetworkRow, ProcessRow, SCAN_SCRIPT, VolumeRow,
 };
-use crate::error::{Result, err};
 
 /// Snapshot of daemon-level health/info — c8s's single-daemon analog of a
 /// fleet-wide health dashboard (there's only ever one daemon to summarize).
