@@ -27,7 +27,7 @@
 
         # Keep in sync with `rust-version` in Cargo.toml (the CI `msrv` job).
         # Used for the package builds, which pin exactly that toolchain.
-        msrvVersion = "1.89.0";
+        msrvVersion = "1.95.0";
 
         # Keep in sync with the nightly pin in `justfile` (`fmt`) and the CI
         # `fmt` job. rustfmt.toml uses nightly-only options.
@@ -52,12 +52,10 @@
         # Match the dev toolchain
         rustAnalyzer = pkgs.rust-bin.stable.latest.rust-analyzer;
 
-        # Libraries the crates link against. Only libdbus-1 is needed (used by
-        # dbus-secret-service for the keyring): rusqlite is built with `bundled`
-        # (static SQLite), tokio-postgres is pure Rust and TLS uses rustls.
-        packageInputs = with pkgs; [
-          dbus
-        ];
+        # Libraries the crates link against. None today: the keyring uses zbus
+        # (pure Rust), rusqlite is built with `bundled` (static SQLite),
+        # tokio-postgres is pure Rust and TLS uses rustls.
+        packageInputs = [ ];
 
         # Build-time tools. pkg-config has to live here rather than above:
         # rustPlatform sets strictDeps, which keeps buildInputs off PATH and
@@ -126,12 +124,6 @@
 
           # Nightly bin for `just fmt` / `just fmt-check` (rustfmt.toml uses nightly-only options)
           RUST_NIGHTLY_BIN = "${rustNightly}/bin";
-
-          # So the compiled binaries can find libdbus-1 at runtime.
-          LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath packageInputs}";
-
-          # dbus-1.pc lives in dbus.dev.
-          PKG_CONFIG_PATH = "${pkgs.dbus.dev}/lib/pkgconfig";
 
           # For rust-analyzer's std source navigation.
           RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";

@@ -42,7 +42,6 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           components: clippy
-          install-linux-dbus: "true"
       - name: Run clippy action
         uses: clechasseur/rs-clippy-check@ac75e246ebbd78d106ac9460c668ab7c8044ebe3 # v6.1.1
         with:
@@ -59,7 +58,6 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain: nightly
-          install-linux-dbus: "true"
       - name: Run cargo doc
         run: cargo doc --no-deps --all-features
         env:
@@ -73,8 +71,7 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          toolchain: "1.89"
-          install-linux-dbus: "true"
+          toolchain: "1.95"
       - name: cargo check (MSRV)
         run: cargo check --workspace --locked
   test:
@@ -98,8 +95,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
-        with:
-          install-linux-dbus: "true"
       - name: Install cargo-nextest
         uses: taiki-e/install-action@23d41aa71228a2692ee31bb433f070fd4bdc6661 # nextest
       - name: cargo generate-lockfile
