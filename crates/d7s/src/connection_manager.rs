@@ -17,7 +17,11 @@ use crate::{
         query_log::QueryLog,
     },
     in_flight::{connection_key, ping_key},
-    services::{ConnectionService, PasswordService, PreferencesService},
+    services::{
+        connection_service::ConnectionService,
+        password_service::PasswordService,
+        preferences_service::PreferencesService,
+    },
     ui::widgets::hotkeys::{CONNECTION_HOTKEYS, database_hotkeys},
 };
 

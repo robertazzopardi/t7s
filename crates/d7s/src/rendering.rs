@@ -3,6 +3,7 @@ use core::fmt;
 use k9tui::{
     theme,
     widgets::{
+        help_view::HelpRow,
         hotkey::Hotkey,
         status_line::FOOTER_HEIGHT,
         table::{DataTable, TableData},
@@ -23,15 +24,14 @@ use crate::{
     db::{connection::Connection, query_log::QueryLogEntry},
     filtered_data::FilteredData,
     ui::{
-        sql_executor::SqlExecutor,
         theme as d7s_theme,
         widgets::{
             connection_modal::ConnectionModalWidget,
             describe_content::DescribeRow,
             global_hotkeys::global_hotkeys,
-            help_content::HelpRow,
             hotkeys::{CELL_EDIT_HOTKEYS, TABLE_DATA_VIEW_HOTKEYS},
             idle_hint::default_idle_hint,
+            sql_executor::SqlExecutor,
         },
     },
 };

@@ -19,7 +19,11 @@ use crate::{
     bg::BgEvent,
     db::connection::ConnectionType,
     in_flight::connection_test_key,
-    services::{ConnectionService, PasswordService, PreferencesService},
+    services::{
+        connection_service::ConnectionService,
+        password_service::PasswordService,
+        preferences_service::PreferencesService,
+    },
     sql::safety::split_statements,
     ui::widgets::connection_modal::{ModalAction, TestResult},
 };

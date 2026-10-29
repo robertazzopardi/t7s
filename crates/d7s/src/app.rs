@@ -16,6 +16,7 @@ use k9tui::{
     in_flight::InFlight,
     terminal::suspend,
     widgets::{
+        help_view::HelpRow,
         hotkey::Hotkey,
         status_line::StatusLine,
         table::{ColumnWidthMode, TableData, TableDataState},
@@ -43,11 +44,15 @@ use crate::{
     },
     filtered_data::FilteredData,
     in_flight::{describe_key, key_connection, sql_key},
-    services::{ConnectionService, PasswordService, PreferencesService},
+    services::{
+        connection_service::ConnectionService,
+        password_service::PasswordService,
+        preferences_service::PreferencesService,
+    },
     sql::safety::{StatementSafety, classify_statement, split_statements},
     ui::widgets::{
         connection_modal::ModalManager, describe_content::DescribeRow,
-        help_content::HelpRow, hotkeys::CONNECTION_HOTKEYS,
+        hotkeys::CONNECTION_HOTKEYS,
     },
     virtual_table::VIRTUAL_TABLE_PAGE_SIZE,
 };

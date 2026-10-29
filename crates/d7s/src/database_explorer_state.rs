@@ -10,8 +10,8 @@ use crate::{
         Column, Database, DatabaseInfo, Schema, Table, connection::Connection,
     },
     filtered_data::FilteredData,
-    services::PreferencesService,
-    ui::{sql_executor::SqlExecutorState, widgets::raw_table::RawTableRow},
+    services::preferences_service::PreferencesService,
+    ui::widgets::{raw_table::RawTableRow, sql_executor::SqlExecutorState},
     virtual_table::VirtualTableMeta,
 };
 
