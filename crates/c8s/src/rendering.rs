@@ -2,8 +2,11 @@ use crossterm::event::KeyCode;
 use k9tui::{
     theme,
     widgets::{
-        hotkey::Hotkey, table::DataTable, text_search::filter_and_highlight,
-        top_bar::TopBarView,
+        hotkey::Hotkey,
+        status_line::FOOTER_HEIGHT,
+        table::DataTable,
+        text_search::filter_and_highlight,
+        top_bar::{TOPBAR_HEIGHT, TopBarView},
     },
 };
 use ratatui::{
@@ -25,8 +28,6 @@ use crate::{
     },
 };
 
-const TOPBAR_HEIGHT: u16 = 7;
-const FOOTER_HEIGHT: u16 = 1;
 const SEARCH_BAR_HEIGHT: u16 = 3;
 
 impl App {

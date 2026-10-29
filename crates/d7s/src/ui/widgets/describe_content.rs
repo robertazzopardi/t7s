@@ -1,8 +1,7 @@
 //! k9s-style "describe" view: a field/value listing for whatever object
 //! (connection, table, column, or row) is currently selected.
 
-use k9tui::theme;
-pub use k9tui::widgets::table::TableData;
+use k9tui::{theme, widgets::table::TableData};
 use ratatui::style::{Modifier, Style};
 
 /// One row in the describe table: a field label and its value.

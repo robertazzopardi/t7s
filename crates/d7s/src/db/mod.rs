@@ -2,7 +2,10 @@ use core::error::Error;
 use std::fs::create_dir_all;
 
 use directories::BaseDirs;
-use k9tui::widgets::table::TableData;
+use k9tui::{
+    error::{Result, err},
+    widgets::table::TableData,
+};
 
 pub mod connection;
 pub mod mysql;
@@ -12,8 +15,6 @@ pub mod sqlite;
 pub mod tls;
 
 use std::path::PathBuf;
-
-use crate::error::{Result, err};
 
 /// Stable-enough row locator for `UPDATE` when the table has no primary key.
 #[derive(Debug, Clone, PartialEq, Eq)]

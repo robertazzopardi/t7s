@@ -2,6 +2,8 @@ use core::mem::take;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use k9tui::{
+    bg::spawn_keyed,
+    error::Result,
     theme,
     widgets::{
         modal::{ConfirmDialog, DialogAction},
@@ -11,10 +13,9 @@ use k9tui::{
 use ratatui::{Terminal, backend::Backend, style::Style};
 
 use crate::{
-    app::{App, spawn_keyed},
+    app::App,
     app_state::{AppState, ResourceKind},
     command::{Command, resolve, suggest},
-    error::Result,
     ui::widgets::hotkeys::{LIST_HOTKEYS, RESOURCE_HOTKEYS},
 };
 

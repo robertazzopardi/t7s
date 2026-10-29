@@ -1,26 +1,22 @@
 use core::{error::Error, fmt::Write};
 use std::collections::HashMap;
 
+use k9tui::error::Result;
 use rusqlite::{Connection as SqliteConnection, params, types};
 use rusqlite_migration::{M, Migrations};
 use serde_json::{Map, Value as SerdeJsonValue};
 use tokio::task::spawn_blocking;
 
-use crate::{
-    db::{
-        Column, Database, DatabaseInfo, DbRowId, Schema, Table, TableData,
-        TableDataPage, TableRow, cell_clears_to_sql_null,
-        connection::{
-            Connection, ConnectionStatus, ConnectionType, Environment,
-        },
-        get_db_path,
-        query_log::{
-            clear_blocking_sql_reports, merge_blocking_sql_reports, report_sql,
-            take_blocking_sql_reports,
-        },
-        should_omit_for_insert_default, sole_pk, sqlite_rowid_pk_omit,
+use crate::db::{
+    Column, Database, DatabaseInfo, DbRowId, Schema, Table, TableData,
+    TableDataPage, TableRow, cell_clears_to_sql_null,
+    connection::{Connection, ConnectionStatus, ConnectionType, Environment},
+    get_db_path,
+    query_log::{
+        clear_blocking_sql_reports, merge_blocking_sql_reports, report_sql,
+        take_blocking_sql_reports,
     },
-    error::Result,
+    should_omit_for_insert_default, sole_pk, sqlite_rowid_pk_omit,
 };
 
 /// `prepare` that reports the SQL text (placeholders only) to the query log.

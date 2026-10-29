@@ -3,7 +3,10 @@ use core::time::Duration;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
-use k9tui::{event::poll_input, widgets::navigation::TableNavigationHandler};
+use k9tui::{
+    bg::spawn_keyed, error::Result, event::poll_input,
+    widgets::navigation::TableNavigationHandler,
+};
 use ratatui::{
     style::{Color, Style},
     widgets::TableState,
@@ -13,11 +16,14 @@ use ratatui_textarea::TextArea;
 use crate::{
     app::App,
     app_state::{AppState, DatabaseExplorerState},
-    bg::{BgEvent, spawn_keyed},
+    bg::BgEvent,
     db::connection::ConnectionType,
-    error::Result,
     in_flight::connection_test_key,
-    services::{ConnectionService, PasswordService, PreferencesService},
+    services::{
+        connection_service::ConnectionService,
+        password_service::PasswordService,
+        preferences_service::PreferencesService,
+    },
     sql::safety::split_statements,
     ui::widgets::connection_modal::{ModalAction, TestResult},
 };

@@ -1,25 +1,18 @@
-use core::{future::Future, mem, time::Duration};
+use core::{mem, time::Duration};
 use std::{
     collections::HashMap,
-    io::stdout,
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use ansi_to_tui::IntoText;
-use crossterm::{
-    ExecutableCommand,
-    event::{
-        DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind, read,
-    },
-    execute,
-    terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-        enable_raw_mode,
-    },
-};
+use crossterm::event::{Event, KeyEventKind, read};
 use k9tui::{
+    bg::{KeyedFailure, spawn_keyed},
+    error::Result,
     event::poll_input,
+    in_flight::InFlight,
+    terminal::suspend,
     widgets::{
         constraint_len_calculator,
         hotkey::Hotkey,
@@ -45,8 +38,7 @@ use crate::{
         ContainerRow, ImageRow, NetworkRow, ProcessRow, VolumeRow,
         client::{DaemonHealth, DockerClient},
     },
-    error::{Result, err},
-    in_flight::{DAEMON_KEY, InFlight},
+    in_flight::DAEMON_KEY,
     log_dedup::DedupMode,
     ui::widgets::hotkeys::LIST_HOTKEYS,
 };
@@ -118,24 +110,10 @@ pub enum BackgroundEvent {
     DaemonHealthOk(DaemonHealth),
 }
 
-/// `tokio::spawn` for work holding an in-flight `key`: if the task panics, an
-/// `ActionFailed` still releases the key so the resource is not left busy.
-pub fn spawn_keyed<F>(
-    tx: UnboundedSender<BackgroundEvent>,
-    key: String,
-    task: F,
-) where
-    F: Future<Output = ()> + Send + 'static,
-{
-    let handle = tokio::spawn(task);
-    tokio::spawn(async move {
-        if handle.await.is_err() {
-            let _ = tx.send(BackgroundEvent::ActionFailed {
-                key,
-                message: "Background task failed unexpectedly".into(),
-            });
-        }
-    });
+impl KeyedFailure for BackgroundEvent {
+    fn failed(key: String, message: String) -> Self {
+        Self::ActionFailed { key, message }
+    }
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -556,18 +534,11 @@ impl App {
         terminal: &mut Terminal<B>,
         id: &str,
     ) -> Result<()> {
-        execute!(stdout(), DisableBracketedPaste)?;
-        stdout().execute(LeaveAlternateScreen)?;
-        disable_raw_mode()?;
-
-        let status = Command::new("docker")
-            .args(["exec", "-it", id, "sh"])
-            .status();
-
-        stdout().execute(EnterAlternateScreen)?;
-        enable_raw_mode()?;
-        execute!(stdout(), EnableBracketedPaste)?;
-        terminal.clear().map_err(|e| err(e.to_string()))?;
+        let status = suspend(terminal, || {
+            Command::new("docker")
+                .args(["exec", "-it", id, "sh"])
+                .status()
+        })?;
 
         match status {
             Ok(s) if s.success() => self.set_status("Exec session ended"),

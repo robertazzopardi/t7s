@@ -1,30 +1,3 @@
-use std::collections::HashSet;
-
-#[derive(Debug, Default)]
-pub struct InFlight {
-    keys: HashSet<String>,
-}
-
-impl InFlight {
-    pub fn try_begin(&mut self, key: impl Into<String>) -> bool {
-        self.keys.insert(key.into())
-    }
-
-    pub fn end(&mut self, key: &str) {
-        self.keys.remove(key);
-    }
-
-    #[cfg(test)]
-    pub fn contains(&self, key: &str) -> bool {
-        self.keys.contains(key)
-    }
-
-    #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        self.keys.is_empty()
-    }
-}
-
 pub fn connection_key(id: &str) -> String {
     format!("connection:{id}")
 }
@@ -84,24 +57,9 @@ pub fn sql_key(connection_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use k9tui::in_flight::InFlight;
+
     use super::*;
-
-    #[test]
-    fn try_begin_refuses_duplicate() {
-        let mut f = InFlight::default();
-        assert!(f.try_begin(connection_key("abc")));
-        assert!(!f.try_begin(connection_key("abc")));
-        assert!(f.try_begin(connection_key("def")));
-    }
-
-    #[test]
-    fn end_clears_so_retry_works() {
-        let mut f = InFlight::default();
-        let k = connection_key("abc");
-        assert!(f.try_begin(&k));
-        f.end(&k);
-        assert!(f.try_begin(&k));
-    }
 
     #[test]
     fn explorer_keys_are_scoped_by_connection() {
@@ -112,11 +70,5 @@ mod tests {
         assert_eq!(key_connection(&sql_key("b")), Some("b"));
         assert_eq!(key_connection(&connection_key("a")), None);
         assert_ne!(ping_key("a"), connection_key("a"));
-    }
-
-    #[test]
-    fn end_on_missing_key_is_ok() {
-        let mut f = InFlight::default();
-        f.end("connection:missing");
     }
 }

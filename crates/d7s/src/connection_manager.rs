@@ -1,12 +1,13 @@
 use core::mem::take;
 use std::sync::Arc;
 
+use k9tui::{bg::spawn_keyed, error::Result};
 use tokio::task::spawn_blocking;
 
 use crate::{
     app::App,
     app_state::{AppState, DatabaseExplorerState},
-    bg::{BgEvent, spawn_keyed},
+    bg::BgEvent,
     database_explorer_state::DatabaseExplorer,
     db::{
         Database,
@@ -15,9 +16,12 @@ use crate::{
         },
         query_log::QueryLog,
     },
-    error::Result,
     in_flight::{connection_key, ping_key},
-    services::{ConnectionService, PasswordService, PreferencesService},
+    services::{
+        connection_service::ConnectionService,
+        password_service::PasswordService,
+        preferences_service::PreferencesService,
+    },
     ui::widgets::hotkeys::{CONNECTION_HOTKEYS, database_hotkeys},
 };
 

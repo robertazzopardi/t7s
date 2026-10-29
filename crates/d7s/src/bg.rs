@@ -1,7 +1,6 @@
-use core::future::Future;
 use std::sync::Arc;
 
-use tokio::sync::mpsc::UnboundedSender;
+use k9tui::bg::KeyedFailure;
 
 use crate::{
     db::{
@@ -177,25 +176,15 @@ pub enum DescribeTarget {
     },
 }
 
-/// `tokio::spawn` for work holding an in-flight `key`: if the task panics, an
-/// `ActionFailed` still releases the key so the resource is not left busy.
-pub fn spawn_keyed<F>(tx: UnboundedSender<BgEvent>, key: String, task: F)
-where
-    F: Future<Output = ()> + Send + 'static,
-{
-    let handle = tokio::spawn(task);
-    tokio::spawn(async move {
-        if handle.await.is_err() {
-            let _ = tx.send(BgEvent::ActionFailed {
-                key,
-                message: "Background task failed unexpectedly".into(),
-            });
-        }
-    });
+impl KeyedFailure for BgEvent {
+    fn failed(key: String, message: String) -> Self {
+        Self::ActionFailed { key, message }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use k9tui::bg::spawn_keyed;
     use tokio::sync::mpsc::unbounded_channel;
 
     use super::*;

@@ -1,16 +1,13 @@
 use core::time::Duration;
 
+use k9tui::error::Result;
 use tokio::{fs::metadata, net::TcpStream, time::timeout};
 
-use crate::{
-    db::{
-        connection::{Connection, ConnectionType, parse_server_url},
-        sqlite::{
-            delete_connection, get_connections, save_connection,
-            update_connection,
-        },
+use crate::db::{
+    connection::{Connection, ConnectionType, parse_server_url},
+    sqlite::{
+        delete_connection, get_connections, save_connection, update_connection,
     },
-    error::Result,
 };
 
 /// Service for managing database connections (CRUD operations)

@@ -1,4 +1,4 @@
-pub use k9tui::widgets::help_view::HelpRow;
+use k9tui::widgets::help_view::HelpRow;
 
 use crate::app_state::{AppState, DatabaseExplorerState};
 

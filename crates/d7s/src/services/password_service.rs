@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
+use k9tui::error::Result;
+
 use crate::{
     auth::Keyring,
     db::connection::{Connection, ConnectionType},
-    error::Result,
 };
 
 /// Service for managing passwords across keyring and session storage

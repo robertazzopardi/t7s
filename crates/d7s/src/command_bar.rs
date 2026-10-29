@@ -14,7 +14,7 @@ use crate::{
         suggest,
     },
     db::connection::ConnectionType,
-    services::PreferencesService,
+    services::preferences_service::PreferencesService,
     ui::widgets::help_content::help_rows,
 };
 

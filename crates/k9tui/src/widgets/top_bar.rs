@@ -29,6 +29,9 @@ const ROW_CONSTRAINTS: [Constraint; 2] =
 const MIN_APP_LABEL_WIDTH: u16 = 8;
 const APP_LABEL_RIGHT_MARGIN: u16 = 1;
 
+/// Rows the app reserves for [`TopBarView`].
+pub const TOPBAR_HEIGHT: u16 = 7;
+
 pub struct TopBarView<'a> {
     pub summary: &'a str,
     pub recent_hotkeys: &'a [Hotkey],

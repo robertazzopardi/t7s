@@ -9,19 +9,18 @@ use std::{
     time::Instant,
 };
 
-use crossterm::{
-    ExecutableCommand, clipboard,
-    event::{DisableBracketedPaste, EnableBracketedPaste},
-    execute,
-    terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-        enable_raw_mode,
+use crossterm::{clipboard, execute};
+use k9tui::{
+    bg::spawn_keyed,
+    error::Result,
+    in_flight::InFlight,
+    terminal::suspend,
+    widgets::{
+        help_view::HelpRow,
+        hotkey::Hotkey,
+        status_line::StatusLine,
+        table::{ColumnWidthMode, TableData, TableDataState},
     },
-};
-use k9tui::widgets::{
-    hotkey::Hotkey,
-    status_line::StatusLine,
-    table::{ColumnWidthMode, TableData, TableDataState},
 };
 use ratatui::DefaultTerminal;
 use ratatui_textarea::TextArea;
@@ -32,7 +31,7 @@ use tokio::sync::mpsc::{
 use crate::{
     app,
     app_state::{AppState, DatabaseExplorerState},
-    bg::{BgEvent, DescribeTarget, SqlExecuteOk, spawn_keyed},
+    bg::{BgEvent, DescribeTarget, SqlExecuteOk},
     cell_edit::CellEditSession,
     command_bar::{NavStep, PendingNav},
     database_explorer::STATUS_CONNECT_FAILED,
@@ -43,14 +42,17 @@ use crate::{
         query_log::{QueryLog, QueryLogEntry},
         sqlite::init_db,
     },
-    error::Result,
     filtered_data::FilteredData,
-    in_flight::{InFlight, describe_key, key_connection, sql_key},
-    services::{ConnectionService, PasswordService, PreferencesService},
+    in_flight::{describe_key, key_connection, sql_key},
+    services::{
+        connection_service::ConnectionService,
+        password_service::PasswordService,
+        preferences_service::PreferencesService,
+    },
     sql::safety::{StatementSafety, classify_statement, split_statements},
     ui::widgets::{
         connection_modal::ModalManager, describe_content::DescribeRow,
-        help_content::HelpRow, hotkeys::CONNECTION_HOTKEYS,
+        hotkeys::CONNECTION_HOTKEYS,
     },
     virtual_table::VIRTUAL_TABLE_PAGE_SIZE,
 };
@@ -977,16 +979,9 @@ impl App<'_> {
             .unwrap_or_else(|_| "vim".to_string());
         let (program, args) = Self::parse_editor_command(&editor);
 
-        execute!(stdout(), DisableBracketedPaste)?;
-        stdout().execute(LeaveAlternateScreen)?;
-        disable_raw_mode()?;
-        let mut cmd = Command::new(&program);
-        cmd.args(args);
-        cmd.arg(path).status()?;
-        stdout().execute(EnterAlternateScreen)?;
-        enable_raw_mode()?;
-        execute!(stdout(), EnableBracketedPaste)?;
-        terminal.clear()?;
+        suspend(terminal, || {
+            Command::new(&program).args(args).arg(path).status()
+        })??;
         Ok(())
     }
 

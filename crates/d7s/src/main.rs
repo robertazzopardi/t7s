@@ -1,10 +1,6 @@
 extern crate alloc;
 
-use std::{
-    env,
-    panic::{set_hook, take_hook},
-    process::exit,
-};
+use std::{env, process::exit};
 
 mod app;
 mod app_state;
@@ -17,7 +13,6 @@ mod connection_manager;
 mod database_explorer;
 mod database_explorer_state;
 mod db;
-mod error;
 mod event_handlers;
 mod filtered_data;
 mod filtering;
@@ -29,12 +24,10 @@ mod table_data_actions;
 mod ui;
 mod virtual_table;
 
-use std::io::stdout;
-
 use app::{App, PKG_NAME, PKG_VERSION};
-use crossterm::{
-    event::{DisableBracketedPaste, EnableBracketedPaste},
-    execute,
+use k9tui::{
+    error::{Result, err},
+    terminal::run,
 };
 
 fn print_usage() {
@@ -54,7 +47,7 @@ Options:
 }
 
 /// `None` = run TUI; `Some(name)` = connect on launch; exits process on --help/--version.
-fn parse_launch_args() -> error::Result<Option<String>> {
+fn parse_launch_args() -> Result<Option<String>> {
     let mut args = env::args().skip(1);
     let mut connection: Option<String> = None;
     while let Some(arg) = args.next() {
@@ -68,9 +61,9 @@ fn parse_launch_args() -> error::Result<Option<String>> {
                 exit(0);
             }
             "-c" | "--connection" => {
-                let name = args.next().ok_or_else(|| {
-                    error::err("--connection requires a name")
-                })?;
+                let name = args
+                    .next()
+                    .ok_or_else(|| err("--connection requires a name"))?;
                 connection = Some(name);
             }
             other => {
@@ -84,21 +77,13 @@ fn parse_launch_args() -> error::Result<Option<String>> {
 }
 
 #[tokio::main]
-async fn main() -> error::Result<()> {
+async fn main() -> Result<()> {
     let launch_connection = parse_launch_args()?;
-    let terminal = ratatui::init();
-    execute!(stdout(), EnableBracketedPaste)?;
-    let prev_hook = take_hook();
-    set_hook(Box::new(move |info| {
-        let _ = execute!(stdout(), DisableBracketedPaste);
-        prev_hook(info);
-    }));
-    let mut app = App::default().init()?;
-    if let Some(name) = launch_connection {
-        app.connect_to_named_connection(&name);
-    }
-    let result = app.run(terminal);
-    let _ = execute!(stdout(), DisableBracketedPaste);
-    ratatui::restore();
-    result
+    run(|terminal| {
+        let mut app = App::default().init()?;
+        if let Some(name) = launch_connection {
+            app.connect_to_named_connection(&name);
+        }
+        app.run(terminal)
+    })
 }
