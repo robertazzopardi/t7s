@@ -1,29 +1,4 @@
-use std::collections::HashSet;
-
-#[derive(Debug, Default)]
-pub struct InFlight {
-    keys: HashSet<String>,
-}
-
-impl InFlight {
-    pub fn try_begin(&mut self, key: impl Into<String>) -> bool {
-        self.keys.insert(key.into())
-    }
-
-    pub fn end(&mut self, key: &str) {
-        self.keys.remove(key);
-    }
-
-    #[cfg(test)]
-    pub fn contains(&self, key: &str) -> bool {
-        self.keys.contains(key)
-    }
-
-    #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        self.keys.is_empty()
-    }
-}
+pub use k9tui::in_flight::InFlight;
 
 pub fn connection_key(id: &str) -> String {
     format!("connection:{id}")

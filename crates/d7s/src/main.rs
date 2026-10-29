@@ -1,10 +1,6 @@
 extern crate alloc;
 
-use std::{
-    env,
-    panic::{set_hook, take_hook},
-    process::exit,
-};
+use std::{env, process::exit};
 
 mod app;
 mod app_state;
@@ -29,13 +25,8 @@ mod table_data_actions;
 mod ui;
 mod virtual_table;
 
-use std::io::stdout;
-
 use app::{App, PKG_NAME, PKG_VERSION};
-use crossterm::{
-    event::{DisableBracketedPaste, EnableBracketedPaste},
-    execute,
-};
+use k9tui::terminal::run;
 
 fn print_usage() {
     eprintln!(
@@ -86,19 +77,11 @@ fn parse_launch_args() -> error::Result<Option<String>> {
 #[tokio::main]
 async fn main() -> error::Result<()> {
     let launch_connection = parse_launch_args()?;
-    let terminal = ratatui::init();
-    execute!(stdout(), EnableBracketedPaste)?;
-    let prev_hook = take_hook();
-    set_hook(Box::new(move |info| {
-        let _ = execute!(stdout(), DisableBracketedPaste);
-        prev_hook(info);
-    }));
-    let mut app = App::default().init()?;
-    if let Some(name) = launch_connection {
-        app.connect_to_named_connection(&name);
-    }
-    let result = app.run(terminal);
-    let _ = execute!(stdout(), DisableBracketedPaste);
-    ratatui::restore();
-    result
+    run(|terminal| {
+        let mut app = App::default().init()?;
+        if let Some(name) = launch_connection {
+            app.connect_to_named_connection(&name);
+        }
+        app.run(terminal)
+    })
 }

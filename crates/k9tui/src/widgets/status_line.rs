@@ -6,6 +6,9 @@ use ratatui::{
 
 use crate::theme;
 
+/// Rows the app reserves for [`StatusLine`].
+pub const FOOTER_HEIGHT: u16 = 1;
+
 /// Footer status line (ratatui `Paragraph`).
 #[derive(Clone, Debug, Default)]
 pub struct StatusLine {

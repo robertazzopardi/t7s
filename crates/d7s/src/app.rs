@@ -9,19 +9,14 @@ use std::{
     time::Instant,
 };
 
-use crossterm::{
-    ExecutableCommand, clipboard,
-    event::{DisableBracketedPaste, EnableBracketedPaste},
-    execute,
-    terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-        enable_raw_mode,
+use crossterm::{clipboard, execute};
+use k9tui::{
+    terminal::suspend,
+    widgets::{
+        hotkey::Hotkey,
+        status_line::StatusLine,
+        table::{ColumnWidthMode, TableData, TableDataState},
     },
-};
-use k9tui::widgets::{
-    hotkey::Hotkey,
-    status_line::StatusLine,
-    table::{ColumnWidthMode, TableData, TableDataState},
 };
 use ratatui::DefaultTerminal;
 use ratatui_textarea::TextArea;
@@ -977,16 +972,9 @@ impl App<'_> {
             .unwrap_or_else(|_| "vim".to_string());
         let (program, args) = Self::parse_editor_command(&editor);
 
-        execute!(stdout(), DisableBracketedPaste)?;
-        stdout().execute(LeaveAlternateScreen)?;
-        disable_raw_mode()?;
-        let mut cmd = Command::new(&program);
-        cmd.args(args);
-        cmd.arg(path).status()?;
-        stdout().execute(EnterAlternateScreen)?;
-        enable_raw_mode()?;
-        execute!(stdout(), EnableBracketedPaste)?;
-        terminal.clear()?;
+        suspend(terminal, || {
+            Command::new(&program).args(args).arg(path).status()
+        })??;
         Ok(())
     }
 

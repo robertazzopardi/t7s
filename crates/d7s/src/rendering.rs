@@ -4,8 +4,9 @@ use k9tui::{
     theme,
     widgets::{
         hotkey::Hotkey,
+        status_line::FOOTER_HEIGHT,
         table::{DataTable, TableData},
-        top_bar::TopBarView,
+        top_bar::{TOPBAR_HEIGHT, TopBarView},
     },
 };
 use ratatui::{
@@ -35,8 +36,6 @@ use crate::{
     },
 };
 
-const TOPBAR_HEIGHT: u16 = 7;
-const FOOTER_HEIGHT: u16 = 1;
 const FILTER_BAR_HEIGHT: u16 = 3;
 
 impl App<'_> {

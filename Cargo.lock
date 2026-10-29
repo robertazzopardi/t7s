@@ -1538,6 +1538,7 @@ dependencies = [
  "crossterm",
  "ratatui",
  "ratatui-textarea",
+ "tokio",
  "unicode-width",
 ]
 
