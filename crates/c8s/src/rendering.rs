@@ -1,4 +1,3 @@
-use crossterm::event::KeyCode;
 use k9tui::{
     theme,
     widgets::{

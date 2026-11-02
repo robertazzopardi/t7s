@@ -855,6 +855,28 @@ mod tests {
         assert!(!app.running, "new quit key fires");
     }
 
+    fn send_connected(app: &mut App) {
+        app.bg_tx
+            .send(BackgroundEvent::Connected(DockerClient::unreachable()))
+            .unwrap();
+        app.drain_background_events();
+    }
+
+    #[tokio::test]
+    async fn connecting_keeps_a_config_warning() {
+        let mut app = app();
+        app.set_status("Config: bad");
+        send_connected(&mut app);
+        assert_eq!(app.status_line.message(), "Config: bad");
+    }
+
+    #[tokio::test]
+    async fn connecting_reports_when_there_is_no_warning() {
+        let mut app = app();
+        send_connected(&mut app);
+        assert_eq!(app.status_line.message(), "Connected to Docker");
+    }
+
     #[tokio::test]
     async fn hotkey_bar_shows_remapped_keys() {
         let mut app = app();

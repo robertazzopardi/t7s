@@ -500,7 +500,10 @@ impl App {
                     self.docker = Some(client);
                     self.state = AppState::List;
                     self.start_polling();
-                    self.set_status("Connected to Docker");
+                    // Keep a config warning set at startup visible.
+                    if self.status_line.message().is_empty() {
+                        self.set_status("Connected to Docker");
+                    }
                 }
                 BackgroundEvent::ConnectFailed(msg) => {
                     self.in_flight.end(DAEMON_KEY);
