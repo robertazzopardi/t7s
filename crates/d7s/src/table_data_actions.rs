@@ -703,6 +703,7 @@ impl App<'_> {
     }
 
     #[allow(clippy::wildcard_enum_match_arm)]
+    #[allow(clippy::too_many_lines)] // flat key-dispatch match
     pub(crate) fn handle_table_data_hotkeys(
         &mut self,
         key: KeyEvent,
@@ -751,17 +752,21 @@ impl App<'_> {
             return Ok(false);
         }
         match key.code {
-            KeyCode::Char('r' | 'R') => {
+            code if self.keymap.is("refresh", code)
+                || code == KeyCode::Char('R') =>
+            {
                 self.reload_current_table_data(None);
                 Ok(true)
             }
-            KeyCode::Char('n' | 'a') => {
+            code if self.keymap.is("new-row", code)
+                || code == KeyCode::Char('a') =>
+            {
                 if self.table_data_add_blank_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                 }
                 Ok(true)
             }
-            KeyCode::Char('N') => {
+            code if self.keymap.is("defaults", code) => {
                 if let Some(n) = self.table_data_add_defaults_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                     // Set after begin so EDIT status does not clobber the count.
@@ -771,21 +776,21 @@ impl App<'_> {
                 }
                 Ok(true)
             }
-            KeyCode::Char('i') => {
+            code if self.keymap.is("edit", code) => {
                 self.begin_cell_edit(None);
                 Ok(true)
             }
-            KeyCode::Char('c') => {
+            code if self.keymap.is("duplicate", code) => {
                 if self.table_data_duplicate_as_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                 }
                 Ok(true)
             }
-            KeyCode::Char('s') => {
+            code if self.keymap.is("commit", code) => {
                 self.table_data_commit_draft()?;
                 Ok(true)
             }
-            KeyCode::Char('D') => {
+            code if self.keymap.is("delete-row", code) => {
                 self.table_data_request_delete();
                 Ok(true)
             }
@@ -801,7 +806,11 @@ impl App<'_> {
                 }
                 Ok(true)
             }
-            KeyCode::Char(c) if !is_table_data_browse_binding(c) => {
+            // A remapped action must reach `handle_hotkeys`, not start an edit.
+            KeyCode::Char(c)
+                if !is_table_data_browse_binding(c)
+                    && !self.keymap.binds(key.code) =>
+            {
                 if self.table_data_column_is_selected() {
                     self.begin_cell_edit(Some(c.to_string()));
                 }
@@ -821,6 +830,60 @@ const fn allows_hotkey_modifiers(mods: KeyModifiers) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn table_app() -> App<'static> {
+        let mut app = App {
+            state: AppState::DatabaseConnected,
+            ..App::default()
+        };
+        app.database_explorer.state =
+            DatabaseExplorerState::TableData("public".into(), "t".into());
+        app
+    }
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    /// With no config, `D` and space are handled; `d`, `x` and Ctrl chords
+    /// fall through.
+    #[tokio::test]
+    async fn default_table_hotkeys_claim_only_the_expected_keys() {
+        let mut app = table_app();
+        let none = KeyModifiers::NONE;
+        for (code, modifiers, want) in [
+            (KeyCode::Char('D'), KeyModifiers::SHIFT, true),
+            (KeyCode::Char(' '), none, true),
+            (KeyCode::Char('d'), none, false),
+            (KeyCode::Char('x'), none, false),
+            (KeyCode::Char('d'), KeyModifiers::CONTROL, false),
+            (KeyCode::Char('D'), KeyModifiers::CONTROL, false),
+        ] {
+            let got = app
+                .handle_table_data_hotkeys(key(code, modifiers))
+                .unwrap_or(false);
+            assert_eq!(got, want, "{code:?} {modifiers:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn remapped_delete_row_follows_config() {
+        let mut app = table_app();
+        assert!(app.keymap.set("delete-row", KeyCode::Char('x')));
+        let old = key(KeyCode::Char('D'), KeyModifiers::SHIFT);
+        assert!(!app.handle_table_data_hotkeys(old).unwrap());
+        let new = key(KeyCode::Char('x'), KeyModifiers::NONE);
+        assert!(app.handle_table_data_hotkeys(new).unwrap());
+    }
+
+    #[tokio::test]
+    async fn remapped_global_action_skips_type_to_edit() {
+        let mut app = table_app();
+        let z = key(KeyCode::Char('z'), KeyModifiers::NONE);
+        assert!(app.handle_table_data_hotkeys(z).unwrap());
+        assert!(app.keymap.set("describe", KeyCode::Char('z')));
+        assert!(!app.handle_table_data_hotkeys(z).unwrap());
+    }
 
     #[test]
     fn shift_d_is_a_hotkey_but_ctrl_d_is_not() {

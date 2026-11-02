@@ -67,7 +67,7 @@ impl App<'_> {
             self.database_explorer.state,
             DatabaseExplorerState::Connections
         );
-        let global = global_hotkeys(on_connection_list);
+        let global = self.keymap.relabel(&global_hotkeys(on_connection_list));
 
         let (connection, build_info, recent_hotkeys) = if on_connection_list {
             (
@@ -98,17 +98,17 @@ impl App<'_> {
         } else {
             Vec::new()
         };
-        let hotkey_bar: &[Hotkey] = if table_data_ext.is_empty() {
+        let hotkey_bar = self.keymap.relabel(if table_data_ext.is_empty() {
             &self.hotkeys
         } else {
             &table_data_ext
-        };
+        });
 
         frame.render_widget(
             TopBarView {
                 summary: &summary,
                 recent_hotkeys: recent_hotkeys.as_slice(),
-                hotkeys: hotkey_bar,
+                hotkeys: &hotkey_bar,
                 global_hotkeys: global.as_slice(),
                 app_name: APP_NAME,
                 build_info,

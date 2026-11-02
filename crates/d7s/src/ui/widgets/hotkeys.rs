@@ -4,26 +4,26 @@ use k9tui::widgets::hotkey::Hotkey;
 use crate::db::connection::ConnectionType;
 
 pub const CONNECTION_HOTKEYS: [Hotkey; 8] = [
-    Hotkey::new('n', "New Connection"),
-    Hotkey::new('e', "Edit Connection"),
-    Hotkey::new('D', "Delete Connection"),
-    Hotkey::new('o', "Open Connection"),
-    Hotkey::new('p', "Ping Health"),
-    Hotkey::new('d', "Describe"),
-    Hotkey::new('/', "Search"),
-    Hotkey::new(':', "Command"),
+    Hotkey::new('n', "New Connection").action("new-connection"),
+    Hotkey::new('e', "Edit Connection").action("edit-connection"),
+    Hotkey::new('D', "Delete Connection").action("delete-connection"),
+    Hotkey::new('o', "Open Connection").action("open-connection"),
+    Hotkey::new('p', "Ping Health").action("ping"),
+    Hotkey::new('d', "Describe").action("describe"),
+    Hotkey::new('/', "Search").action("search"),
+    Hotkey::new(':', "Command").action("command"),
 ];
 
 pub const DATABASE_HOTKEYS: [Hotkey; 9] = [
-    Hotkey::new('e', "SQL Editor"),
-    Hotkey::new('t', "Table structure"),
-    Hotkey::new('d', "Describe"),
-    Hotkey::new('E', "Run SQL"),
-    Hotkey::new('/', "Search"),
-    Hotkey::new(':', "Command"),
-    Hotkey::new('y', "Copy value"),
-    Hotkey::new('A', "Activity (Postgres)"),
-    Hotkey::new('L', "Query log"),
+    Hotkey::new('e', "SQL Editor").action("sql-editor"),
+    Hotkey::new('t', "Table structure").action("table-structure"),
+    Hotkey::new('d', "Describe").action("describe"),
+    Hotkey::new('E', "Run SQL").action("run-sql"),
+    Hotkey::new('/', "Search").action("search"),
+    Hotkey::new(':', "Command").action("command"),
+    Hotkey::new('y', "Copy value").action("copy"),
+    Hotkey::new('A', "Activity (Postgres)").action("activity"),
+    Hotkey::new('L', "Query log").action("query-log"),
 ];
 
 /// [`DATABASE_HOTKEYS`] for a backend: the activity view (`A`) is Postgres-only.
@@ -41,12 +41,12 @@ pub fn database_hotkeys(connection_type: ConnectionType) -> Vec<Hotkey> {
 
 /// Shown in addition to [`DATABASE_HOTKEYS`] while viewing table row data.
 pub const TABLE_DATA_VIEW_HOTKEYS: [Hotkey; 6] = [
-    Hotkey::new('n', "New row"),
-    Hotkey::new('N', "Defaults"),
-    Hotkey::new('c', "Duplicate"),
-    Hotkey::new('s', "Commit"),
-    Hotkey::new('D', "Delete"),
-    Hotkey::new('i', "Edit"),
+    Hotkey::new('n', "New row").action("new-row"),
+    Hotkey::new('N', "Defaults").action("defaults"),
+    Hotkey::new('c', "Duplicate").action("duplicate"),
+    Hotkey::new('s', "Commit").action("commit"),
+    Hotkey::new('D', "Delete").action("delete-row"),
+    Hotkey::new('i', "Edit").action("edit"),
 ];
 
 /// Replaces [`TABLE_DATA_VIEW_HOTKEYS`] in the top bar during inline cell edit.

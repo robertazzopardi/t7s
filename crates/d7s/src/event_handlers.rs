@@ -4,7 +4,7 @@ use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
 use k9tui::{
-    bg::spawn_keyed, error::Result, event::poll_input,
+    bg::spawn_keyed, error::Result, event::poll_input, keymap::Keymap,
     widgets::navigation::TableNavigationHandler,
 };
 use ratatui::widgets::TableState;
@@ -36,9 +36,10 @@ const fn is_navigation_key(code: KeyCode) -> bool {
     )
 }
 
-const fn should_clear_status_on_key(key: KeyEvent) -> bool {
+fn should_clear_status_on_key(key: KeyEvent, keymap: &Keymap) -> bool {
     !is_navigation_key(key.code)
-        && !matches!(key.code, KeyCode::Char('y' | 'Y'))
+        && !keymap.is("copy", key.code)
+        && !keymap.is("copy-row", key.code)
 }
 
 impl App<'_> {
@@ -56,7 +57,7 @@ impl App<'_> {
         }
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                if should_clear_status_on_key(key) {
+                if should_clear_status_on_key(key, &self.keymap) {
                     self.clear_status();
                 }
                 // Nav keys leave the "Esc again to discard" status on screen
@@ -64,7 +65,7 @@ impl App<'_> {
                 // must not silently clear the pending flag it describes.
                 // Esc is excluded here because its own handler below reads
                 // this flag to decide first-press vs. second-press.
-                if should_clear_status_on_key(key)
+                if should_clear_status_on_key(key, &self.keymap)
                     && !matches!(key.code, KeyCode::Esc)
                 {
                     self.draft_discard_pending = false;
@@ -255,17 +256,24 @@ impl App<'_> {
     /// Returns true if the key was handled and should stop processing
     #[allow(clippy::too_many_lines)]
     fn handle_hotkeys(&mut self, key: KeyEvent) -> bool {
+        let on_connections = matches!(
+            self.database_explorer.state,
+            DatabaseExplorerState::Connections
+        );
         match (key.modifiers, key.code) {
-            (_, KeyCode::Char('q'))
-            | (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
+            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
                 self.quit();
                 true
             }
-            (_, KeyCode::Char('y')) => {
+            (_, code) if self.keymap.is("quit", code) => {
+                self.quit();
+                true
+            }
+            (_, code) if self.keymap.is("copy", code) => {
                 self.copy();
                 true
             }
-            (_, KeyCode::Char('Y')) => {
+            (_, code) if self.keymap.is("copy-row", code) => {
                 if matches!(
                     self.database_explorer.state,
                     DatabaseExplorerState::TableData(_, _)
@@ -277,7 +285,7 @@ impl App<'_> {
                     false
                 }
             }
-            (_, KeyCode::Char('?')) => {
+            (_, code) if self.keymap.is("help", code) => {
                 self.open_help();
                 true
             }
@@ -294,83 +302,69 @@ impl App<'_> {
                     false
                 }
             }
-            (_, KeyCode::Char('o')) => {
-                if matches!(
-                    self.database_explorer.state,
-                    DatabaseExplorerState::Connections
-                ) {
-                    self.connect_to_database();
-                }
+            (_, code)
+                if on_connections
+                    && self.keymap.is("open-connection", code) =>
+            {
+                self.connect_to_database();
                 true
             }
-            (_, KeyCode::Char('O')) => {
-                if matches!(
-                    self.database_explorer.state,
-                    DatabaseExplorerState::Connections
-                ) {
-                    if let Some(name) = PreferencesService::last_connection() {
-                        let before = self.state;
-                        self.connect_to_named_connection(&name);
-                        if self.state == AppState::DatabaseConnected
-                            && before != AppState::DatabaseConnected
-                        {
-                            self.set_status(format!("Reconnected to {name}"));
-                        }
+            (_, code)
+                if on_connections && self.keymap.is("reconnect", code) =>
+            {
+                if let Some(name) = PreferencesService::last_connection() {
+                    let before = self.state;
+                    self.connect_to_named_connection(&name);
+                    if self.state == AppState::DatabaseConnected
+                        && before != AppState::DatabaseConnected
+                    {
+                        self.set_status(format!("Reconnected to {name}"));
                     }
-                    true
-                } else {
-                    false
-                }
-            }
-            (_, KeyCode::Char('n')) => {
-                if matches!(
-                    self.database_explorer.state,
-                    DatabaseExplorerState::Connections
-                ) {
-                    self.modal_manager.open_new_connection_modal();
                 }
                 true
             }
-            (_, KeyCode::Char('p')) => {
-                if matches!(
-                    self.database_explorer.state,
-                    DatabaseExplorerState::Connections
-                ) {
-                    self.check_connections_health();
-                    true
-                } else {
-                    false
-                }
-            }
-            (_, KeyCode::Char('D')) => {
-                if matches!(
-                    self.database_explorer.state,
-                    DatabaseExplorerState::Connections
-                ) {
-                    self.handle_delete_connection();
-                    return true;
-                }
-                false
-            }
-            (_, KeyCode::Char('e')) => {
-                if matches!(
-                    self.database_explorer.state,
-                    DatabaseExplorerState::Connections
-                ) {
-                    self.handle_edit_connection();
-                } else if self.state == AppState::DatabaseConnected {
-                    self.request_editor();
-                }
+            (_, code)
+                if on_connections && self.keymap.is("new-connection", code) =>
+            {
+                self.modal_manager.open_new_connection_modal();
                 true
             }
-            (_, KeyCode::Char('d')) => self.spawn_describe_rows(),
-            (_, KeyCode::Char('t')) => {
-                if self.state == AppState::DatabaseConnected {
-                    self.handle_toggle_table_view();
-                }
+            (_, code) if on_connections && self.keymap.is("ping", code) => {
+                self.check_connections_health();
                 true
             }
-            (_, KeyCode::Char('E')) => {
+            (_, code)
+                if on_connections
+                    && self.keymap.is("delete-connection", code) =>
+            {
+                self.handle_delete_connection();
+                true
+            }
+            (_, code)
+                if on_connections
+                    && self.keymap.is("edit-connection", code) =>
+            {
+                self.handle_edit_connection();
+                true
+            }
+            (_, code)
+                if self.state == AppState::DatabaseConnected
+                    && self.keymap.is("sql-editor", code) =>
+            {
+                self.request_editor();
+                true
+            }
+            (_, code) if self.keymap.is("describe", code) => {
+                self.spawn_describe_rows()
+            }
+            (_, code)
+                if self.state == AppState::DatabaseConnected
+                    && self.keymap.is("table-structure", code) =>
+            {
+                self.handle_toggle_table_view();
+                true
+            }
+            (_, code) if self.keymap.is("run-sql", code) => {
                 if matches!(
                     self.database_explorer.state,
                     DatabaseExplorerState::SqlResults(_)
@@ -393,27 +387,30 @@ impl App<'_> {
                 }
                 false
             }
-            (_, KeyCode::Char('w'))
-                if matches!(
-                    self.database_explorer.state,
-                    DatabaseExplorerState::SqlResults(_)
-                ) =>
+            (_, code)
+                if self.keymap.is("watch", code)
+                    && matches!(
+                        self.database_explorer.state,
+                        DatabaseExplorerState::SqlResults(_)
+                    ) =>
             {
                 self.toggle_watch();
                 true
             }
-            (_, KeyCode::Char('W')) => {
+            (_, code) if self.keymap.is("width", code) => {
                 self.toggle_column_width_mode();
                 true
             }
-            (_, KeyCode::Char('L'))
-                if self.state == AppState::DatabaseConnected =>
+            (_, code)
+                if self.keymap.is("query-log", code)
+                    && self.state == AppState::DatabaseConnected =>
             {
                 self.open_query_log_view();
                 true
             }
-            (_, KeyCode::Char('A'))
-                if self.state == AppState::DatabaseConnected
+            (_, code)
+                if self.keymap.is("activity", code)
+                    && self.state == AppState::DatabaseConnected
                     && self
                         .database_explorer
                         .connection
@@ -423,17 +420,19 @@ impl App<'_> {
                 self.open_activity_view();
                 true
             }
-            (KeyModifiers::CONTROL, KeyCode::Char('s' | 'S'))
-            | (_, KeyCode::Char('x'))
-                if matches!(
-                    self.database_explorer.state,
-                    DatabaseExplorerState::SqlResults(_)
-                ) =>
+            (modifiers, code)
+                if (self.keymap.is("export", code)
+                    || (modifiers == KeyModifiers::CONTROL
+                        && matches!(code, KeyCode::Char('s' | 'S'))))
+                    && matches!(
+                        self.database_explorer.state,
+                        DatabaseExplorerState::SqlResults(_)
+                    ) =>
             {
                 self.export_sql_results_tsv();
                 true
             }
-            (_, KeyCode::Char(':')) => {
+            (_, code) if self.keymap.is("command", code) => {
                 self.open_command_bar();
                 true
             }
@@ -561,8 +560,9 @@ impl App<'_> {
             (_, KeyCode::Char('G')) => {
                 self.handle_database_table_navigation(KeyCode::Char('G'));
             }
-            (_, KeyCode::Char('/'))
-                if !self.modal_manager.is_any_modal_open() =>
+            (_, code)
+                if self.keymap.is("search", code)
+                    && !self.modal_manager.is_any_modal_open() =>
             {
                 self.open_filter_bar();
             }
@@ -821,7 +821,95 @@ impl App<'_> {
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use crate::{app::App, app_state};
+    use super::should_clear_status_on_key;
+    use crate::{
+        app::App,
+        app_state::{self, AppState, DatabaseExplorerState},
+    };
+
+    fn key(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    fn connected_app() -> App<'static> {
+        let mut app = App {
+            state: AppState::DatabaseConnected,
+            ..App::default()
+        };
+        app.database_explorer.state = DatabaseExplorerState::Tables("s".into());
+        app
+    }
+
+    #[tokio::test]
+    async fn edit_connection_remap_leaves_sql_editor_on_e() {
+        let mut app = connected_app();
+        assert!(app.keymap.set("edit-connection", KeyCode::Char('z')));
+        assert!(app.handle_hotkeys(key('e')));
+        assert!(app.open_editor_requested, "e still opens the editor");
+
+        let mut list = App::default();
+        assert!(list.keymap.set("edit-connection", KeyCode::Char('z')));
+        assert!(!list.handle_hotkeys(key('e')), "e is free on the list");
+        assert!(!list.open_editor_requested);
+        assert!(list.handle_hotkeys(key('z')), "z edits on the list");
+    }
+
+    #[tokio::test]
+    async fn sql_editor_remap_leaves_edit_connection_on_e() {
+        let mut app = connected_app();
+        assert!(app.keymap.set("sql-editor", KeyCode::Char('z')));
+        assert!(!app.handle_hotkeys(key('e')), "e is free when connected");
+        assert!(!app.open_editor_requested);
+        assert!(app.handle_hotkeys(key('z')));
+        assert!(app.open_editor_requested);
+    }
+
+    #[tokio::test]
+    async fn new_connection_remap_does_not_swallow_key_on_other_screens() {
+        let mut app = connected_app();
+        assert!(app.keymap.set("new-connection", KeyCode::Char('z')));
+        assert!(!app.handle_hotkeys(key('z')));
+    }
+
+    #[tokio::test]
+    async fn remapped_quit_follows_config() {
+        let mut app = App::default();
+        app.running = true;
+        assert!(app.keymap.set("quit", KeyCode::Char('z')));
+        assert!(!app.handle_hotkeys(key('q')));
+        assert!(app.running, "old key is released");
+        assert!(app.handle_hotkeys(key('z')));
+        assert!(!app.running, "new key fires");
+    }
+
+    #[tokio::test]
+    async fn ctrl_c_still_quits_when_quit_is_remapped() {
+        let mut app = App::default();
+        app.running = true;
+        assert!(app.keymap.set("quit", KeyCode::Char('z')));
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(app.handle_hotkeys(ctrl_c));
+        assert!(!app.running);
+    }
+
+    #[tokio::test]
+    async fn remapped_search_opens_filter_bar() {
+        let mut app = App::default();
+        assert!(app.keymap.set("search", KeyCode::Char('z')));
+        app.handle_navigation_keys(key('/'));
+        assert!(app.search_filter.is_none(), "old key is released");
+        app.handle_navigation_keys(key('z'));
+        assert!(app.search_filter.is_some(), "new key fires");
+    }
+
+    #[tokio::test]
+    async fn copy_status_survives_remapped_copy_key() {
+        let mut app = App::default();
+        assert!(!should_clear_status_on_key(key('y'), &app.keymap));
+        assert!(app.keymap.set("copy", KeyCode::Char('z')));
+        assert!(!should_clear_status_on_key(key('z'), &app.keymap));
+        assert!(should_clear_status_on_key(key('y'), &app.keymap));
+    }
 
     #[tokio::test]
     async fn p_is_only_handled_on_the_connection_list() {

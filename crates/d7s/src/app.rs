@@ -12,8 +12,10 @@ use std::{
 use crossterm::{clipboard, execute};
 use k9tui::{
     bg::spawn_keyed,
+    config::defaults,
     error::Result,
     in_flight::InFlight,
+    keymap::Keymap,
     terminal::suspend,
     widgets::{
         help_view::HelpRow,
@@ -44,6 +46,7 @@ use crate::{
     },
     filtered_data::FilteredData,
     in_flight::{describe_key, key_connection, sql_key},
+    keymap::SPEC,
     services::{
         connection_service::ConnectionService,
         password_service::PasswordService,
@@ -80,6 +83,7 @@ pub struct App<'a> {
     pub(crate) running: bool,
     pub(crate) modal_manager: ModalManager,
     pub(crate) hotkeys: Vec<Hotkey>,
+    pub(crate) keymap: Keymap,
     /// Current application state
     pub(crate) state: AppState,
     /// Database explorer state (when connected to a database)
@@ -140,6 +144,7 @@ impl Default for App<'_> {
             running: false,
             modal_manager: ModalManager::new(),
             hotkeys: CONNECTION_HOTKEYS.to_vec(),
+            keymap: defaults(&SPEC).keymap,
             state: AppState::ConnectionList,
             database_explorer: DatabaseExplorer::default(),
             search_filter: None,

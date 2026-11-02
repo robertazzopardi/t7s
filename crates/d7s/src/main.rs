@@ -17,6 +17,7 @@ mod event_handlers;
 mod filtered_data;
 mod filtering;
 mod in_flight;
+mod keymap;
 mod rendering;
 mod services;
 mod sql;
@@ -26,6 +27,7 @@ mod virtual_table;
 
 use app::{App, PKG_NAME, PKG_VERSION};
 use k9tui::{
+    config::{Config, load_or_exit, summarize},
     error::{Result, err},
     terminal::run,
 };
@@ -79,11 +81,23 @@ fn parse_launch_args() -> Result<Option<String>> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let launch_connection = parse_launch_args()?;
-    run(|terminal| {
+    let Config {
+        keymap, warnings, ..
+    } = load_or_exit(&keymap::SPEC);
+    let status = summarize(&warnings);
+    let result = run(|terminal| {
         let mut app = App::default().init()?;
+        app.keymap = keymap;
+        if let Some(status) = status {
+            app.set_status(status);
+        }
         if let Some(name) = launch_connection {
             app.connect_to_named_connection(&name);
         }
         app.run(terminal)
-    })
+    });
+    for warning in &warnings {
+        eprintln!("{PKG_NAME}: {warning}");
+    }
+    result
 }

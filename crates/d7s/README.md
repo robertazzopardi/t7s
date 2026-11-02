@@ -80,3 +80,39 @@ Tab completes; Esc cancels. Unique prefixes work (`:sch`). Draft row pending blo
 ### Notes vs k9s
 
 `d` describes; `D` deletes (confirm). `y` copies a cell (not YAML). `/` filters the current view.
+
+## Configuration
+
+`d7s` reads `~/.config/t7s/config.toml`, or `$XDG_CONFIG_HOME/t7s/config.toml` if
+that is set. The file and everything in it are optional. Settings merge in this
+order, with the most specific winning: built-in defaults, `[t7s]`, then `[d7s]`.
+
+```toml
+[t7s.keys]
+quit = "q"
+
+[d7s.keys]
+new-connection = "a"
+```
+
+Keys are one character (case-sensitive) or a name such as `esc`, `page-up` or
+`f5`. Ctrl and Alt chords aren't supported.
+
+| Table | Actions (default key) |
+|---|---|
+| `[t7s.keys]` or `[d7s.keys]` | `quit` (`q`), `search` (`/`), `command` (`:`) |
+| `[d7s.keys]`, connection list | `new-connection` (`n`), `edit-connection` (`e`), `delete-connection` (`D`), `open-connection` (`o`), `reconnect` (`O`), `ping` (`p`) |
+| `[d7s.keys]`, connected | `sql-editor` (`e`), `table-structure` (`t`), `run-sql` (`E`), `watch` (`w`), `query-log` (`L`), `activity` (`A`), `export` (`x`) |
+| `[d7s.keys]`, table data | `refresh` (`r`), `new-row` (`n`), `defaults` (`N`), `edit` (`i`), `duplicate` (`c`), `commit` (`s`), `delete-row` (`D`) |
+| `[d7s.keys]`, everywhere | `describe` (`d`), `copy` (`y`), `copy-row` (`Y`), `width` (`W`), `help` (`?`) |
+
+These stay fixed: `h j k l`, `b w`, `g G`, `0 $`, arrow keys, `1`-`5`, `#`, space,
+`Esc`, `Enter`, `Backspace`, `Delete`, `R` (refresh), `a` (new row), `Ctrl+s`
+(export), `Ctrl+c` (quit), and keys in modals, text inputs and the describe view.
+
+`d7s` won't start, and prints every error to stderr, if the file has a TOML
+syntax error or can't be read, a key name is unknown, two actions share a key on
+one screen, or an action is bound to a fixed key. Other problems, such as an
+unknown setting, show in the status line and are printed on exit.
+
+`skin`, `theme` and `colours` are accepted but don't change anything yet.
