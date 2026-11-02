@@ -27,8 +27,10 @@ mod virtual_table;
 
 use app::{App, PKG_NAME, PKG_VERSION};
 use k9tui::{
+    config_dir::summarize_warnings,
     error::{Result, err},
     terminal::run,
+    theme::load_skin,
 };
 
 fn print_usage() {
@@ -79,15 +81,14 @@ fn parse_launch_args() -> Result<Option<String>> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut warnings = k9tui::theme::load_skin(PKG_NAME);
+    let mut warnings = load_skin(PKG_NAME);
     let launch_connection = parse_launch_args()?;
     let (keymap, key_warnings) = keymap::load();
     warnings.extend(key_warnings);
     let result = run(|terminal| {
         let mut app = App::default().init()?;
         app.keymap = keymap;
-        if let Some(summary) = k9tui::config_dir::summarize_warnings(&warnings)
-        {
+        if let Some(summary) = summarize_warnings(&warnings) {
             app.set_status(summary);
         }
         if let Some(name) = launch_connection {

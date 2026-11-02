@@ -703,6 +703,7 @@ impl App<'_> {
     }
 
     #[allow(clippy::wildcard_enum_match_arm)]
+    #[allow(clippy::too_many_lines)] // flat key-dispatch match
     pub(crate) fn handle_table_data_hotkeys(
         &mut self,
         key: KeyEvent,

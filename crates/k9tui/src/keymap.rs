@@ -217,6 +217,8 @@ impl Keymap {
 
 #[cfg(test)]
 mod tests {
+    use std::{env, fs, process};
+
     use super::*;
 
     fn km() -> Keymap {
@@ -288,23 +290,21 @@ mod tests {
     #[test]
     fn missing_file_is_silent() {
         let mut km = km();
-        let path = std::env::temp_dir()
-            .join("k9tui-no-such-dir")
-            .join("keys.yml");
+        let path = env::temp_dir().join("k9tui-no-such-dir").join("keys.yml");
         assert_eq!(km.load_overrides_from(&path), Vec::<String>::new());
     }
 
     #[test]
     fn file_override_round_trip() {
-        let dir = std::env::temp_dir()
-            .join(format!("k9tui-keymap-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir =
+            env::temp_dir().join(format!("k9tui-keymap-{}", process::id()));
+        fs::create_dir_all(&dir).unwrap();
         let path = dir.join("keys.yml");
-        std::fs::write(&path, "delete: x\n").unwrap();
+        fs::write(&path, "delete: x\n").unwrap();
         let mut km = km();
         assert_eq!(km.load_overrides_from(&path), Vec::<String>::new());
         assert_eq!(km.get("delete"), KeyCode::Char('x'));
-        std::fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -448,23 +448,23 @@ mod tests {
 
     #[test]
     fn load_from_unreadable_paths_warns_not_panics() {
-        let dir = std::env::temp_dir()
-            .join(format!("k9tui-keymap-bad-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir =
+            env::temp_dir().join(format!("k9tui-keymap-bad-{}", process::id()));
+        fs::create_dir_all(&dir).unwrap();
         let mut km = km();
         // directory instead of file
         assert_eq!(km.load_overrides_from(&dir).len(), 1);
         // non-UTF-8
         let f = dir.join("keys.yml");
-        std::fs::write(&f, [0xff, 0xfe, 0xfd]).unwrap();
+        fs::write(&f, [0xff, 0xfe, 0xfd]).unwrap();
         assert_eq!(km.load_overrides_from(&f).len(), 1);
         // BOM-prefixed file works
-        std::fs::write(&f, "\u{feff}delete: x\n").unwrap();
+        fs::write(&f, "\u{feff}delete: x\n").unwrap();
         assert_eq!(km.load_overrides_from(&f), Vec::<String>::new());
         assert_eq!(km.get("delete"), KeyCode::Char('x'));
         // oversized
-        std::fs::write(&f, vec![b'#'; 512 * 1024]).unwrap();
+        fs::write(&f, vec![b'#'; 512 * 1024]).unwrap();
         assert_eq!(km.load_overrides_from(&f).len(), 1);
-        std::fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

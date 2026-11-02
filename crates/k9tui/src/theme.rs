@@ -1,3 +1,5 @@
+#[cfg(test)]
+use core::cell::Cell;
 use std::{collections::HashMap, io::ErrorKind, path::Path, sync::OnceLock};
 
 use ratatui::style::{Color, Modifier, Style};
@@ -58,13 +60,13 @@ pub fn set_palette(palette: Palette) {
 thread_local! {
     /// Per-thread palette override so tests can render with a skin without
     /// touching the process-wide `OnceLock`.
-    static TEST_PALETTE: std::cell::Cell<Option<Palette>> =
-        const { std::cell::Cell::new(None) };
+    static TEST_PALETTE: Cell<Option<Palette>> =
+        const { Cell::new(None) };
 }
 
 fn palette() -> Palette {
     #[cfg(test)]
-    if let Some(p) = TEST_PALETTE.with(std::cell::Cell::get) {
+    if let Some(p) = TEST_PALETTE.with(Cell::get) {
         return p;
     }
     *PALETTE.get_or_init(Palette::default)
@@ -349,7 +351,13 @@ impl Palette {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{Terminal, backend::TestBackend};
+    use std::env;
+
+    use ratatui::{
+        Frame, Terminal,
+        backend::TestBackend,
+        buffer::{Buffer, Cell},
+    };
 
     use super::*;
     use crate::widgets::{hotkey::Hotkey, hotkey_view::HotkeyView};
@@ -402,9 +410,7 @@ mod tests {
 
     #[test]
     fn missing_skin_file_is_silent() {
-        let path = std::env::temp_dir()
-            .join("k9tui-no-such-dir")
-            .join("skin.yml");
+        let path = env::temp_dir().join("k9tui-no-such-dir").join("skin.yml");
         let (_, w) = load_skin_file(&path);
         assert_eq!(w, Vec::<String>::new());
     }
@@ -442,18 +448,13 @@ mod tests {
         }
     }
 
-    fn draw(
-        f: impl FnOnce(&mut ratatui::Frame<'_>),
-    ) -> ratatui::buffer::Buffer {
+    fn draw(f: impl FnOnce(&mut Frame<'_>)) -> Buffer {
         let mut term = Terminal::new(TestBackend::new(40, 12)).unwrap();
         term.draw(f).unwrap();
         term.backend().buffer().clone()
     }
 
-    fn cell<'a>(
-        buf: &'a ratatui::buffer::Buffer,
-        sym: &str,
-    ) -> &'a ratatui::buffer::Cell {
+    fn cell<'a>(buf: &'a Buffer, sym: &str) -> &'a Cell {
         buf.content()
             .iter()
             .find(|c| c.symbol() == sym)
@@ -628,8 +629,8 @@ mod tests {
         // Every load in this crate's tests goes through an explicit path or
         // an in-memory string; prove those paths live outside the user's
         // real config dir.
-        let tmp = std::env::temp_dir();
-        if let Some(real) = crate::config_dir::config_dir("k9tui-test") {
+        let tmp = env::temp_dir();
+        if let Some(real) = config_dir("k9tui-test") {
             assert!(!tmp.starts_with(&real), "{tmp:?} under {real:?}");
         }
         // Parsing is pure: a skin can't be loaded without an explicit source.

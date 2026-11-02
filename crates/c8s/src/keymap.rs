@@ -74,6 +74,8 @@ pub fn load() -> (Keymap, Vec<String>) {
 mod tests {
     use std::fmt::Write as _;
 
+    use k9tui::widgets::hotkey::Hotkey;
+
     use super::*;
     use crate::ui::widgets::hotkeys::{LIST_HOTKEYS, RESOURCE_HOTKEYS};
 
@@ -133,8 +135,7 @@ mod tests {
         assert!(out.iter().any(|h| h.keycode == KeyCode::F(5) && h.action == Some(action)));
     }
 
-    const BAR_SETS: [&[k9tui::widgets::hotkey::Hotkey]; 2] =
-        [&LIST_HOTKEYS, &RESOURCE_HOTKEYS];
+    const BAR_SETS: [&[Hotkey]; 2] = [&LIST_HOTKEYS, &RESOURCE_HOTKEYS];
 
     #[test]
     fn defaults_are_self_consistent() {

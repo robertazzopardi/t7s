@@ -132,6 +132,8 @@ pub fn load() -> (Keymap, Vec<String>) {
 mod tests {
     use std::fmt::Write as _;
 
+    use k9tui::widgets::hotkey::Hotkey;
+
     use super::*;
     use crate::ui::widgets::hotkeys::{
         CONNECTION_HOTKEYS, DATABASE_HOTKEYS, TABLE_DATA_VIEW_HOTKEYS,
@@ -203,7 +205,7 @@ mod tests {
         assert!(out.iter().any(|h| h.keycode == KeyCode::F(5) && h.action == Some(action)));
     }
 
-    const BAR_SETS: [&[k9tui::widgets::hotkey::Hotkey]; 3] = [
+    const BAR_SETS: [&[Hotkey]; 3] = [
         &CONNECTION_HOTKEYS,
         &DATABASE_HOTKEYS,
         &TABLE_DATA_VIEW_HOTKEYS,
