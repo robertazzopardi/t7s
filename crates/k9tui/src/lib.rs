@@ -6,6 +6,7 @@ pub mod bg;
 pub mod error;
 pub mod event;
 pub mod in_flight;
+pub mod keymap;
 pub mod terminal;
 pub mod theme;
 pub mod widgets;

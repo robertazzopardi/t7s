@@ -32,6 +32,8 @@ pub struct Hotkey {
     pub description: HotkeyDescription,
     /// When set, shown instead of the `KeyCode` label (e.g. `Ctrl+e`).
     pub key_display: Option<&'static str>,
+    /// Keymap action this hotkey triggers, so the bar can show remapped keys.
+    pub action: Option<&'static str>,
 }
 
 impl Display for Hotkey {
@@ -47,7 +49,15 @@ impl Hotkey {
             keycode: KeyCode::Char(c),
             description: HotkeyDescription::Static(description),
             key_display: None,
+            action: None,
         }
+    }
+
+    /// Tag with the keymap action this hotkey triggers.
+    #[must_use]
+    pub const fn action(mut self, action: &'static str) -> Self {
+        self.action = Some(action);
+        self
     }
 
     #[must_use]
@@ -56,6 +66,7 @@ impl Hotkey {
             keycode,
             description: HotkeyDescription::Static(description),
             key_display: None,
+            action: None,
         }
     }
 
@@ -70,6 +81,7 @@ impl Hotkey {
             keycode,
             description: HotkeyDescription::Static(description),
             key_display: Some(display),
+            action: None,
         }
     }
 
@@ -94,6 +106,7 @@ impl Hotkey {
             KeyCode::End => "End".to_string(),
             KeyCode::PageUp => "PgUp".to_string(),
             KeyCode::PageDown => "PgDn".to_string(),
+            KeyCode::F(n) => format!("F{n}"),
             other => format!("{other:?}"),
         }
     }
