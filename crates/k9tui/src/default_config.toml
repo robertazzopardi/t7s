@@ -1,0 +1,6 @@
+# Built-in defaults. This defines the [t7s] level only; each app keeps the
+# defaults for its own actions.
+[t7s.keys]
+quit = "q"
+search = "/"
+command = ":"

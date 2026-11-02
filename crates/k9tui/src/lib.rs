@@ -3,6 +3,7 @@
 extern crate alloc;
 
 pub mod bg;
+pub mod config;
 pub mod error;
 pub mod event;
 pub mod in_flight;
