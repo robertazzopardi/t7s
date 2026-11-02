@@ -873,8 +873,10 @@ mod tests {
 
     #[tokio::test]
     async fn remapped_quit_follows_config() {
-        let mut app = App::default();
-        app.running = true;
+        let mut app = App {
+            running: true,
+            ..App::default()
+        };
         assert!(app.keymap.set("quit", KeyCode::Char('z')));
         assert!(!app.handle_hotkeys(key('q')));
         assert!(app.running, "old key is released");
@@ -884,8 +886,10 @@ mod tests {
 
     #[tokio::test]
     async fn ctrl_c_still_quits_when_quit_is_remapped() {
-        let mut app = App::default();
-        app.running = true;
+        let mut app = App {
+            running: true,
+            ..App::default()
+        };
         assert!(app.keymap.set("quit", KeyCode::Char('z')));
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert!(app.handle_hotkeys(ctrl_c));

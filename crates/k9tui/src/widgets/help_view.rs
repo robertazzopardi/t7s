@@ -1,3 +1,5 @@
+use alloc::borrow::Cow;
+
 use ratatui::style::{Modifier, Style};
 
 use crate::{theme, widgets::table::TableData};
@@ -5,7 +7,7 @@ use crate::{theme, widgets::table::TableData};
 /// One row in the help table: key label and description.
 #[derive(Clone, Debug)]
 pub struct HelpRow {
-    pub key: &'static str,
+    pub key: Cow<'static, str>,
     pub desc: &'static str,
     pub section_header: bool,
 }
