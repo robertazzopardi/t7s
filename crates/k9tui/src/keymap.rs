@@ -197,6 +197,12 @@ impl Keymap {
         self.get(action) == code
     }
 
+    /// True if any action is currently bound to `code`.
+    #[must_use]
+    pub fn binds(&self, code: KeyCode) -> bool {
+        self.bindings.values().any(|bound| *bound == code)
+    }
+
     /// Copy of `hotkeys` with each action-tagged entry relabelled to its
     /// current binding, so the hotkey bar reflects remaps.
     #[must_use]

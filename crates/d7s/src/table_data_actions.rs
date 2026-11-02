@@ -806,7 +806,11 @@ impl App<'_> {
                 }
                 Ok(true)
             }
-            KeyCode::Char(c) if !is_table_data_browse_binding(c) => {
+            // A remapped global action must reach `handle_hotkeys`, not start an edit.
+            KeyCode::Char(c)
+                if !is_table_data_browse_binding(c)
+                    && !self.keymap.binds(key.code) =>
+            {
                 if self.table_data_column_is_selected() {
                     self.begin_cell_edit(Some(c.to_string()));
                 }
@@ -869,6 +873,17 @@ mod tests {
                 app.handle_table_data_hotkeys(key(code, m)).unwrap_or(false);
             assert_eq!(got, want, "{code:?} {m:?}");
         }
+    }
+
+    /// A global action remapped to a free key is not swallowed by type-to-edit.
+    #[tokio::test]
+    async fn remapped_global_action_skips_type_to_edit() {
+        let mut app = table_app();
+        let z = key(KeyCode::Char('z'), KeyModifiers::NONE);
+        assert!(app.handle_table_data_hotkeys(z).unwrap());
+        let w = app.keymap.apply_yaml("describe: z\n", "t");
+        assert_eq!(w, Vec::<String>::new());
+        assert!(!app.handle_table_data_hotkeys(z).unwrap());
     }
 
     /// Remapping `delete_row` moves the key: old key is released, new one fires.
