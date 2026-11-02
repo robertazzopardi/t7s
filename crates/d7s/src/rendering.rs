@@ -42,8 +42,11 @@ impl App<'_> {
     #[allow(clippy::too_many_lines)]
     pub fn render(&mut self, frame: &mut Frame) {
         self.sync_column_width_mode();
-        let idle_hint =
-            default_idle_hint(self.state, &self.database_explorer.state);
+        let idle_hint = default_idle_hint(
+            self.state,
+            &self.database_explorer.state,
+            &self.keymap,
+        );
         self.status_line.set_idle_hint(if self.watch_active {
             format!("● WATCHING · {idle_hint}")
         } else {
@@ -284,7 +287,7 @@ impl App<'_> {
         ])
     }
 
-    fn empty_state_hint(&self) -> Option<&'static str> {
+    fn empty_state_hint(&self) -> Option<String> {
         if self.show_help || self.show_query_log {
             return None;
         }
@@ -296,11 +299,11 @@ impl App<'_> {
                 .model
                 .items
                 .is_empty()
-                .then_some("No matches — Esc to clear filter");
+                .then(|| "No matches — Esc to clear filter".to_string());
         }
 
         if self.has_active_filter() && self.active_table_is_empty() {
-            return Some("No matches — Esc to clear filter");
+            return Some("No matches — Esc to clear filter".to_string());
         }
 
         match &self.database_explorer.state {
@@ -313,7 +316,10 @@ impl App<'_> {
                     .items
                     .is_empty() =>
             {
-                Some("Press n to add your first connection")
+                Some(format!(
+                    "Press {} to add your first connection",
+                    self.keymap.label("new-connection")
+                ))
             }
             DatabaseExplorerState::Connections
             | DatabaseExplorerState::Databases
@@ -499,7 +505,10 @@ impl App<'_> {
             }
             DatabaseExplorerState::SqlResults(_) => {
                 frame.render_stateful_widget(
-                    SqlExecutor,
+                    SqlExecutor {
+                        open_key: self.keymap.label("sql-editor"),
+                        run_key: self.keymap.label("run-sql"),
+                    },
                     area,
                     &mut self.database_explorer.sql_executor,
                 );

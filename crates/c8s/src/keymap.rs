@@ -105,4 +105,20 @@ mod tests {
             assert!(tagged.contains(action), "{action} is not on the bar");
         }
     }
+
+    /// Every example a user can copy from the README must start the app.
+    #[test]
+    fn readme_examples_are_valid() {
+        let readme = include_str!("../README.md");
+        let examples: Vec<_> = readme
+            .split("```toml\n")
+            .skip(1)
+            .filter_map(|rest| rest.split("```").next())
+            .collect();
+        assert_ne!(examples.len(), 0);
+        for example in examples {
+            let config = resolve(Some(example), &SPEC, "README").unwrap();
+            assert_eq!(config.warnings, Vec::<String>::new(), "{example}");
+        }
+    }
 }

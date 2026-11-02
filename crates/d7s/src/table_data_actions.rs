@@ -530,7 +530,11 @@ impl App<'_> {
             fd.table.model.items.get(i).is_some_and(|r| r.is_draft)
         });
         let Some(sel) = sel else {
-            self.set_status("Select a draft row to commit (n / c).");
+            self.set_status(format!(
+                "Select a draft row to commit ({} / {}).",
+                self.keymap.label("new-row"),
+                self.keymap.label("duplicate")
+            ));
             return Ok(());
         };
         let values = fd

@@ -531,8 +531,9 @@ impl App<'_> {
         if self.watch_active {
             self.watch_last_tick = Instant::now();
             self.set_status(format!(
-                "Watching (every {}s) — press w to stop",
-                WATCH_INTERVAL.as_secs()
+                "Watching (every {}s) — press {} to stop",
+                WATCH_INTERVAL.as_secs(),
+                self.keymap.label("watch")
             ));
         } else {
             self.set_status("Watch stopped");
@@ -977,7 +978,10 @@ impl App<'_> {
             format!("Connected to {name} ({env})")
         } else {
             self.showed_help_hint = true;
-            format!("Connected to {name} ({env}) — press ? for help")
+            format!(
+                "Connected to {name} ({env}) — press {} for help",
+                self.keymap.label("help")
+            )
         }
     }
 

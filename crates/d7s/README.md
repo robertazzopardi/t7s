@@ -92,7 +92,7 @@ order, with the most specific winning: built-in defaults, `[t7s]`, then `[d7s]`.
 quit = "q"
 
 [d7s.keys]
-new-connection = "a"
+new-connection = "m"
 ```
 
 Keys are one character (case-sensitive) or a name such as `esc`, `page-up` or

@@ -110,11 +110,15 @@ impl App<'_> {
         // Help view: only toggle/close and quit
         if self.show_help {
             match (key.modifiers, key.code) {
-                (_, KeyCode::Char('?') | KeyCode::Esc) => {
+                (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
+                    self.quit();
+                }
+                (_, code)
+                    if code == KeyCode::Esc || self.keymap.is("help", code) =>
+                {
                     self.show_help = false;
                 }
-                (_, KeyCode::Char('q'))
-                | (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
+                (_, code) if self.keymap.is("quit", code) => {
                     self.quit();
                 }
                 _ => {
@@ -139,8 +143,10 @@ impl App<'_> {
                     self.show_describe = false;
                 }
                 (_, KeyCode::Char('/')) => self.open_filter_bar(),
-                (_, KeyCode::Char('q'))
-                | (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
+                (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
+                    self.quit();
+                }
+                (_, code) if self.keymap.is("quit", code) => {
                     self.quit();
                 }
                 _ => {
@@ -150,14 +156,18 @@ impl App<'_> {
             return Ok(());
         }
 
-        // Query log view: Esc / q / L return; Ctrl+C quits
+        // Query log view: Esc and the quit and query-log keys return; Ctrl+C quits
         if self.show_query_log {
             match (key.modifiers, key.code) {
-                (_, KeyCode::Esc | KeyCode::Char('q' | 'L')) => {
-                    self.show_query_log = false;
-                }
                 (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
                     self.quit();
+                }
+                (_, code)
+                    if code == KeyCode::Esc
+                        || self.keymap.is("quit", code)
+                        || self.keymap.is("query-log", code) =>
+                {
+                    self.show_query_log = false;
                 }
                 _ => {
                     TableNavigationHandler::navigate_table(
@@ -465,9 +475,10 @@ impl App<'_> {
                         }
                     } else {
                         self.draft_discard_pending = true;
-                        self.set_status(
-                            "Draft row pending — Esc again to discard, s to commit",
-                        );
+                        self.set_status(format!(
+                            "Draft row pending — Esc again to discard, {} to commit",
+                            self.keymap.label("commit")
+                        ));
                     }
                 } else if self
                     .database_explorer
@@ -820,11 +831,13 @@ impl App<'_> {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::{Terminal, backend::TestBackend, buffer::Cell};
 
     use super::should_clear_status_on_key;
     use crate::{
         app::App,
         app_state::{self, AppState, DatabaseExplorerState},
+        db::connection::Environment,
     };
 
     fn key(c: char) -> KeyEvent {
@@ -894,6 +907,97 @@ mod tests {
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert!(app.handle_hotkeys(ctrl_c));
         assert!(!app.running);
+    }
+
+    #[tokio::test]
+    async fn draft_pending_hint_names_the_commit_key() {
+        let mut app = App::default();
+        assert!(app.draft_pending_hint().contains("s to commit"));
+        assert!(app.keymap.set("commit", KeyCode::Char('z')));
+        assert!(app.draft_pending_hint().contains("z to commit"));
+    }
+
+    #[tokio::test]
+    async fn connected_hint_names_the_help_key() {
+        let mut app = App::default();
+        assert!(app.keymap.set("help", KeyCode::F(1)));
+        let hint = app.connect_status_message("db", Environment::default());
+        assert!(hint.contains("press F1 for help"), "{hint}");
+    }
+
+    #[tokio::test]
+    async fn empty_list_hint_names_the_new_connection_key() {
+        let mut app = App::default();
+        assert!(app.keymap.set("new-connection", KeyCode::Char('m')));
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|f| app.render(f)).unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(Cell::symbol)
+            .collect();
+        assert!(screen.contains("Press m to add"), "{screen}");
+    }
+
+    #[tokio::test]
+    async fn watch_status_names_the_watch_key() {
+        let mut app = App::default();
+        assert!(app.keymap.set("watch", KeyCode::Char('z')));
+        app.toggle_watch();
+        assert!(
+            app.status_line.message().contains("press z to stop"),
+            "{}",
+            app.status_line.message()
+        );
+    }
+
+    #[tokio::test]
+    async fn help_view_follows_remapped_keys() {
+        let mut app = App {
+            running: true,
+            show_help: true,
+            ..App::default()
+        };
+        assert!(app.keymap.set("help", KeyCode::Char('z')));
+        assert!(app.keymap.set("quit", KeyCode::Char('x')));
+        app.on_key_event(key('q')).unwrap();
+        assert!(app.running, "a freed q must not quit");
+        app.on_key_event(key('?')).unwrap();
+        assert!(app.show_help, "a freed ? must not close help");
+        app.on_key_event(key('z')).unwrap();
+        assert!(!app.show_help, "the help key closes help");
+        app.show_help = true;
+        app.on_key_event(key('x')).unwrap();
+        assert!(!app.running, "the quit key quits from help");
+    }
+
+    #[tokio::test]
+    async fn describe_view_quits_with_remapped_key_only() {
+        let mut app = App {
+            running: true,
+            show_describe: true,
+            ..App::default()
+        };
+        assert!(app.keymap.set("quit", KeyCode::Char('x')));
+        app.on_key_event(key('q')).unwrap();
+        assert!(app.running, "a freed q must not quit");
+        app.on_key_event(key('x')).unwrap();
+        assert!(!app.running);
+    }
+
+    #[tokio::test]
+    async fn query_log_closes_with_remapped_key() {
+        let mut app = App {
+            show_query_log: true,
+            ..App::default()
+        };
+        assert!(app.keymap.set("query-log", KeyCode::Char('z')));
+        app.on_key_event(key('L')).unwrap();
+        assert!(app.show_query_log, "a freed L must not close the log");
+        app.on_key_event(key('z')).unwrap();
+        assert!(!app.show_query_log);
     }
 
     #[tokio::test]

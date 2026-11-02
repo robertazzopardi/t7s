@@ -18,8 +18,6 @@ use crate::{
     ui::widgets::help_content::help_rows,
 };
 
-const DRAFT_PENDING: &str = "Draft row pending - Esc to discard, s to commit";
-
 fn bar(text: &str) -> TextArea<'static> {
     let mut bar = TextArea::default();
     bar.set_cursor_line_style(Style::default());
@@ -154,6 +152,13 @@ impl App<'_> {
         }
     }
 
+    pub(crate) fn draft_pending_hint(&self) -> String {
+        format!(
+            "Draft row pending - Esc to discard, {} to commit",
+            self.keymap.label("commit")
+        )
+    }
+
     pub(crate) fn open_help(&mut self) {
         self.help_table = TableDataState::new(help_rows(
             self.state,
@@ -180,7 +185,7 @@ impl App<'_> {
         if let Command::TablePath(path) = cmd {
             // Paths may start from the connection list: skip the connected check.
             if self.has_table_draft_rows() {
-                self.set_status(DRAFT_PENDING);
+                self.set_status(self.draft_pending_hint());
             } else {
                 self.pending_nav = Some(PendingNav {
                     path,
@@ -215,7 +220,7 @@ impl App<'_> {
             return;
         }
         if changes_view && self.has_table_draft_rows() {
-            self.set_status(DRAFT_PENDING);
+            self.set_status(self.draft_pending_hint());
             return;
         }
         let sqlite =

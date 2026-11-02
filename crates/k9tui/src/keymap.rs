@@ -69,6 +69,16 @@ impl Keymap {
             .unwrap_or_else(|| panic!("unknown keymap action: {action}"))
     }
 
+    /// The current key for `action`, as the hotkey bar shows it.
+    ///
+    /// # Panics
+    ///
+    /// If `action` is unknown; see [`Self::get`].
+    #[must_use]
+    pub fn label(&self, action: &str) -> String {
+        Hotkey::code(self.get(action), "").key_label()
+    }
+
     /// True if `code` is the key currently bound to `action`.
     #[must_use]
     pub fn is(&self, action: &str, code: KeyCode) -> bool {
@@ -182,6 +192,14 @@ mod tests {
         assert_eq!(parse_key("ctrl+s"), None);
         assert_eq!(parse_key("f13"), None);
         assert_eq!(parse_key("nonsense"), None);
+    }
+
+    #[test]
+    fn label_shows_the_current_key() {
+        let mut km = char_map(&[("quit", 'q')]);
+        assert_eq!(km.label("quit"), "q");
+        km.set("quit", KeyCode::F(5));
+        assert_eq!(km.label("quit"), "F5");
     }
 
     #[test]
