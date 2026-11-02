@@ -195,7 +195,12 @@ impl App<'_> {
         }
 
         if self.show_describe {
-            return Line::from(Span::styled(" Describe ", theme::title()));
+            let title = if self.has_active_filter() {
+                " Describe · filtered "
+            } else {
+                " Describe "
+            };
+            return Line::from(Span::styled(title, theme::title()));
         }
 
         if matches!(
@@ -280,8 +285,18 @@ impl App<'_> {
     }
 
     fn empty_state_hint(&self) -> Option<&'static str> {
-        if self.show_help || self.show_describe || self.show_query_log {
+        if self.show_help || self.show_query_log {
             return None;
+        }
+
+        if self.show_describe {
+            return self
+                .describe_table
+                .table
+                .model
+                .items
+                .is_empty()
+                .then_some("No matches — Esc to clear filter");
         }
 
         if self.has_active_filter() && self.active_table_is_empty() {
@@ -424,7 +439,7 @@ impl App<'_> {
             frame.render_stateful_widget(
                 DataTable::<DescribeRow>::default(),
                 area,
-                &mut self.describe_table,
+                &mut self.describe_table.table,
             );
             return;
         }

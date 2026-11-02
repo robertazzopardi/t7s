@@ -88,15 +88,41 @@ impl App {
         );
     }
 
-    fn on_key_describe(&mut self, key: KeyEvent) {
-        let AppState::Describe { text, .. } = &self.state else {
-            return;
-        };
-        let total_lines = text.lines().count();
-        let max_start =
-            total_lines.saturating_sub(self.describe_viewport_height);
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn on_key_describe_search(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
+            (_, KeyCode::Esc) => {
+                self.describe_filter.clear();
+                self.describe_search_open = false;
+            }
+            (_, KeyCode::Enter) => self.describe_search_open = false,
+            (_, KeyCode::Backspace) => {
+                self.describe_filter.pop();
+            }
+            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
+            (_, KeyCode::Char(c)) => self.describe_filter.push(c),
+            _ => {}
+        }
+        self.describe_scroll = 0;
+    }
+
+    fn on_key_describe(&mut self, key: KeyEvent) {
+        if self.describe_search_open {
+            self.on_key_describe_search(key);
+            return;
+        }
+        let max_start = self
+            .describe_view_len
+            .saturating_sub(self.describe_viewport_height);
+        match (key.modifiers, key.code) {
+            (_, KeyCode::Char('q') | KeyCode::Esc)
+                if !self.describe_filter.is_empty() =>
+            {
+                self.describe_filter.clear();
+                self.describe_scroll = 0;
+            }
             (_, KeyCode::Char('q') | KeyCode::Esc) => self.close_describe(),
+            (_, KeyCode::Char('/')) => self.describe_search_open = true,
             (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
             (_, KeyCode::Char('k') | KeyCode::Up) => {
                 self.describe_scroll = self.describe_scroll.saturating_sub(1);

@@ -183,6 +183,12 @@ pub struct App {
     pub(crate) describe_scroll: usize,
     /// Height of the last-rendered describe viewport, used to clamp scrolling.
     pub(crate) describe_viewport_height: usize,
+    /// Line count of the last-rendered (filtered) describe view.
+    pub(crate) describe_view_len: usize,
+    /// Case-insensitive substring filter on describe lines. Empty = no filter.
+    pub(crate) describe_filter: String,
+    /// True while the describe `/` search bar is open for editing.
+    pub(crate) describe_search_open: bool,
     pub(crate) build_info: String,
     pub(crate) in_flight: InFlight,
 
@@ -237,6 +243,9 @@ impl App {
             log_search_open: false,
             describe_scroll: 0,
             describe_viewport_height: 0,
+            describe_view_len: 0,
+            describe_filter: String::new(),
+            describe_search_open: false,
             build_info: format!("Name: {PKG_NAME}\nVersion: {PKG_VERSION}"),
             in_flight: InFlight::default(),
             bg_tx,
@@ -479,6 +488,8 @@ impl App {
                     // Requested from the list; the user may have opened logs etc. since.
                     if self.state == AppState::List {
                         self.describe_scroll = 0;
+                        self.describe_filter.clear();
+                        self.describe_search_open = false;
                         self.state = AppState::Describe { name, text };
                     }
                 }

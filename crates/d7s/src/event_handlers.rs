@@ -7,11 +7,7 @@ use k9tui::{
     bg::spawn_keyed, error::Result, event::poll_input,
     widgets::navigation::TableNavigationHandler,
 };
-use ratatui::{
-    style::{Color, Style},
-    widgets::TableState,
-};
-use ratatui_textarea::TextArea;
+use ratatui::widgets::TableState;
 
 use crate::{
     app::App,
@@ -131,22 +127,23 @@ impl App<'_> {
             return Ok(());
         }
 
-        // Describe view: only toggle/close, quit, and scroll
-        if self.show_describe {
+        // Describe view: only toggle/close, filter, quit, and scroll.
+        // While the filter bar is open, keys go to it below.
+        if self.show_describe && self.search_filter.is_none() {
             match (key.modifiers, key.code) {
+                (_, KeyCode::Esc) if self.active_filter_query().is_some() => {
+                    self.clear_filter();
+                }
                 (_, KeyCode::Char('d') | KeyCode::Esc) => {
                     self.show_describe = false;
                 }
+                (_, KeyCode::Char('/')) => self.open_filter_bar(),
                 (_, KeyCode::Char('q'))
                 | (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
                     self.quit();
                 }
                 _ => {
-                    TableNavigationHandler::navigate_table(
-                        &self.describe_table.model,
-                        &mut self.describe_table.view,
-                        key.code,
-                    );
+                    self.describe_table.navigate(key.code);
                 }
             }
             return Ok(());
@@ -205,6 +202,19 @@ impl App<'_> {
                 key.code,
                 KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End
             ) {
+                return Ok(());
+            }
+            // The hotkeys below act on the explorer hidden behind describe.
+            if self.show_describe {
+                match (key.modifiers, key.code) {
+                    (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
+                        self.quit();
+                    }
+                    (_, KeyCode::Up | KeyCode::Down) => {
+                        self.describe_table.navigate(key.code);
+                    }
+                    _ => {}
+                }
                 return Ok(());
             }
         }
@@ -554,14 +564,7 @@ impl App<'_> {
             (_, KeyCode::Char('/'))
                 if !self.modal_manager.is_any_modal_open() =>
             {
-                let mut search_bar = TextArea::default();
-                search_bar.set_cursor_line_style(Style::default());
-                search_bar.set_style(Style::default().fg(Color::White));
-                search_bar.set_max_histories(0);
-                if let Some(query) = self.active_filter_query() {
-                    search_bar.insert_str(query);
-                }
-                self.search_filter = Some(search_bar);
+                self.open_filter_bar();
             }
             _ => {}
         }

@@ -338,29 +338,12 @@ impl App {
             top_area,
         );
 
-        let content_area =
-            if self.log_search_open || !self.log_filter.is_empty() {
-                let search_layout = Layout::vertical([
-                    Constraint::Length(SEARCH_BAR_HEIGHT),
-                    Constraint::Min(0),
-                ])
-                .split(content_area);
-                let search_area =
-                    search_layout.first().copied().unwrap_or_default();
-                let search_block = Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(theme::border())
-                    .title(" Search ")
-                    .title_style(theme::title());
-                let inner = search_block.inner(search_area);
-                frame.render_widget(search_block, search_area);
-                let cursor = if self.log_search_open { "_" } else { "" };
-                Paragraph::new(format!("/{}{cursor}", self.log_filter))
-                    .render(inner, frame.buffer_mut());
-                search_layout.get(1).copied().unwrap_or_default()
-            } else {
-                content_area
-            };
+        let content_area = render_search_bar(
+            frame,
+            content_area,
+            &self.log_filter,
+            self.log_search_open,
+        );
 
         // Field borrows (not `log_prev()`) so `log_view_len` stays assignable.
         let prev = self
@@ -447,28 +430,73 @@ impl App {
             top_area,
         );
 
+        let content_area = render_search_bar(
+            frame,
+            content_area,
+            &self.describe_filter,
+            self.describe_search_open,
+        );
+
+        let all_lines: Vec<Line> = text.lines().map(Line::raw).collect();
+        let filtered = filter_and_highlight(&all_lines, &self.describe_filter);
+        self.describe_view_len = filtered.len();
+
+        let title = if self.describe_filter.is_empty() {
+            format!(" Describe: {name} ")
+        } else {
+            format!(" Describe: {name} ({} matches) ", filtered.len())
+        };
         let block = Block::new()
             .borders(Borders::ALL)
             .border_style(theme::border())
-            .title(format!(" Describe: {name} "))
+            .title(title)
             .title_alignment(Alignment::Center);
         let inner = block.inner(content_area);
         frame.render_widget(block, content_area);
 
-        let all_lines: Vec<&str> = text.lines().collect();
         let visible = inner.height as usize;
         self.describe_viewport_height = visible;
-        let max_start = all_lines.len().saturating_sub(visible);
+        let max_start = filtered.len().saturating_sub(visible);
         let start = self.describe_scroll.min(max_start);
         self.describe_scroll = start;
-        let end = (start + visible).min(all_lines.len());
-        let shown = all_lines.get(start..end).unwrap_or(&[]).join("\n");
-        Paragraph::new(shown)
+        let end = (start + visible).min(filtered.len());
+        let shown = filtered.get(start..end).unwrap_or(&[]).to_vec();
+        Paragraph::new(Text::from(shown))
             .wrap(Wrap { trim: false })
             .render(inner, frame.buffer_mut());
 
         frame.render_widget(self.status_line.clone(), footer_area);
     }
+}
+
+/// Draws the `/` bar at the top of `area` while searching or filtered, and
+/// returns the space left for the content below it.
+fn render_search_bar(
+    frame: &mut Frame,
+    area: Rect,
+    query: &str,
+    editing: bool,
+) -> Rect {
+    if !editing && query.is_empty() {
+        return area;
+    }
+    let search_layout = Layout::vertical([
+        Constraint::Length(SEARCH_BAR_HEIGHT),
+        Constraint::Min(0),
+    ])
+    .split(area);
+    let search_area = search_layout.first().copied().unwrap_or_default();
+    let search_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::border())
+        .title(" Search ")
+        .title_style(theme::title());
+    let inner = search_block.inner(search_area);
+    frame.render_widget(search_block, search_area);
+    let cursor = if editing { "_" } else { "" };
+    Paragraph::new(format!("/{query}{cursor}"))
+        .render(inner, frame.buffer_mut());
+    search_layout.get(1).copied().unwrap_or_default()
 }
 
 /// A fixed-size box centered within `area`, clamped to fit.
@@ -496,6 +524,7 @@ fn centered(area: Rect) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{
         Terminal,
         backend::TestBackend,
@@ -503,7 +532,7 @@ mod tests {
     };
 
     use crate::{
-        app::App,
+        app::{App, BackgroundEvent},
         app_state::AppState,
         docker::{ContainerRow, client::DaemonHealth},
     };
@@ -541,6 +570,94 @@ mod tests {
         ];
         app.reapply_list_filter();
         app
+    }
+
+    fn press(app: &mut App, keys: &str) {
+        for c in keys.chars() {
+            press_code(app, KeyCode::Char(c));
+        }
+    }
+
+    fn press_code(app: &mut App, code: KeyCode) {
+        let mut terminal =
+            Terminal::new(TestBackend::new(120, 24)).expect("test terminal");
+        let key = KeyEvent::new(code, KeyModifiers::NONE);
+        app.on_key_event(key, &mut terminal).expect("key");
+    }
+
+    fn describe_app(text: &str) -> App {
+        let mut app = App::new();
+        app.state = AppState::Describe {
+            name: "web".into(),
+            text: text.into(),
+        };
+        app
+    }
+
+    #[test]
+    fn describe_search_filters_lines_and_keys_stay_in_the_bar() {
+        let mut app = describe_app("ID: abc\nImage: nginx\nJob: q1");
+        press(&mut app, "/IMAGE");
+        let out = text(&render(&mut app));
+        assert!(out.contains(" Search "));
+        assert!(out.contains("/IMAGE_"));
+        assert!(out.contains("Image: nginx"));
+        assert!(!out.contains("ID: abc"));
+        assert!(out.contains("(1 matches)"));
+
+        // `q` and `j` are query text while the bar is open, not hotkeys.
+        press_code(&mut app, KeyCode::Esc);
+        press(&mut app, "/jq");
+        assert_eq!(app.describe_filter, "jq");
+        assert!(matches!(app.state, AppState::Describe { .. }));
+    }
+
+    #[test]
+    fn describe_back_clears_filter_before_closing() {
+        let mut app = describe_app("ID: abc\nImage: nginx");
+        press(&mut app, "/nginx");
+        press_code(&mut app, KeyCode::Enter);
+        assert!(!app.describe_search_open);
+        press(&mut app, "q");
+        assert!(app.describe_filter.is_empty());
+        assert!(matches!(app.state, AppState::Describe { .. }));
+        press_code(&mut app, KeyCode::Esc);
+        assert_eq!(app.state, AppState::List);
+    }
+
+    #[test]
+    fn describe_scroll_is_bounded_by_filtered_lines() {
+        let body: Vec<String> = (0..200).map(|n| format!("line {n}")).collect();
+        let mut app = describe_app(&body.join("\n"));
+        render(&mut app);
+        press(&mut app, "G");
+        assert!(app.describe_scroll > 100);
+
+        press(&mut app, "/line 19");
+        press_code(&mut app, KeyCode::Enter);
+        assert_eq!(app.describe_scroll, 0, "new query starts at the top");
+        render(&mut app);
+        press(&mut app, "G");
+        // 11 matches fit the viewport, so there is nothing to scroll.
+        assert_eq!(app.describe_scroll, 0);
+    }
+
+    #[test]
+    fn new_describe_starts_without_the_previous_filter() {
+        let mut app = describe_app("ID: abc");
+        press(&mut app, "/abc");
+        app.state = AppState::List;
+        assert!(app.in_flight.try_begin("d"));
+        app.bg_tx
+            .send(BackgroundEvent::DescribeReady {
+                key: "d".into(),
+                name: "db".into(),
+                text: "ID: xyz".into(),
+            })
+            .unwrap();
+        app.drain_background_events();
+        assert!(app.describe_filter.is_empty());
+        assert!(!app.describe_search_open);
     }
 
     #[test]

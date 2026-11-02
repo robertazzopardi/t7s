@@ -73,6 +73,7 @@ pub fn describe_hotkeys() -> Vec<Hotkey> {
         Hotkey::code(KeyCode::PageDown, "page down"),
         Hotkey::new('g', "top"),
         Hotkey::new('G', "bottom"),
+        Hotkey::new('/', "search"),
         Hotkey::code(KeyCode::Esc, "back"),
         Hotkey::new('q', "back"),
     ]

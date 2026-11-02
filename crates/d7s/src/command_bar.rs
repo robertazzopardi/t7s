@@ -35,6 +35,12 @@ impl App<'_> {
         self.command_mode = true;
     }
 
+    /// `/` bar, reopened on the view's active query.
+    pub(crate) fn open_filter_bar(&mut self) {
+        self.search_filter =
+            Some(bar(self.active_filter_query().unwrap_or("")));
+    }
+
     fn close_command_bar(&mut self) {
         self.search_filter = None;
         self.command_mode = false;

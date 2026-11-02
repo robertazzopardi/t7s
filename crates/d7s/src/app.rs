@@ -103,7 +103,7 @@ pub struct App<'a> {
     pub(crate) help_table: TableDataState<HelpRow>,
     /// k9s-style describe panel for the currently selected object (`i` toggles).
     pub(crate) show_describe: bool,
-    pub(crate) describe_table: TableDataState<DescribeRow>,
+    pub(crate) describe_table: FilteredData<DescribeRow>,
     /// Rows per virtual table page (from prefs / `D7S_PAGE_SIZE`).
     pub(crate) page_size: u32,
     /// First Esc warns before dropping draft rows; second Esc discards.
@@ -152,7 +152,7 @@ impl Default for App<'_> {
             show_help: false,
             help_table: TableDataState::new(Vec::new()),
             show_describe: false,
-            describe_table: TableDataState::new(Vec::new()),
+            describe_table: FilteredData::new(Vec::new()),
             page_size: VIRTUAL_TABLE_PAGE_SIZE,
             draft_discard_pending: false,
             pending_defaults_draft: false,
@@ -185,7 +185,7 @@ impl App<'_> {
     pub(crate) const fn sync_column_width_mode(&mut self) {
         let m = self.column_width_mode;
         self.help_table.view.column_width_mode = m;
-        self.describe_table.view.column_width_mode = m;
+        self.describe_table.table.view.column_width_mode = m;
         self.query_log_table.view.column_width_mode = m;
         let e = &mut self.database_explorer;
         e.connections.table.view.column_width_mode = m;
@@ -728,8 +728,11 @@ impl App<'_> {
         if !self.describe_target_matches(target) || rows.is_empty() {
             return;
         }
-        self.describe_table = TableDataState::new(rows);
+        self.describe_table = FilteredData::new(rows);
         self.show_describe = true;
+        // A bar opened while this loaded would otherwise edit the wrong view.
+        self.search_filter = None;
+        self.command_mode = false;
     }
 
     pub(crate) fn apply_connection_test_result(
@@ -2637,6 +2640,105 @@ mod tests {
         );
         let _ = remove_file(&one.path);
         let _ = remove_file(&two.path);
+    }
+
+    fn describe_app<'a>() -> App<'a> {
+        App {
+            running: true,
+            show_describe: true,
+            describe_table: FilteredData::new(vec![
+                DescribeRow::section("Table"),
+                DescribeRow::new("Name", "users"),
+                DescribeRow::new("Schema", "main"),
+                DescribeRow::new("Jobs", "quiet"),
+            ]),
+            ..App::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn describe_filter_narrows_rows_and_keys_stay_in_the_bar() {
+        let mut app = describe_app();
+        let rows = |a: &App| a.describe_table.table.model.items.len();
+        app.on_key_event(key('/')).unwrap();
+        // `d`, `q`, `j` are query text here, not close, quit, or scroll.
+        type_str(&mut app, "djq");
+        assert_eq!(rows(&app), 0);
+        assert!(app.show_describe && app.running);
+        assert!(render_text(&mut app).contains("No matches"));
+        for _ in 0..3 {
+            app.on_key_event(KeyEvent::new(
+                KeyCode::Backspace,
+                KeyModifiers::NONE,
+            ))
+            .unwrap();
+        }
+        assert_eq!(rows(&app), 4, "deleting characters widens the result");
+        type_str(&mut app, "USERS");
+        assert_eq!(rows(&app), 1);
+        let out = render_text(&mut app);
+        assert!(out.contains("Describe · filtered"));
+        assert!(out.contains("users") && !out.contains("Schema"));
+    }
+
+    #[tokio::test]
+    async fn describe_esc_clears_filter_then_closes() {
+        let mut app = describe_app();
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        app.on_key_event(key('/')).unwrap();
+        type_str(&mut app, "users");
+        app.on_key_event(enter).unwrap();
+        assert!(app.search_filter.is_none());
+        assert_eq!(app.describe_table.table.model.items.len(), 1);
+        // Reopening restores the query, as in every other view.
+        app.on_key_event(key('/')).unwrap();
+        assert_eq!(app.command_text(), "users");
+        app.on_key_event(enter).unwrap();
+
+        app.on_key_event(esc).unwrap();
+        assert!(app.show_describe, "first Esc only clears the filter");
+        assert_eq!(app.describe_table.table.model.items.len(), 4);
+        app.on_key_event(esc).unwrap();
+        assert!(!app.show_describe);
+    }
+
+    #[tokio::test]
+    async fn describe_filter_leaves_the_explorer_untouched() {
+        let mut app = named_tables_app("describe_iso", &["orders", "users"]);
+        app.database_explorer.state = DatabaseExplorerState::Tables("x".into());
+        let tables = |a: &App| {
+            let t = a.database_explorer.tables.as_ref().unwrap();
+            (t.table.model.items.len(), t.table.view.state.selected())
+        };
+        let before = tables(&app);
+        app.describe_table =
+            FilteredData::new(vec![DescribeRow::new("Name", "users")]);
+        app.show_describe = true;
+        app.on_key_event(key('/')).unwrap();
+        type_str(&mut app, "zzz");
+        app.on_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(tables(&app), before, "arrows and typing stay in describe");
+        app.on_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(tables(&app), before);
+        assert!(app.show_describe && app.search_filter.is_none());
+    }
+
+    #[tokio::test]
+    async fn describe_loading_closes_an_open_bar() {
+        let mut app = named_tables_app("describe_bar", &["orders", "users"]);
+        app.database_explorer.state = DatabaseExplorerState::Tables("x".into());
+        let target = app.describe_target_for_selection().unwrap();
+        app.on_key_event(key(':')).unwrap();
+        assert!(app.command_mode);
+        app.apply_describe_rows_loaded(
+            &target,
+            vec![DescribeRow::new("Name", "x")],
+        );
+        assert!(app.show_describe);
+        assert!(app.search_filter.is_none() && !app.command_mode);
     }
 
     #[tokio::test]
