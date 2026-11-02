@@ -619,7 +619,7 @@ mod tests {
         press_code(&mut app, KeyCode::Enter);
         assert!(!app.describe_search_open);
         press(&mut app, "q");
-        assert!(app.describe_filter.is_empty());
+        assert_eq!(app.describe_filter, "");
         assert!(matches!(app.state, AppState::Describe { .. }));
         press_code(&mut app, KeyCode::Esc);
         assert_eq!(app.state, AppState::List);
@@ -656,7 +656,7 @@ mod tests {
             })
             .unwrap();
         app.drain_background_events();
-        assert!(app.describe_filter.is_empty());
+        assert_eq!(app.describe_filter, "");
         assert!(!app.describe_search_open);
     }
 

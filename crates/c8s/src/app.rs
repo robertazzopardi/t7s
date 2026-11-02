@@ -487,10 +487,7 @@ impl App {
                     self.in_flight.end(&key);
                     // Requested from the list; the user may have opened logs etc. since.
                     if self.state == AppState::List {
-                        self.describe_scroll = 0;
-                        self.describe_filter.clear();
-                        self.describe_search_open = false;
-                        self.state = AppState::Describe { name, text };
+                        self.show_describe(name, text);
                     }
                 }
                 BackgroundEvent::Connected(client) => {
@@ -884,6 +881,14 @@ impl App {
             };
             let _ = tx.send(event);
         });
+    }
+
+    /// Enter the describe view at the top, with no filter carried over.
+    fn show_describe(&mut self, name: String, text: String) {
+        self.describe_scroll = 0;
+        self.describe_filter.clear();
+        self.describe_search_open = false;
+        self.state = AppState::Describe { name, text };
     }
 
     /// Leave the describe view.
