@@ -99,6 +99,7 @@ impl DatabaseExplorer {
                     table: table.clone(),
                 },
                 key_display: None,
+                action: None,
             })
             .collect()
     }

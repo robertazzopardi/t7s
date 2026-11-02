@@ -94,12 +94,20 @@ impl App<'_> {
             } else {
                 &TABLE_DATA_VIEW_HOTKEYS
             };
-            self.hotkeys.iter().chain(table_hotkeys).cloned().collect()
+            self.keymap.relabel(
+                &self
+                    .hotkeys
+                    .iter()
+                    .chain(table_hotkeys)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
         } else {
             Vec::new()
         };
+        let relabelled = self.keymap.relabel(&self.hotkeys);
         let hotkey_bar: &[Hotkey] = if table_data_ext.is_empty() {
-            &self.hotkeys
+            &relabelled
         } else {
             &table_data_ext
         };

@@ -21,6 +21,9 @@ ratatui = { version = "0.30.2", features = ["crossterm"], default-features = fal
 ratatui-textarea = "0.9.3"
 tokio = { version = "1.54.1", default-features = false, features = ["rt", "sync"] }
 unicode-width = { version = "0.2", default-features = false }
+directories = "6.0.0"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
 
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["macros", "rt"] }

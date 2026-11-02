@@ -158,6 +158,7 @@ pub struct App {
     pub(crate) confirm_dialog: Option<ConfirmDialog>,
     /// Resource kind + id pending removal once the confirm dialog resolves.
     pub(crate) pending_remove: Option<(ResourceKind, String)>,
+    pub(crate) keymap: k9tui::keymap::Keymap,
     pub(crate) log_lines: Vec<Line<'static>>,
     /// Per container id: when its current run's logs start (UNIX time) and
     /// the lines of its run before that restart. Kept for the app lifetime.
@@ -209,6 +210,7 @@ impl App {
             view: ResourceKind::default(),
             docker: None,
             hotkeys: LIST_HOTKEYS.to_vec(),
+            keymap: crate::keymap::defaults(),
             containers: TableDataState::new(Vec::new()),
             images: TableDataState::new(Vec::new()),
             volumes: TableDataState::new(Vec::new()),

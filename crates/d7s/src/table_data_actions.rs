@@ -751,11 +751,15 @@ impl App<'_> {
             return Ok(false);
         }
         match key.code {
-            KeyCode::Char('r' | 'R') => {
+            code if self.keymap.is("refresh", code)
+                || code == KeyCode::Char('R') =>
+            {
                 self.reload_current_table_data(None);
                 Ok(true)
             }
-            KeyCode::Char('n' | 'a') => {
+            code if self.keymap.is("new_row", code)
+                || code == KeyCode::Char('a') =>
+            {
                 if self.table_data_add_blank_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                 }
@@ -775,17 +779,17 @@ impl App<'_> {
                 self.begin_cell_edit(None);
                 Ok(true)
             }
-            KeyCode::Char('c') => {
+            code if self.keymap.is("duplicate_row", code) => {
                 if self.table_data_duplicate_as_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                 }
                 Ok(true)
             }
-            KeyCode::Char('s') => {
+            code if self.keymap.is("commit_row", code) => {
                 self.table_data_commit_draft()?;
                 Ok(true)
             }
-            KeyCode::Char('D') => {
+            code if self.keymap.is("delete_row", code) => {
                 self.table_data_request_delete();
                 Ok(true)
             }

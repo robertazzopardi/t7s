@@ -202,11 +202,12 @@ impl App {
         };
         let summary = format!("{label}: {n}");
 
+        let bar = self.keymap.relabel(&self.hotkeys);
         frame.render_widget(
             TopBarView {
                 summary: &summary,
                 recent_hotkeys: &[],
-                hotkeys: &self.hotkeys,
+                hotkeys: &bar,
                 global_hotkeys: &global,
                 app_name: APP_NAME,
                 build_info: Some(self.build_info.clone()),

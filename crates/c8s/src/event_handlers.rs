@@ -372,8 +372,10 @@ impl App {
                 self.running_only = !self.running_only;
                 self.reapply_list_filter();
             }
-            (_, KeyCode::Char('s' | 'S'))
-                if self.view == ResourceKind::Containers =>
+            (_, code)
+                if (code == KeyCode::Char('S')
+                    || self.keymap.is("start_stop", code))
+                    && self.view == ResourceKind::Containers =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     if row.is_running() {
@@ -383,8 +385,9 @@ impl App {
                     }
                 }
             }
-            (_, KeyCode::Char('r'))
-                if self.view == ResourceKind::Containers =>
+            (_, code)
+                if self.keymap.is("restart", code)
+                    && self.view == ResourceKind::Containers =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     self.restart_container(&row.id);
@@ -397,18 +400,23 @@ impl App {
                     self.open_processes(&row.id, &row.name);
                 }
             }
-            (_, KeyCode::Char('l'))
-                if self.view == ResourceKind::Containers =>
+            (_, code)
+                if self.keymap.is("logs", code)
+                    && self.view == ResourceKind::Containers =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     self.open_logs(&row.id, &row.name);
                 }
             }
-            (_, KeyCode::Char('d') | KeyCode::Enter) => {
+            (_, code)
+                if code == KeyCode::Enter
+                    || self.keymap.is("describe", code) =>
+            {
                 self.describe_selected();
             }
-            (_, KeyCode::Char('e'))
-                if self.view == ResourceKind::Containers =>
+            (_, code)
+                if self.keymap.is("exec", code)
+                    && self.view == ResourceKind::Containers =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     self.exec_shell(terminal, &row.id)?;
@@ -417,7 +425,10 @@ impl App {
             (_, KeyCode::Char('i')) => {
                 self.open_daemon_health();
             }
-            (_, KeyCode::Char('D') | KeyCode::Delete) => {
+            (_, code)
+                if code == KeyCode::Delete
+                    || self.keymap.is("remove", code) =>
+            {
                 self.prompt_remove_selected();
             }
             _ => {}
@@ -823,6 +834,32 @@ mod tests {
             let out = screen(&mut app, &mut t);
             assert!(out.contains("Remove failed"), "{kind:?}: {out}");
         }
+    }
+
+    #[tokio::test]
+    async fn remapped_remove_and_describe_keys_follow_config() {
+        let mut app = app();
+        let mut t = term();
+        let w = app.keymap.apply_yaml("remove: x\ndescribe: z\n", "test");
+        assert_eq!(w, Vec::<String>::new());
+        // Old default no longer removes; the new key does.
+        app.on_key_event(shift_d(), &mut t).unwrap();
+        assert!(app.confirm_dialog.is_none());
+        app.on_key_event(key(KeyCode::Char('x')), &mut t).unwrap();
+        assert!(app.confirm_dialog.is_some());
+        app.confirm_dialog = None;
+        app.pending_remove = None;
+        // Fixed fallbacks stay: Delete removes, Enter describes.
+        app.on_key_event(key(KeyCode::Delete), &mut t).unwrap();
+        assert!(app.confirm_dialog.is_some());
+        app.confirm_dialog = None;
+        app.pending_remove = None;
+        app.on_key_event(key(KeyCode::Char('d')), &mut t).unwrap();
+        assert_eq!(app.state, AppState::List, "old describe key is unbound");
+        app.on_key_event(key(KeyCode::Char('z')), &mut t).unwrap();
+        flush_background(&mut app).await;
+        let out = screen(&mut app, &mut t);
+        assert!(out.contains("Inspect failed"), "{out}");
     }
 
     #[tokio::test]

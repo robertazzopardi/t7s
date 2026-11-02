@@ -4,12 +4,12 @@ use k9tui::widgets::hotkey::Hotkey;
 pub const LIST_HOTKEYS: [Hotkey; 11] = [
     Hotkey::new('a', "running only"),
     Hotkey::new('p', "processes"),
-    Hotkey::new('s', "start/stop"),
-    Hotkey::new('r', "restart"),
-    Hotkey::new('l', "logs"),
-    Hotkey::new('e', "exec shell"),
-    Hotkey::new('d', "describe"),
-    Hotkey::new('D', "remove"),
+    Hotkey::new('s', "start/stop").action("start_stop"),
+    Hotkey::new('r', "restart").action("restart"),
+    Hotkey::new('l', "logs").action("logs"),
+    Hotkey::new('e', "exec shell").action("exec"),
+    Hotkey::new('d', "describe").action("describe"),
+    Hotkey::new('D', "remove").action("remove"),
     Hotkey::new('i', "daemon health"),
     Hotkey::new('W', "column width"),
     Hotkey::new(':', "command"),
@@ -18,8 +18,8 @@ pub const LIST_HOTKEYS: [Hotkey; 11] = [
 /// Hotkeys shown for the image/volume/network list views, which only
 /// support navigation and removal (no start/stop/restart/logs/exec).
 pub const RESOURCE_HOTKEYS: [Hotkey; 5] = [
-    Hotkey::new('d', "describe"),
-    Hotkey::new('D', "remove"),
+    Hotkey::new('d', "describe").action("describe"),
+    Hotkey::new('D', "remove").action("remove"),
     Hotkey::new('i', "daemon health"),
     Hotkey::new('W', "column width"),
     Hotkey::new(':', "command"),

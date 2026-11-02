@@ -17,6 +17,7 @@ mod event_handlers;
 mod filtered_data;
 mod filtering;
 mod in_flight;
+mod keymap;
 mod rendering;
 mod services;
 mod sql;
@@ -78,12 +79,23 @@ fn parse_launch_args() -> Result<Option<String>> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let mut warnings = k9tui::theme::load_skin(PKG_NAME);
     let launch_connection = parse_launch_args()?;
-    run(|terminal| {
+    let (keymap, key_warnings) = keymap::load();
+    warnings.extend(key_warnings);
+    let result = run(|terminal| {
         let mut app = App::default().init()?;
+        app.keymap = keymap;
+        if !warnings.is_empty() {
+            app.set_status(format!("Config: {}", warnings.join("; ")));
+        }
         if let Some(name) = launch_connection {
             app.connect_to_named_connection(&name);
         }
         app.run(terminal)
-    })
+    });
+    for w in &warnings {
+        eprintln!("{PKG_NAME}: {w}");
+    }
+    result
 }
