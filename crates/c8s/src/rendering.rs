@@ -188,9 +188,9 @@ impl App {
             // `q` clears the active filter instead of quitting while one is
             // set (see event_handlers.rs); keep the hint truthful.
             if let Some(q) =
-                global.iter_mut().find(|h| h.keycode == KeyCode::Char('q'))
+                global.iter_mut().find(|h| h.action == Some("quit"))
             {
-                *q = Hotkey::new('q', "clear filter");
+                *q = Hotkey::new('q', "clear filter").action("quit");
             }
         }
         let label = self.view.to_string();
@@ -201,12 +201,14 @@ impl App {
             ResourceKind::Networks => self.networks.model.items.len(),
         };
         let summary = format!("{label}: {n}");
+        let hotkeys = self.keymap.relabel(&self.hotkeys);
+        let global = self.keymap.relabel(&global);
 
         frame.render_widget(
             TopBarView {
                 summary: &summary,
                 recent_hotkeys: &[],
-                hotkeys: &self.hotkeys,
+                hotkeys: &hotkeys,
                 global_hotkeys: &global,
                 app_name: APP_NAME,
                 build_info: Some(self.build_info.clone()),

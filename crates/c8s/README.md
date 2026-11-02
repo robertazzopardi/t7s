@@ -37,3 +37,36 @@ cargo install c8s --locked && c8s
 | `q` / `Ctrl-C` | Quit |
 
 `d` describes; `D` deletes. No `y` (no manifests). `/` filters the active list and searches logs and describe.
+
+## Configuration
+
+`c8s` reads `~/.config/t7s/config.toml`, or `$XDG_CONFIG_HOME/t7s/config.toml` if
+that is set. The file and everything in it are optional. Settings merge in this
+order, with the most specific winning: built-in defaults, `[t7s]`, then `[c8s]`.
+
+```toml
+[t7s.keys]
+quit = "q"
+
+[c8s.keys]
+start-stop = "x"
+```
+
+Keys are one character (case-sensitive) or a name such as `esc`, `page-up` or
+`f5`. Ctrl and Alt chords aren't supported.
+
+| Table | Actions (default key) |
+|---|---|
+| `[t7s.keys]` or `[c8s.keys]` | `quit` (`q`), `search` (`/`), `command` (`:`) |
+| `[c8s.keys]` | `running` (`a`), `processes` (`p`), `start-stop` (`s`), `restart` (`r`), `logs` (`l`), `exec` (`e`), `describe` (`d`), `remove` (`D`), `health` (`i`), `width` (`W`) |
+
+These stay fixed: `j k g G`, arrow keys, `1`-`4`, `Esc`, `Enter` (describe), `Delete`
+(remove), `S` (start/stop), `Ctrl-C` (quit), and keys in the log, process and
+describe views.
+
+`c8s` won't start, and prints every error to stderr, if the file has a TOML
+syntax error or can't be read, a key name is unknown, two actions share a key, or
+an action is bound to a fixed key. Other problems, such as an unknown setting,
+show in the status line and are printed on exit.
+
+`skin`, `theme` and `colours` are accepted but don't change anything yet.

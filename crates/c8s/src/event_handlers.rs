@@ -303,18 +303,23 @@ impl App {
             return true;
         }
         match (key.modifiers, key.code) {
-            (_, KeyCode::Char('q')) if self.list_filter.is_empty() => {
+            (_, code)
+                if self.keymap.is("quit", code)
+                    && self.list_filter.is_empty() =>
+            {
                 self.quit();
             }
-            (_, KeyCode::Char('q')) => {
+            (_, code) if self.keymap.is("quit", code) => {
                 self.list_filter.clear();
                 self.reapply_list_filter();
             }
             (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
                 self.quit();
             }
-            (_, KeyCode::Char('/')) => self.list_search_open = true,
-            (_, KeyCode::Char(':')) => {
+            (_, code) if self.keymap.is("search", code) => {
+                self.list_search_open = true;
+            }
+            (_, code) if self.keymap.is("command", code) => {
                 self.list_search_open = true;
                 self.command_mode = true;
                 self.command_text.clear();
@@ -353,7 +358,9 @@ impl App {
         }
 
         match (key.modifiers, key.code) {
-            (_, KeyCode::Char('W')) => self.toggle_column_width_mode(),
+            (_, code) if self.keymap.is("width", code) => {
+                self.toggle_column_width_mode();
+            }
             (_, KeyCode::Char('1')) => {
                 self.switch_view(ResourceKind::Containers);
             }
@@ -366,14 +373,17 @@ impl App {
             (_, KeyCode::Char('k') | KeyCode::Up) => self.navigate(KeyCode::Up),
             (_, KeyCode::Char('g')) => self.navigate(KeyCode::Char('g')),
             (_, KeyCode::Char('G')) => self.navigate(KeyCode::Char('G')),
-            (_, KeyCode::Char('a'))
-                if self.view == ResourceKind::Containers =>
+            (_, code)
+                if self.view == ResourceKind::Containers
+                    && self.keymap.is("running", code) =>
             {
                 self.running_only = !self.running_only;
                 self.reapply_list_filter();
             }
-            (_, KeyCode::Char('s' | 'S'))
-                if self.view == ResourceKind::Containers =>
+            (_, code)
+                if self.view == ResourceKind::Containers
+                    && (code == KeyCode::Char('S')
+                        || self.keymap.is("start-stop", code)) =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     if row.is_running() {
@@ -383,41 +393,51 @@ impl App {
                     }
                 }
             }
-            (_, KeyCode::Char('r'))
-                if self.view == ResourceKind::Containers =>
+            (_, code)
+                if self.view == ResourceKind::Containers
+                    && self.keymap.is("restart", code) =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     self.restart_container(&row.id);
                 }
             }
-            (_, KeyCode::Char('p'))
-                if self.view == ResourceKind::Containers =>
+            (_, code)
+                if self.view == ResourceKind::Containers
+                    && self.keymap.is("processes", code) =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     self.open_processes(&row.id, &row.name);
                 }
             }
-            (_, KeyCode::Char('l'))
-                if self.view == ResourceKind::Containers =>
+            (_, code)
+                if self.view == ResourceKind::Containers
+                    && self.keymap.is("logs", code) =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     self.open_logs(&row.id, &row.name);
                 }
             }
-            (_, KeyCode::Char('d') | KeyCode::Enter) => {
+            (_, code)
+                if code == KeyCode::Enter
+                    || self.keymap.is("describe", code) =>
+            {
                 self.describe_selected();
             }
-            (_, KeyCode::Char('e'))
-                if self.view == ResourceKind::Containers =>
+            (_, code)
+                if self.view == ResourceKind::Containers
+                    && self.keymap.is("exec", code) =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     self.exec_shell(terminal, &row.id)?;
                 }
             }
-            (_, KeyCode::Char('i')) => {
+            (_, code) if self.keymap.is("health", code) => {
                 self.open_daemon_health();
             }
-            (_, KeyCode::Char('D') | KeyCode::Delete) => {
+            (_, code)
+                if code == KeyCode::Delete
+                    || self.keymap.is("remove", code) =>
+            {
                 self.prompt_remove_selected();
             }
             _ => {}
@@ -747,6 +767,103 @@ mod tests {
         ResourceKind::Volumes,
         ResourceKind::Networks,
     ];
+
+    fn char_key(c: char) -> KeyEvent {
+        key(KeyCode::Char(c))
+    }
+
+    /// No config: the existing key set behaves exactly as before.
+    #[tokio::test]
+    async fn default_keys_match_the_hardcoded_set() {
+        let mut t = term();
+        for k in [shift_d(), key(KeyCode::Delete)] {
+            let mut app = app();
+            app.on_key_event(k, &mut t).unwrap();
+            assert!(app.confirm_dialog.is_some(), "{k:?}");
+        }
+        for k in [char_key('d'), key(KeyCode::Enter)] {
+            let mut app = app();
+            app.on_key_event(k, &mut t).unwrap();
+            assert!(app.confirm_dialog.is_none(), "{k:?}");
+            flush_background(&mut app).await;
+            let out = screen(&mut app, &mut t);
+            assert!(out.contains("Inspect failed"), "{k:?}: {out}");
+        }
+    }
+
+    #[tokio::test]
+    async fn remapped_keys_follow_config() {
+        let mut app = app();
+        let mut t = term();
+        assert!(app.keymap.set("remove", KeyCode::Char('x')));
+        app.on_key_event(shift_d(), &mut t).unwrap();
+        assert!(app.confirm_dialog.is_none(), "old key is released");
+        app.on_key_event(char_key('x'), &mut t).unwrap();
+        assert!(app.confirm_dialog.is_some(), "new key fires");
+        app.confirm_dialog = None;
+        app.pending_remove = None;
+        app.on_key_event(key(KeyCode::Delete), &mut t).unwrap();
+        assert!(app.confirm_dialog.is_some(), "Delete stays a fixed alias");
+    }
+
+    #[tokio::test]
+    async fn remapped_start_stop_keeps_s_alias() {
+        let mut t = term();
+        let mut released = app();
+        assert!(released.keymap.set("start-stop", KeyCode::Char('x')));
+        released.on_key_event(char_key('s'), &mut t).unwrap();
+        assert!(released.in_flight.is_empty(), "old key is released");
+
+        for c in ['x', 'S'] {
+            let mut app = app();
+            assert!(app.keymap.set("start-stop", KeyCode::Char('x')));
+            app.on_key_event(char_key(c), &mut t).unwrap();
+            assert!(!app.in_flight.is_empty(), "{c} fires");
+        }
+    }
+
+    #[tokio::test]
+    async fn container_actions_do_nothing_outside_containers() {
+        for kind in [ResourceKind::Images, ResourceKind::Volumes] {
+            for c in ['s', 'S', 'r', 'l', 'e', 'p', 'a'] {
+                let mut app = app();
+                let mut t = term();
+                app.switch_view(kind);
+                app.on_key_event(char_key(c), &mut t).unwrap();
+                assert_eq!(app.state, AppState::List, "{kind:?} {c}");
+                assert!(app.in_flight.is_empty(), "{kind:?} {c}");
+                assert!(!app.running_only, "{kind:?} {c}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn remapped_quit_and_search_follow_config() {
+        let mut app = app();
+        let mut t = term();
+        app.running = true;
+        assert!(app.keymap.set("quit", KeyCode::Char('z')));
+        assert!(app.keymap.set("search", KeyCode::Char('x')));
+        app.on_key_event(char_key('q'), &mut t).unwrap();
+        assert!(app.running, "old quit key is released");
+        app.on_key_event(char_key('/'), &mut t).unwrap();
+        assert!(!app.list_search_open, "old search key is released");
+        app.on_key_event(char_key('x'), &mut t).unwrap();
+        assert!(app.list_search_open, "new search key fires");
+        app.on_key_event(key(KeyCode::Esc), &mut t).unwrap();
+        app.on_key_event(char_key('z'), &mut t).unwrap();
+        assert!(!app.running, "new quit key fires");
+    }
+
+    #[tokio::test]
+    async fn hotkey_bar_shows_remapped_keys() {
+        let mut app = app();
+        let mut t = term();
+        assert!(app.keymap.set("remove", KeyCode::F(5)));
+        assert!(app.keymap.set("search", KeyCode::F(6)));
+        let out = screen(&mut app, &mut t);
+        assert!(out.contains("F5") && out.contains("F6"), "{out}");
+    }
 
     #[tokio::test]
     async fn i_failure_stays_on_list_with_status_in_every_view() {

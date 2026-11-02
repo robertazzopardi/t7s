@@ -2,27 +2,27 @@ use crossterm::event::KeyCode;
 use k9tui::widgets::hotkey::Hotkey;
 
 pub const LIST_HOTKEYS: [Hotkey; 11] = [
-    Hotkey::new('a', "running only"),
-    Hotkey::new('p', "processes"),
-    Hotkey::new('s', "start/stop"),
-    Hotkey::new('r', "restart"),
-    Hotkey::new('l', "logs"),
-    Hotkey::new('e', "exec shell"),
-    Hotkey::new('d', "describe"),
-    Hotkey::new('D', "remove"),
-    Hotkey::new('i', "daemon health"),
-    Hotkey::new('W', "column width"),
-    Hotkey::new(':', "command"),
+    Hotkey::new('a', "running only").action("running"),
+    Hotkey::new('p', "processes").action("processes"),
+    Hotkey::new('s', "start/stop").action("start-stop"),
+    Hotkey::new('r', "restart").action("restart"),
+    Hotkey::new('l', "logs").action("logs"),
+    Hotkey::new('e', "exec shell").action("exec"),
+    Hotkey::new('d', "describe").action("describe"),
+    Hotkey::new('D', "remove").action("remove"),
+    Hotkey::new('i', "daemon health").action("health"),
+    Hotkey::new('W', "column width").action("width"),
+    Hotkey::new(':', "command").action("command"),
 ];
 
 /// Hotkeys shown for the image/volume/network list views, which only
 /// support navigation and removal (no start/stop/restart/logs/exec).
 pub const RESOURCE_HOTKEYS: [Hotkey; 5] = [
-    Hotkey::new('d', "describe"),
-    Hotkey::new('D', "remove"),
-    Hotkey::new('i', "daemon health"),
-    Hotkey::new('W', "column width"),
-    Hotkey::new(':', "command"),
+    Hotkey::new('d', "describe").action("describe"),
+    Hotkey::new('D', "remove").action("remove"),
+    Hotkey::new('i', "daemon health").action("health"),
+    Hotkey::new('W', "column width").action("width"),
+    Hotkey::new(':', "command").action("command"),
 ];
 
 pub const VIEW_SWITCH_HOTKEYS: [Hotkey; 4] = [
@@ -32,8 +32,10 @@ pub const VIEW_SWITCH_HOTKEYS: [Hotkey; 4] = [
     Hotkey::new('4', "networks"),
 ];
 
-pub const GLOBAL_HOTKEYS: [Hotkey; 2] =
-    [Hotkey::new('/', "search"), Hotkey::new('q', "quit")];
+pub const GLOBAL_HOTKEYS: [Hotkey; 2] = [
+    Hotkey::new('/', "search").action("search"),
+    Hotkey::new('q', "quit").action("quit"),
+];
 
 pub fn log_hotkeys() -> Vec<Hotkey> {
     vec![
