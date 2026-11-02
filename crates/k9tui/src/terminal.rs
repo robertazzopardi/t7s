@@ -53,6 +53,8 @@ pub fn suspend<B: Backend, R>(
     execute!(stdout(), DisableBracketedPaste)?;
     stdout().execute(LeaveAlternateScreen)?;
     disable_raw_mode()?;
+    // The TUI hides the cursor; the next `draw` hides it again on return.
+    terminal.show_cursor().map_err(|e| err(e.to_string()))?;
     let out = child();
     stdout().execute(EnterAlternateScreen)?;
     enable_raw_mode()?;
