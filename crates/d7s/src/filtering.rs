@@ -13,6 +13,9 @@ impl App<'_> {
     }
 
     pub fn has_active_filter(&self) -> bool {
+        if self.show_describe {
+            return self.describe_table.is_filtered();
+        }
         let explorer = &self.database_explorer;
         match &explorer.state {
             DatabaseExplorerState::Connections => {
@@ -44,6 +47,10 @@ impl App<'_> {
 
     /// Non-empty query of the current view's filter, if any.
     pub fn active_filter_query(&self) -> Option<&str> {
+        if self.show_describe {
+            return Some(self.describe_table.query.as_str())
+                .filter(|q| !q.is_empty());
+        }
         let explorer = &self.database_explorer;
         let query = match &explorer.state {
             DatabaseExplorerState::Connections => {
@@ -70,6 +77,9 @@ impl App<'_> {
     }
 
     pub fn filter_match_count(&self) -> usize {
+        if self.show_describe {
+            return self.describe_table.table.model.items.len();
+        }
         let explorer = &self.database_explorer;
         match &explorer.state {
             DatabaseExplorerState::Connections => {
@@ -100,6 +110,13 @@ impl App<'_> {
     }
 
     pub fn clear_filter(&mut self) {
+        if self.show_describe {
+            if self.active_filter_query().is_some() {
+                self.describe_table.clear_filter();
+                self.set_status("Filter cleared");
+            }
+            return;
+        }
         if self.has_active_filter() || self.active_filter_query().is_some() {
             let explorer = &mut self.database_explorer;
             match explorer.state {
@@ -140,6 +157,7 @@ impl App<'_> {
     pub(crate) fn apply_filter_with_query(&mut self, query: &str) {
         let explorer = &mut self.database_explorer;
         match explorer.state {
+            _ if self.show_describe => self.describe_table.apply_filter(query),
             DatabaseExplorerState::Connections => {
                 self.database_explorer.connections.apply_filter(query);
             }

@@ -36,4 +36,4 @@ cargo install c8s --locked && c8s
 | `i` | Daemon health |
 | `q` / `Ctrl-C` | Quit |
 
-`d` describes; `D` deletes. No `y` (no manifests). `/` filters the active list.
+`d` describes; `D` deletes. No `y` (no manifests). `/` filters the active list and searches logs and describe.
