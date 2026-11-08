@@ -1,3 +1,7 @@
+---
+source: crates/c8s/src/default_bars_test.rs
+expression: out
+---
 [list]
 a running only
 p processes

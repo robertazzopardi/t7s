@@ -1,3 +1,7 @@
+---
+source: crates/d7s/src/default_bars_test.rs
+expression: out
+---
 [Connections]
 # Global | 
 ? | Toggle help

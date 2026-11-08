@@ -28,5 +28,5 @@ fn default_bars_are_unchanged() {
     section(&mut out, "logs");
     section(&mut out, "processes");
     section(&mut out, "describe");
-    assert_eq!(out, include_str!("default_bars.golden"));
+    insta::assert_snapshot!(out);
 }

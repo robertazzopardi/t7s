@@ -57,7 +57,7 @@ fn default_bars_are_unchanged() {
         &config.bar("global-connections"),
     );
     section(&mut out, "global-explorer", &config.bar("global-explorer"));
-    assert_eq!(out, include_str!("default_bars.golden"));
+    insta::assert_snapshot!(out);
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn default_help_is_unchanged() {
         AppState::DatabaseConnected,
         &DatabaseExplorerState::SqlResults("q".into()),
     );
-    assert_eq!(out, include_str!("default_help.golden"));
+    insta::assert_snapshot!(out);
 }
 
 #[test]
