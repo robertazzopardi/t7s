@@ -2379,6 +2379,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cell_edit_keys_follow_remap() {
+        let mut app = tables_app("cell_remap").await;
+        run_cmd(&mut app, "table users").await;
+        assert!(app.config.keymap.set("cell-cancel", KeyCode::F(5)));
+        app.on_key_event(key('i')).unwrap();
+        assert!(app.is_cell_editing());
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        app.on_key_event(esc).unwrap();
+        assert!(app.is_cell_editing(), "old key is released");
+        let f5 = KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE);
+        app.on_key_event(f5).unwrap();
+        assert!(!app.is_cell_editing(), "new key fires");
+    }
+
+    #[tokio::test]
     async fn clearing_saved_nullable_cell_persists_sql_null() {
         let mut app = cell_update_table_app("clear_to_null").await;
         run_cmd(&mut app, "table cell_edit_row").await;

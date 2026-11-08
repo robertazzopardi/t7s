@@ -1,7 +1,7 @@
 use core::fmt;
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyEvent;
 use k9tui::{
     bg::spawn_keyed,
     error::Result,
@@ -770,11 +770,8 @@ impl App<'_> {
         if !key.modifiers.is_empty() {
             return false;
         }
-        let code = key.code;
-        if !matches!(
-            code,
-            KeyCode::Down | KeyCode::Up | KeyCode::Char('j' | 'k')
-        ) {
+        let nav = self.config.keymap.nav("table-data", key.code);
+        if !matches!(nav, Some(Nav::Down | Nav::Up)) {
             return false;
         }
 
@@ -800,15 +797,13 @@ impl App<'_> {
                 return false;
             }
 
-            if matches!(code, KeyCode::Char('j') | KeyCode::Down)
+            if nav == Some(Nav::Down)
                 && selected == len - 1
                 && meta.has_more_after
             {
                 Some(true)
             } else {
-                (matches!(code, KeyCode::Char('k') | KeyCode::Up)
-                    && selected == 0
-                    && meta.has_more_before)
+                (nav == Some(Nav::Up) && selected == 0 && meta.has_more_before)
                     .then_some(false)
             }
         };

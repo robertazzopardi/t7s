@@ -142,12 +142,6 @@ impl Keymap {
             .join(" / ")
     }
 
-    /// True if `code` is one of the keys bound to `action`.
-    #[must_use]
-    pub fn is(&self, action: &str, code: KeyCode) -> bool {
-        self.keys(action).contains(&code)
-    }
-
     /// True if `code` fires `action` on `screen`. A secondary key gives way
     /// to another action's primary key on the same screen.
     #[must_use]
@@ -319,8 +313,7 @@ mod tests {
     fn set_rebinds_known_actions_only() {
         let mut km = char_map(&[("quit", 'q')]);
         assert!(km.set("quit", KeyCode::Char('z')));
-        assert!(km.is("quit", KeyCode::Char('z')));
-        assert!(!km.is("quit", KeyCode::Char('q')));
+        assert_eq!(km.keys("quit"), [KeyCode::Char('z')]);
         assert!(!km.set("nope", KeyCode::Char('z')));
     }
 

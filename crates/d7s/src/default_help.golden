@@ -87,7 +87,7 @@ n / a | New row (blank draft)
 N | New row (column defaults)
 c | Duplicate row as draft
 s | Commit draft row
-D / Del | Delete row(s)
+D | Delete row(s)
 i | Edit selected cell
 r / R | Refresh
 # Cell edit | 

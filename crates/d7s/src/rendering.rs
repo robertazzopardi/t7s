@@ -100,7 +100,8 @@ impl App<'_> {
             (
                 &self.database_explorer.connection,
                 None,
-                self.database_explorer.recent_table_hotkeys(),
+                self.database_explorer
+                    .recent_table_hotkeys(&self.config.keymap),
             )
         };
 

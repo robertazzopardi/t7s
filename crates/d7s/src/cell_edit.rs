@@ -15,26 +15,6 @@ pub struct EditableCol {
     pub editable: bool,
 }
 
-/// Table-data Browse bindings that must not type-to-overwrite.
-///
-/// Keep in sync with `Char` arms in `handle_table_data_hotkeys` / global hotkeys
-/// / navigation so those keys still fall through when not editing a cell.
-pub const fn is_table_data_browse_binding(c: char) -> bool {
-    matches!(
-        c,
-        // app / overlays
-        'q' | '?' | ':' | '/' | '#' | ' '
-        // connection + explorer chrome
-        | 'e' | 'E' | 't' | 'd' | 'b' | 'w' | 'W' | 'A' | 'L' | 'o' | 'O' | 'p' | 'x'
-        // recent tables
-        | '1' | '2' | '3' | '4' | '5'
-        // table-data row ops
-        | 'n' | 'N' | 'a' | 'c' | 's' | 'i' | 'r' | 'R' | 'D' | 'S' | 'C'
-        // copy + motion
-        | 'y' | 'Y' | 'j' | 'k' | 'h' | 'l' | 'g' | 'G' | '0' | '$'
-    )
-}
-
 /// Fallback when column metadata is not loaded yet.
 pub fn all_editable_columns(num_columns: usize) -> Vec<EditableCol> {
     (0..num_columns)
@@ -112,25 +92,6 @@ pub fn prev_editable_column(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn width_toggle_key_is_browse_binding() {
-        assert!(is_table_data_browse_binding('W'));
-        assert!(is_table_data_browse_binding('w')); // watch, not width
-    }
-
-    #[test]
-    fn browse_bindings_include_create_and_commit_keys() {
-        for c in [
-            'q', 'e', 'E', 't', 'b', 'w', 'A', 'L', 'o', 'O', 'p', 'x', '1',
-            '5', 'n', 'N', 'c', 's', 'r', 'R', 'S', 'C', 'D', 'a', 'i', 'y',
-            'Y', 'd', '/', ':', '#', '?', 'j', 'k', 'h', 'l', 'g', 'G', '0',
-            '$',
-        ] {
-            assert!(is_table_data_browse_binding(c), "{c}");
-        }
-        assert!(!is_table_data_browse_binding('z'));
-    }
 
     #[test]
     fn composite_sqlite_pk_stays_editable() {

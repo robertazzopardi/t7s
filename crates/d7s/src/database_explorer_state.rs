@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use crossterm::event::KeyCode;
 use k9tui::{
-    keymap::Nav,
+    keymap::{Keymap, Nav},
     widgets::hotkey::{Hotkey, HotkeyDescription},
 };
 use ratatui::widgets::TableState;
@@ -17,6 +16,10 @@ use crate::{
     ui::widgets::{raw_table::RawTableRow, sql_executor::SqlExecutorState},
     virtual_table::VirtualTableMeta,
 };
+
+/// Actions that reopen the recent tables, most recent first.
+pub const RECENT_ACTIONS: [&str; 5] =
+    ["recent-1", "recent-2", "recent-3", "recent-4", "recent-5"];
 
 /// Groups all database exploration state together
 #[derive(Default)]
@@ -88,15 +91,12 @@ impl DatabaseExplorer {
 
     /// Hotkey strip for the MRU column (`1`–`5` → reopen table data).
     #[must_use]
-    pub fn recent_table_hotkeys(&self) -> Vec<Hotkey> {
+    pub fn recent_table_hotkeys(&self, keymap: &Keymap) -> Vec<Hotkey> {
         self.recent_tables
             .iter()
-            .enumerate()
-            .take(5)
-            .map(|(i, (schema, table))| Hotkey {
-                keycode: KeyCode::Char(
-                    (b'1' + u8::try_from(i).unwrap_or(0)) as char,
-                ),
+            .zip(RECENT_ACTIONS)
+            .map(|((schema, table), action)| Hotkey {
+                keycode: keymap.get(action),
                 description: HotkeyDescription::RecentTable {
                     schema: schema.clone(),
                     table: table.clone(),

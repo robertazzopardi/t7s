@@ -13,8 +13,7 @@ use crate::{
     app_state::{AppState, DatabaseExplorerState},
     cell_edit::{
         CellEditSession, EditableCol, all_editable_columns,
-        editable_columns_from_meta, is_table_data_browse_binding,
-        next_editable_column, prev_editable_column,
+        editable_columns_from_meta, next_editable_column, prev_editable_column,
     },
     database_explorer::{column_index_for_name, pk_value_pairs},
     db::{
@@ -261,11 +260,15 @@ impl App<'_> {
         if self.cell_edit.is_none() {
             return false;
         }
+        if self
+            .config
+            .keymap
+            .fires("cell-edit", "cell-cancel", key.code)
+        {
+            self.cancel_cell_edit();
+            return true;
+        }
         match key.code {
-            KeyCode::Esc => {
-                self.cancel_cell_edit();
-                true
-            }
             KeyCode::Backspace | KeyCode::Delete => {
                 if let Some(session) = self.cell_edit.as_mut() {
                     session.buffer.pop();
@@ -273,7 +276,6 @@ impl App<'_> {
                 self.sync_cell_edit_buffer_to_grid();
                 true
             }
-            KeyCode::Enter => false,
             KeyCode::Char(c)
                 if !c.is_control()
                     && allows_hotkey_modifiers(key.modifiers) =>
@@ -724,15 +726,17 @@ impl App<'_> {
         // Uppercase letters (`D`, `A`, ...) arrive with SHIFT set; only
         // reject other modifiers (Ctrl/Alt chords).
         if self.cell_edit.is_some() {
-            if key.code == KeyCode::Tab {
+            let keymap = &self.config.keymap;
+            let fires = |action| keymap.fires("cell-edit", action, key.code);
+            if fires("cell-next") {
                 self.finish_cell_edit_and_move_editable_column(true);
                 return Ok(true);
             }
-            if key.code == KeyCode::BackTab {
+            if fires("cell-previous") {
                 self.finish_cell_edit_and_move_editable_column(false);
                 return Ok(true);
             }
-            if key.code == KeyCode::Enter {
+            if fires("cell-done") {
                 self.finish_cell_edit();
                 return Ok(true);
             }
@@ -756,21 +760,22 @@ impl App<'_> {
             return Ok(false);
         }
         match key.code {
-            code if self.config.keymap.is("refresh", code)
-                || code == KeyCode::Char('R') =>
-            {
+            code if self.config.keymap.fires("table-data", "refresh", code) => {
                 self.reload_current_table_data(None);
                 Ok(true)
             }
-            code if self.config.keymap.is("new-row", code)
-                || code == KeyCode::Char('a') =>
-            {
+            code if self.config.keymap.fires("table-data", "new-row", code) => {
                 if self.table_data_add_blank_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                 }
                 Ok(true)
             }
-            code if self.config.keymap.is("defaults", code) => {
+            code if self.config.keymap.fires(
+                "table-data",
+                "defaults",
+                code,
+            ) =>
+            {
                 if let Some(n) = self.table_data_add_defaults_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                     // Set after begin so EDIT status does not clobber the count.
@@ -780,25 +785,40 @@ impl App<'_> {
                 }
                 Ok(true)
             }
-            code if self.config.keymap.is("edit", code) => {
+            code if self.config.keymap.fires("table-data", "edit", code) => {
                 self.begin_cell_edit(None);
                 Ok(true)
             }
-            code if self.config.keymap.is("duplicate", code) => {
+            code if self.config.keymap.fires(
+                "table-data",
+                "duplicate",
+                code,
+            ) =>
+            {
                 if self.table_data_duplicate_as_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                 }
                 Ok(true)
             }
-            code if self.config.keymap.is("commit", code) => {
+            code if self.config.keymap.fires("table-data", "commit", code) => {
                 self.table_data_commit_draft()?;
                 Ok(true)
             }
-            code if self.config.keymap.is("delete-row", code) => {
+            code if self.config.keymap.fires(
+                "table-data",
+                "delete-row",
+                code,
+            ) =>
+            {
                 self.table_data_request_delete();
                 Ok(true)
             }
-            KeyCode::Char(' ') => {
+            code if self.config.keymap.fires(
+                "table-data",
+                "toggle-select",
+                code,
+            ) =>
+            {
                 self.table_data_toggle_multi_select();
                 Ok(true)
             }
@@ -811,8 +831,9 @@ impl App<'_> {
                 Ok(true)
             }
             // A remapped action must reach `handle_hotkeys`, not start an edit.
+            // `C` and `S` have no action, but have never started an edit.
             KeyCode::Char(c)
-                if !is_table_data_browse_binding(c)
+                if !matches!(c, 'C' | 'S')
                     && !self.config.keymap.binds(key.code) =>
             {
                 if self.table_data_column_is_selected() {
@@ -868,6 +889,17 @@ mod tests {
                 .unwrap_or(false);
             assert_eq!(got, want, "{code:?} {modifiers:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn type_to_edit_skips_only_bound_keys() {
+        let mut app = table_app();
+        assert!(app.config.keymap.set("quit", KeyCode::Char('z')));
+        let none = KeyModifiers::NONE;
+        let freed = key(KeyCode::Char('q'), none);
+        assert!(app.handle_table_data_hotkeys(freed).unwrap(), "q can type");
+        let bound = key(KeyCode::Char('z'), none);
+        assert!(!app.handle_table_data_hotkeys(bound).unwrap(), "z quits");
     }
 
     #[tokio::test]
