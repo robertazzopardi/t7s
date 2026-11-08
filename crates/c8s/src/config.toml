@@ -1,0 +1,112 @@
+# Built-in c8s definitions, merged over k9tui's config.toml.
+[c8s.keys]
+running = "a"
+processes = "p"
+start-stop = ["s", "S"]
+restart = "r"
+logs = "l"
+exec = "e"
+describe = ["d", "enter"]
+remove = ["D", "delete"]
+health = "i"
+width = "W"
+containers = "1"
+images = "2"
+volumes = "3"
+networks = "4"
+output = "l"
+dedup = "d"
+previous = "p"
+history = "H"
+top = ["g", "home"]
+bottom = ["G", "end"]
+
+[c8s.screens.list]
+hotkeys = [
+  { action = "running", label = "running only" },
+  { action = "processes", label = "processes" },
+  { action = "start-stop", label = "start/stop" },
+  { action = "restart", label = "restart" },
+  { action = "logs", label = "logs" },
+  { action = "exec", label = "exec shell" },
+  { action = "describe", label = "describe" },
+  { action = "remove", label = "remove" },
+  { action = "health", label = "daemon health" },
+  { action = "width", label = "column width" },
+  { action = "command", label = "command" },
+]
+hidden = [
+  "containers", "images", "volumes", "networks",
+  "search", "quit", "back", "down", "up", "top", "bottom",
+]
+
+[c8s.screens.resources]
+hotkeys = [
+  { action = "describe", label = "describe" },
+  { action = "remove", label = "remove" },
+  { action = "health", label = "daemon health" },
+  { action = "width", label = "column width" },
+  { action = "command", label = "command" },
+]
+hidden = [
+  "containers", "images", "volumes", "networks",
+  "search", "quit", "back", "down", "up", "top", "bottom",
+]
+
+[c8s.screens.views]
+hotkeys = [
+  { action = "containers", label = "containers" },
+  { action = "images", label = "images" },
+  { action = "volumes", label = "volumes" },
+  { action = "networks", label = "networks" },
+]
+
+[c8s.screens.global]
+hotkeys = [
+  { action = "search", label = "search" },
+  { action = "quit", label = "quit" },
+]
+
+[c8s.screens.info]
+hidden = ["health", "quit", "back"]
+
+[c8s.screens.logs]
+hotkeys = [
+  { action = "down", label = "down" },
+  { action = "up", label = "up" },
+  { action = "page-up", label = "page up" },
+  { action = "page-down", label = "page down" },
+  { action = "top", label = "top" },
+  { action = "bottom", label = "follow" },
+  { action = "search", label = "search" },
+  { action = "dedup", label = "dedup" },
+  { action = "previous", label = "previous run" },
+  { action = "history", label = "full history" },
+  { action = "back", label = "back" },
+  { action = "quit", label = "back" },
+]
+
+[c8s.screens.processes]
+hotkeys = [
+  { action = "output", label = "output" },
+  { action = "down", label = "down" },
+  { action = "up", label = "up" },
+  { action = "top", label = "top" },
+  { action = "bottom", label = "bottom" },
+  { action = "width", label = "column width" },
+  { action = "back", label = "back" },
+  { action = "quit", label = "back" },
+]
+
+[c8s.screens.describe]
+hotkeys = [
+  { action = "down", label = "down" },
+  { action = "up", label = "up" },
+  { action = "page-up", label = "page up" },
+  { action = "page-down", label = "page down" },
+  { action = "top", label = "top" },
+  { action = "bottom", label = "bottom" },
+  { action = "search", label = "search" },
+  { action = "back", label = "back" },
+  { action = "quit", label = "back" },
+]

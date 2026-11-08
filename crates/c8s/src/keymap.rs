@@ -1,57 +1,11 @@
-use crossterm::event::KeyCode;
 use k9tui::config::AppSpec;
 #[cfg(test)]
 use k9tui::config::defaults;
 
-/// `c8s` config spec. Navigation, the number keys and aliases stay fixed.
+/// `c8s` definitions live in `config.toml`.
 pub const SPEC: AppSpec = AppSpec {
     name: "c8s",
-    actions: &[
-        ("running", KeyCode::Char('a')),
-        ("processes", KeyCode::Char('p')),
-        ("start-stop", KeyCode::Char('s')),
-        ("restart", KeyCode::Char('r')),
-        ("logs", KeyCode::Char('l')),
-        ("exec", KeyCode::Char('e')),
-        ("describe", KeyCode::Char('d')),
-        ("remove", KeyCode::Char('D')),
-        ("health", KeyCode::Char('i')),
-        ("width", KeyCode::Char('W')),
-    ],
-    screens: &[(
-        "resource list",
-        &[
-            "running",
-            "processes",
-            "start-stop",
-            "restart",
-            "logs",
-            "exec",
-            "describe",
-            "remove",
-            "health",
-            "width",
-            "quit",
-            "search",
-            "command",
-        ],
-    )],
-    fixed: &[
-        KeyCode::Esc,
-        KeyCode::Enter,
-        KeyCode::Delete,
-        KeyCode::Up,
-        KeyCode::Down,
-        KeyCode::Char('j'),
-        KeyCode::Char('k'),
-        KeyCode::Char('g'),
-        KeyCode::Char('G'),
-        KeyCode::Char('S'),
-        KeyCode::Char('1'),
-        KeyCode::Char('2'),
-        KeyCode::Char('3'),
-        KeyCode::Char('4'),
-    ],
+    config: include_str!("config.toml"),
 };
 
 #[cfg(test)]
@@ -73,7 +27,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_have_no_errors() {
+    fn builtin_files_validate() {
         let config = resolve(None, &SPEC, "test").unwrap();
         assert_eq!(config.warnings, Vec::<String>::new());
     }
@@ -98,12 +52,10 @@ mod tests {
     }
 
     #[test]
-    fn every_action_is_tagged_on_the_bar() {
-        let bar = bar();
-        let tagged: Vec<_> = bar.iter().filter_map(|h| h.action).collect();
-        for (action, _) in SPEC.actions {
-            assert!(tagged.contains(action), "{action} is not on the bar");
-        }
+    fn conflict_on_logs_screen_is_fatal() {
+        let errors = resolve(Some("[c8s.keys]\ndedup = \"j\"\n"), &SPEC, "c")
+            .unwrap_err();
+        assert!(errors.join("\n").contains("dedup"));
     }
 
     /// Every example a user can copy from the README must start the app.

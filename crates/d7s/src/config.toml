@@ -1,0 +1,131 @@
+# Built-in d7s definitions, merged over k9tui's config.toml.
+[d7s.keys]
+new-connection = "n"
+edit-connection = "e"
+delete-connection = "D"
+open-connection = "o"
+reconnect = "O"
+ping = "p"
+describe = "d"
+sql-editor = "e"
+table-structure = "t"
+run-sql = "E"
+copy = "y"
+copy-row = "Y"
+help = "?"
+watch = "w"
+width = "W"
+query-log = "L"
+activity = "A"
+export = "x"
+refresh = ["r", "R"]
+new-row = ["n", "a"]
+defaults = "N"
+edit = "i"
+duplicate = "c"
+commit = "s"
+delete-row = ["D", "delete"]
+drill = "enter"
+jump-row = "#"
+toggle-select = "space"
+recent-1 = "1"
+recent-2 = "2"
+recent-3 = "3"
+recent-4 = "4"
+recent-5 = "5"
+cell-cancel = "esc"
+cell-done = "enter"
+cell-next = "tab"
+cell-previous = "back-tab"
+
+[d7s.screens.connections]
+hotkeys = [
+  { action = "new-connection", label = "New Connection" },
+  { action = "edit-connection", label = "Edit Connection" },
+  { action = "delete-connection", label = "Delete Connection" },
+  { action = "open-connection", label = "Open Connection" },
+  { action = "ping", label = "Ping Health" },
+  { action = "describe", label = "Describe" },
+  { action = "search", label = "Search" },
+  { action = "command", label = "Command" },
+]
+hidden = [
+  "reconnect", "copy", "copy-row", "width", "help", "quit", "back", "drill",
+  "down", "up", "left", "right", "top", "bottom", "first-column", "last-column",
+]
+
+[d7s.screens.global-connections]
+hotkeys = [
+  { action = "help", label = "Help" },
+  { action = "quit", label = "Quit" },
+]
+
+[d7s.screens.global-explorer]
+hotkeys = [
+  { action = "help", label = "Help" },
+  { action = "back", label = "Back" },
+]
+
+[d7s.screens.database]
+hotkeys = [
+  { action = "sql-editor", label = "SQL Editor" },
+  { action = "table-structure", label = "Table structure" },
+  { action = "describe", label = "Describe" },
+  { action = "run-sql", label = "Run SQL" },
+  { action = "search", label = "Search" },
+  { action = "command", label = "Command" },
+  { action = "copy", label = "Copy value" },
+  { action = "activity", label = "Activity (Postgres)" },
+  { action = "query-log", label = "Query log" },
+]
+hidden = [
+  "copy-row", "width", "help", "quit", "back", "drill",
+  "recent-1", "recent-2", "recent-3", "recent-4", "recent-5",
+  "down", "up", "left", "right", "top", "bottom", "first-column", "last-column",
+]
+
+[d7s.screens.table-data]
+hotkeys = [
+  { action = "new-row", label = "New row" },
+  { action = "defaults", label = "Defaults" },
+  { action = "duplicate", label = "Duplicate" },
+  { action = "commit", label = "Commit" },
+  { action = "delete-row", label = "Delete" },
+  { action = "edit", label = "Edit" },
+]
+hidden = [
+  "sql-editor", "table-structure", "describe", "search", "command", "copy",
+  "activity", "query-log", "copy-row", "width", "help", "quit", "back", "drill",
+  "refresh", "jump-row", "toggle-select",
+  "recent-1", "recent-2", "recent-3", "recent-4", "recent-5",
+  "down", "up", "left", "right", "top", "bottom", "first-column", "last-column",
+]
+
+[d7s.screens.cell-edit]
+typing = true
+hotkeys = [
+  { action = "cell-cancel", label = "Cancel" },
+  { action = "cell-done", label = "Done" },
+  { action = "cell-next", label = "Next col" },
+  { action = "cell-previous", label = "Prev col" },
+  { key = "Ctrl+e", label = "Modal" },
+  { key = "Backspace", label = "Delete char" },
+]
+
+[d7s.screens.sql-results]
+hidden = [
+  "sql-editor", "table-structure", "describe", "run-sql", "search", "command",
+  "copy", "activity", "query-log", "copy-row", "watch", "export", "width",
+  "help", "quit", "back", "drill",
+  "recent-1", "recent-2", "recent-3", "recent-4", "recent-5",
+  "down", "up", "left", "right", "top", "bottom", "first-column", "last-column",
+]
+
+[d7s.screens.help]
+hidden = ["help", "quit", "back", "down", "up", "top", "bottom"]
+
+[d7s.screens.describe]
+hidden = ["describe", "search", "quit", "back", "down", "up", "top", "bottom"]
+
+[d7s.screens.query-log]
+hidden = ["query-log", "quit", "back", "down", "up", "top", "bottom"]
