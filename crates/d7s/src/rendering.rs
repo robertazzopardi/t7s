@@ -303,6 +303,13 @@ impl App<'_> {
         ])
     }
 
+    fn no_matches_hint(&self) -> String {
+        format!(
+            "No matches — {} to clear filter",
+            self.config.keymap.label("back")
+        )
+    }
+
     fn empty_state_hint(&self) -> Option<String> {
         if self.show_help || self.show_query_log {
             return None;
@@ -315,11 +322,11 @@ impl App<'_> {
                 .model
                 .items
                 .is_empty()
-                .then(|| "No matches — Esc to clear filter".to_string());
+                .then(|| self.no_matches_hint());
         }
 
         if self.has_active_filter() && self.active_table_is_empty() {
-            return Some("No matches — Esc to clear filter".to_string());
+            return Some(self.no_matches_hint());
         }
 
         match &self.database_explorer.state {

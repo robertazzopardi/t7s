@@ -20,10 +20,12 @@ pub fn default_idle_hint(
             DatabaseExplorerState::TableData(_, _),
         ) => {
             let new = keymap.label("new-row");
-            format!("{new} new row · Enter edit cell · {help} help")
+            let edit = keymap.label("drill");
+            format!("{new} new row · {edit} edit cell · {help} help")
         }
         (AppState::DatabaseConnected, _) => {
-            format!("{help} help · Esc back · {quit} quit")
+            let back = keymap.label("back");
+            format!("{help} help · {back} back · {quit} quit")
         }
     }
 }
@@ -56,6 +58,8 @@ mod tests {
         assert!(keymap.set("new-connection", KeyCode::Char('m')));
         assert!(keymap.set("quit", KeyCode::Char('z')));
         assert!(keymap.set("new-row", KeyCode::Char('x')));
+        assert!(keymap.set("drill", KeyCode::F(2)));
+        assert!(keymap.set("back", KeyCode::F(3)));
         assert_eq!(
             default_idle_hint(
                 AppState::ConnectionList,
@@ -70,7 +74,7 @@ mod tests {
                 &DatabaseExplorerState::TableData("s".into(), "t".into()),
                 &keymap
             ),
-            "x new row · Enter edit cell · F1 help"
+            "x new row · F2 edit cell · F1 help"
         );
     }
 }

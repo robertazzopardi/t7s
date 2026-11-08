@@ -550,7 +550,8 @@ impl App<'_> {
                     } else {
                         self.draft_discard_pending = true;
                         self.set_status(format!(
-                            "Draft row pending — Esc again to discard, {} to commit",
+                            "Draft row pending — {} again to discard, {} to commit",
+                            self.config.keymap.label("back"),
                             self.config.keymap.label("commit")
                         ));
                     }

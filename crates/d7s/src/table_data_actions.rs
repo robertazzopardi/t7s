@@ -351,7 +351,7 @@ impl App<'_> {
             is_draft: true,
         };
         self.insert_draft_row_below_cursor(row);
-        self.set_status("Draft row — edit cells (Enter), commit with s");
+        self.set_status(self.draft_created_hint("Draft row"));
         Ok(true)
     }
 
@@ -511,8 +511,16 @@ impl App<'_> {
                 .map_or(len, |p| (p + 1).min(len))
         };
         self.insert_draft_row_at(insert_at, row);
-        self.set_status("Draft copy — edit cells (Enter), commit with s");
+        self.set_status(self.draft_created_hint("Draft copy"));
         Ok(true)
+    }
+
+    fn draft_created_hint(&self, what: &str) -> String {
+        format!(
+            "{what} — edit cells ({}), commit with {}",
+            self.config.keymap.label("drill"),
+            self.config.keymap.label("commit")
+        )
     }
 
     pub(crate) fn table_data_commit_draft(&mut self) -> Result<()> {

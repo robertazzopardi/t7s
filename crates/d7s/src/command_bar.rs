@@ -154,7 +154,8 @@ impl App<'_> {
 
     pub(crate) fn draft_pending_hint(&self) -> String {
         format!(
-            "Draft row pending - Esc to discard, {} to commit",
+            "Draft row pending - {} to discard, {} to commit",
+            self.config.keymap.label("back"),
             self.config.keymap.label("commit")
         )
     }
@@ -213,9 +214,12 @@ impl App<'_> {
         );
         if changes_view && self.state != AppState::DatabaseConnected {
             self.set_status(if cmd == Command::Verb(Verb::Connections) {
-                "Already on the connections list."
+                "Already on the connections list.".to_owned()
             } else {
-                "Not connected - open a connection first (Enter on a connection)."
+                format!(
+                    "Not connected - open a connection first ({} on a connection).",
+                    self.config.keymap.label("drill")
+                )
             });
             return;
         }
