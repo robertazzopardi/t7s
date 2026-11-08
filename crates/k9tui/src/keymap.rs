@@ -142,25 +142,27 @@ impl Keymap {
             .join(" / ")
     }
 
-    /// True if `code` fires `action` on `screen`. A secondary key gives way
-    /// to another action's primary key on the same screen.
+    /// True if `code` fires `action` on `screen`. An action that isn't live
+    /// on a known screen never fires there, and a secondary key gives way to
+    /// another action's primary key. An unknown screen applies neither rule.
     #[must_use]
     pub fn fires(&self, screen: &str, action: &str, code: KeyCode) -> bool {
         let keys = self.keys(action);
         if !keys.contains(&code) {
             return false;
         }
-        if keys.first() == Some(&code) {
-            return true;
-        }
-        self.screens
+        let Some(found) = self
+            .screens
             .iter()
             .find(|candidate| candidate.name == screen)
-            .is_none_or(|found| {
-                !found.actions.iter().any(|other| {
+        else {
+            return true;
+        };
+        found.actions.iter().any(|live| live == action)
+            && (keys.first() == Some(&code)
+                || !found.actions.iter().any(|other| {
                     other != action && self.primary(other) == Some(code)
-                })
-            })
+                }))
     }
 
     /// The movement `code` fires on `screen`, if any.
@@ -464,6 +466,28 @@ mod tests {
         ]);
         km.set_screens(vec![screen("sql", &["right", "watch"], false)]);
         km
+    }
+
+    #[test]
+    fn off_screen_actions_do_not_fire_on_a_known_screen() {
+        let mut km = list_map(&[
+            ("left", &[KeyCode::Char('h')]),
+            ("top", &[KeyCode::Char('h')]),
+        ]);
+        km.set_screens(vec![screen("logs", &["top"], false)]);
+        assert!(!km.fires("logs", "left", KeyCode::Char('h')));
+        assert_eq!(km.nav("logs", KeyCode::Char('h')), Some(Nav::Top));
+        assert_eq!(km.nav("other", KeyCode::Char('h')), Some(Nav::Left));
+    }
+
+    #[test]
+    fn every_nav_action_follows_a_remap() {
+        for (action, nav) in NAV_ACTIONS {
+            let mut km = list_map(&[(action, &[KeyCode::Char('a')])]);
+            km.set(action, KeyCode::F(1));
+            assert_eq!(km.nav("any", KeyCode::F(1)), Some(nav), "{action}");
+            assert_eq!(km.nav("any", KeyCode::Char('a')), None, "{action}");
+        }
     }
 
     #[test]

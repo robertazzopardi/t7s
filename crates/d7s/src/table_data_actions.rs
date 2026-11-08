@@ -830,7 +830,9 @@ impl App<'_> {
                 self.table_data_toggle_multi_select();
                 Ok(true)
             }
-            KeyCode::Backspace | KeyCode::Delete => {
+            KeyCode::Backspace | KeyCode::Delete
+                if !self.config.keymap.binds(key.code) =>
+            {
                 // Require an explicit column selection so a stray key on a
                 // freshly opened table cannot overwrite column 0 (often the PK).
                 if self.table_data_column_is_selected() {
@@ -908,6 +910,14 @@ mod tests {
         assert!(app.handle_table_data_hotkeys(freed).unwrap(), "q can type");
         let bound = key(KeyCode::Char('z'), none);
         assert!(!app.handle_table_data_hotkeys(bound).unwrap(), "z quits");
+    }
+
+    #[tokio::test]
+    async fn backspace_reaches_a_remapped_action() {
+        let mut app = table_app();
+        assert!(app.config.keymap.set("back", KeyCode::Backspace));
+        let event = key(KeyCode::Backspace, KeyModifiers::NONE);
+        assert!(!app.handle_table_data_hotkeys(event).unwrap());
     }
 
     #[tokio::test]

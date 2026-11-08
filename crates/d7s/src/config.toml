@@ -122,13 +122,13 @@ hidden = [
 ]
 
 [d7s.screens.help]
-hidden = ["help", "quit", "back", "down", "up", "top", "bottom"]
+hidden = ["help", "quit", "back", "down", "up", "left", "right", "top", "bottom"]
 
 [d7s.screens.describe]
-hidden = ["describe", "search", "quit", "back", "down", "up", "top", "bottom"]
+hidden = ["describe", "search", "quit", "back", "down", "up", "left", "right", "top", "bottom"]
 
 [d7s.screens.query-log]
-hidden = ["query-log", "quit", "back", "down", "up", "top", "bottom"]
+hidden = ["query-log", "quit", "back", "down", "up", "left", "right", "top", "bottom"]
 
 [d7s.help.global]
 title = "Global"

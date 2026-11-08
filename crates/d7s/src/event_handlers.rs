@@ -28,14 +28,13 @@ use crate::{
     ui::widgets::connection_modal::{ModalAction, TestResult},
 };
 
-fn should_clear_status_on_key(
-    key: KeyEvent,
-    keymap: &Keymap,
-    screen: &str,
-) -> bool {
-    keymap.nav(screen, key.code).is_none()
-        && !keymap.fires(screen, "copy", key.code)
-        && !keymap.fires(screen, "copy-row", key.code)
+/// Status handling isn't tied to a screen, so no screen rule applies.
+const ANY_SCREEN: &str = "";
+
+fn should_clear_status_on_key(key: KeyEvent, keymap: &Keymap) -> bool {
+    keymap.nav(ANY_SCREEN, key.code).is_none()
+        && !keymap.fires(ANY_SCREEN, "copy", key.code)
+        && !keymap.fires(ANY_SCREEN, "copy-row", key.code)
 }
 
 impl App<'_> {
@@ -53,9 +52,7 @@ impl App<'_> {
         }
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                let screen = self.current_screen();
-                if should_clear_status_on_key(key, &self.config.keymap, screen)
-                {
+                if should_clear_status_on_key(key, &self.config.keymap) {
                     self.clear_status();
                 }
                 // Nav keys leave the "Esc again to discard" status on screen
@@ -63,8 +60,8 @@ impl App<'_> {
                 // must not silently clear the pending flag it describes.
                 // Esc is excluded here because its own handler below reads
                 // this flag to decide first-press vs. second-press.
-                if should_clear_status_on_key(key, &self.config.keymap, screen)
-                    && !self.config.keymap.fires(screen, "back", key.code)
+                if should_clear_status_on_key(key, &self.config.keymap)
+                    && !self.config.keymap.fires(ANY_SCREEN, "back", key.code)
                 {
                     self.draft_discard_pending = false;
                 }
@@ -1060,6 +1057,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn off_screen_recent_key_leaves_connection_actions_alone() {
+        let mut app = App::default();
+        assert!(app.config.keymap.set("recent-1", KeyCode::Char('p')));
+        assert!(app.handle_hotkeys(key('p')), "p still pings");
+    }
+
+    #[tokio::test]
+    async fn off_screen_run_sql_leaves_jump_row_alone() {
+        let mut app = App {
+            state: AppState::DatabaseConnected,
+            ..App::default()
+        };
+        app.database_explorer.state =
+            DatabaseExplorerState::TableData("s".into(), "t".into());
+        assert!(app.config.keymap.set("run-sql", KeyCode::Char('#')));
+        assert!(app.handle_hotkeys(key('#')), "# still jumps");
+    }
+
+    #[tokio::test]
+    async fn left_still_moves_in_help_describe_and_query_log() {
+        let keymap = App::default().config.keymap;
+        for screen in ["help", "describe", "query-log"] {
+            let h = KeyCode::Char('h');
+            assert_eq!(keymap.nav(screen, h), Some(Nav::Left), "{screen}");
+        }
+    }
+
+    #[tokio::test]
     async fn draft_pending_hint_names_the_commit_key() {
         let mut app = App::default();
         assert!(app.draft_pending_hint().contains("s to commit"));
@@ -1163,22 +1188,10 @@ mod tests {
     #[tokio::test]
     async fn copy_status_survives_remapped_copy_key() {
         let mut app = App::default();
-        assert!(!should_clear_status_on_key(
-            key('y'),
-            &app.config.keymap,
-            "connections"
-        ));
+        assert!(!should_clear_status_on_key(key('y'), &app.config.keymap));
         assert!(app.config.keymap.set("copy", KeyCode::Char('z')));
-        assert!(!should_clear_status_on_key(
-            key('z'),
-            &app.config.keymap,
-            "connections"
-        ));
-        assert!(should_clear_status_on_key(
-            key('y'),
-            &app.config.keymap,
-            "connections"
-        ));
+        assert!(!should_clear_status_on_key(key('z'), &app.config.keymap));
+        assert!(should_clear_status_on_key(key('y'), &app.config.keymap));
     }
 
     #[tokio::test]

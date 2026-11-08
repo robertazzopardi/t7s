@@ -19,6 +19,13 @@ use crate::{
     command::{Command, resolve, suggest},
 };
 
+const fn is_ctrl_c(key: KeyEvent) -> bool {
+    matches!(
+        (key.modifiers, key.code),
+        (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C'))
+    )
+}
+
 impl App {
     pub fn on_key_event<B: Backend>(
         &mut self,
@@ -30,7 +37,12 @@ impl App {
                 self.on_key_connect_error(key);
                 Ok(())
             }
-            AppState::Connecting => Ok(()),
+            AppState::Connecting => {
+                if is_ctrl_c(key) {
+                    self.quit();
+                }
+                Ok(())
+            }
             AppState::List => self.on_key_list(key, terminal),
             AppState::Logs { .. } => {
                 self.on_key_logs(key);
@@ -166,6 +178,10 @@ impl App {
     #[allow(clippy::wildcard_enum_match_arm)]
     fn on_key_logs(&mut self, key: KeyEvent) {
         if self.log_search_open {
+            if is_ctrl_c(key) {
+                self.quit();
+                return;
+            }
             match key.code {
                 KeyCode::Esc => {
                     self.log_filter.clear();
@@ -207,7 +223,9 @@ impl App {
             }
             _ if fires("quit") || fires("back") => self.log_filter.clear(),
             _ if fires("search") => self.log_search_open = true,
-            (KeyModifiers::NONE, ..) if fires("dedup") => {
+            _ if key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
+                && fires("dedup") =>
+            {
                 self.log_dedup = self.log_dedup.next();
             }
             _ if fires("history") => self.load_full_logs(),
@@ -859,6 +877,58 @@ mod tests {
         app.on_key_connect_error(char_key('q'));
         assert!(app.running, "old key released");
         app.on_key_connect_error(char_key('z'));
+        assert!(!app.running);
+    }
+
+    #[tokio::test]
+    async fn left_and_right_stay_off_the_list() {
+        let mut app = app();
+        let mut t = term();
+        app.on_key_event(char_key('h'), &mut t).unwrap();
+        assert_eq!(app.containers.view.state.selected_column(), None);
+    }
+
+    #[tokio::test]
+    async fn off_screen_left_does_not_beat_top_in_logs() {
+        let mut app = app();
+        assert!(app.config.keymap.set("top", KeyCode::Char('h')));
+        app.log_view_len = 100;
+        app.log_viewport_height = 10;
+        app.log_scroll = 30;
+        app.on_key_logs(char_key('h'));
+        assert_eq!(app.log_scroll, 0);
+    }
+
+    #[tokio::test]
+    async fn uppercase_remap_fires_with_shift() {
+        let mut app = app();
+        assert!(app.config.keymap.set("dedup", KeyCode::Char('D')));
+        let before = app.log_dedup;
+        app.on_key_logs(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
+        assert_ne!(app.log_dedup, before);
+    }
+
+    #[tokio::test]
+    async fn ctrl_c_quits_during_log_search() {
+        let mut app = app();
+        app.running = true;
+        app.log_search_open = true;
+        app.on_key_logs(KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        ));
+        assert!(!app.running);
+        assert_eq!(app.log_filter, "");
+    }
+
+    #[tokio::test]
+    async fn ctrl_c_quits_while_connecting() {
+        let mut app = app();
+        let mut t = term();
+        app.running = true;
+        app.state = AppState::Connecting;
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        app.on_key_event(ctrl_c, &mut t).unwrap();
         assert!(!app.running);
     }
 
