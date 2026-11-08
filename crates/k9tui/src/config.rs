@@ -301,8 +301,12 @@ pub fn load(spec: &AppSpec) -> Result<Config, Vec<String>> {
     };
     let path =
         config_path(env::var_os("XDG_CONFIG_HOME").as_deref(), dirs.home_dir());
+    load_file(&path, spec)
+}
+
+fn load_file(path: &Path, spec: &AppSpec) -> Result<Config, Vec<String>> {
     let source = path.display().to_string();
-    match fs::read_to_string(&path) {
+    match fs::read_to_string(path) {
         Ok(text) => resolve(Some(&text), spec, &source),
         Err(error) if error.kind() == ErrorKind::NotFound => {
             resolve(None, spec, &source)
@@ -358,6 +362,14 @@ mod tests {
             assert!(error.contains("cfg.toml"), "no source in {error}");
         }
         errors.join("\n")
+    }
+
+    #[test]
+    fn unreadable_file_is_fatal() {
+        // A directory exists but can't be read as a file.
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let errors = load_file(dir, &SPEC).unwrap_err();
+        assert!(errors.join("\n").contains(env!("CARGO_MANIFEST_DIR")));
     }
 
     fn c(ch: char) -> KeyCode {
