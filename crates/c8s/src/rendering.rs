@@ -31,7 +31,7 @@ impl App {
         match &self.state {
             AppState::Connecting => Self::render_connecting(frame),
             AppState::ConnectError(message) => {
-                Self::render_connect_error(frame, message);
+                self.render_connect_error(frame, message);
             }
             AppState::List => self.render_list(frame),
             AppState::Logs { name, .. } => {
@@ -40,7 +40,7 @@ impl App {
             }
             AppState::Info(health) => {
                 let health = health.clone();
-                Self::render_daemon_health(frame, &health);
+                self.render_daemon_health(frame, &health);
             }
             AppState::Describe { name, text } => {
                 let name = name.clone();
@@ -134,9 +134,12 @@ impl App {
             .render(centered(area), frame.buffer_mut());
     }
 
-    fn render_connect_error(frame: &mut Frame, message: &str) {
+    fn render_connect_error(&self, frame: &mut Frame, message: &str) {
         let area = frame.area();
-        let text = format!("{message}\n\nPress r to retry, q to quit.");
+        let retry = self.config.keymap.label("retry");
+        let quit = self.config.keymap.label("quit");
+        let text =
+            format!("{message}\n\nPress {retry} to retry, {quit} to quit.");
         Paragraph::new(text)
             .style(Style::default().fg(Color::Red))
             .alignment(Alignment::Center)
@@ -146,10 +149,16 @@ impl App {
 
     /// c8s's single-daemon analog of a fleet health dashboard: this daemon's
     /// version/info, since there's only ever one daemon connected to summarize.
-    fn render_daemon_health(frame: &mut Frame, health: &DaemonHealth) {
+    fn render_daemon_health(&self, frame: &mut Frame, health: &DaemonHealth) {
         let area = frame.area();
-        let mut text = health.lines().join("\n");
-        text.push_str("\n\nPress i, q, or Esc to close.");
+        let keymap = &self.config.keymap;
+        let text = format!(
+            "{}\n\nPress {}, {}, or {} to close.",
+            health.lines().join("\n"),
+            keymap.label("health"),
+            keymap.label("quit"),
+            keymap.label("back")
+        );
         let block = Block::new()
             .borders(Borders::ALL)
             .border_style(theme::border())

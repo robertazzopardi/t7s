@@ -18,6 +18,7 @@ output = "l"
 dedup = "d"
 previous = "p"
 history = "H"
+retry = ["r", "enter"]
 top = ["g", "home"]
 bottom = ["G", "end"]
 
@@ -69,6 +70,9 @@ hotkeys = [
 
 [c8s.screens.info]
 hidden = ["health", "quit", "back"]
+
+[c8s.screens.connect-error]
+hidden = ["retry", "quit"]
 
 [c8s.screens.logs]
 hotkeys = [

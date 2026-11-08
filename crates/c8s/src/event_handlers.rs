@@ -52,31 +52,30 @@ impl App {
     }
 
     fn on_key_info(&mut self, key: KeyEvent) {
+        let keymap = &self.config.keymap;
+        let fires = |action| keymap.fires("info", action, key.code);
         match (key.modifiers, key.code) {
-            (_, KeyCode::Char('q' | 'i') | KeyCode::Esc) => {
+            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
+            _ if fires("health") || fires("quit") || fires("back") => {
                 self.state = AppState::List;
             }
-            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
             _ => {}
         }
     }
 
-    #[allow(clippy::wildcard_enum_match_arm)]
     fn on_key_processes(&mut self, key: KeyEvent) {
+        let keymap = &self.config.keymap;
+        let fires = |action| keymap.fires("processes", action, key.code);
         match (key.modifiers, key.code) {
-            (_, KeyCode::Char('q') | KeyCode::Esc) => self.close_processes(),
             (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
-            (_, KeyCode::Char('l')) => self.open_process_output(),
-            (_, KeyCode::Char('W')) => self.toggle_column_width_mode(),
-            (_, KeyCode::Char('j') | KeyCode::Down) => {
-                self.navigate_processes(Nav::Down);
+            _ if fires("quit") || fires("back") => self.close_processes(),
+            _ if fires("output") => self.open_process_output(),
+            _ if fires("width") => self.toggle_column_width_mode(),
+            _ => {
+                if let Some(nav) = keymap.nav("processes", key.code) {
+                    self.navigate_processes(nav);
+                }
             }
-            (_, KeyCode::Char('k') | KeyCode::Up) => {
-                self.navigate_processes(Nav::Up);
-            }
-            (_, KeyCode::Char('g')) => self.navigate_processes(Nav::Top),
-            (_, KeyCode::Char('G')) => self.navigate_processes(Nav::Bottom),
-            _ => {}
         }
     }
 
@@ -114,47 +113,52 @@ impl App {
         let max_start = self
             .describe_view_len
             .saturating_sub(self.describe_viewport_height);
+        let keymap = &self.config.keymap;
+        let fires = |action| keymap.fires("describe", action, key.code);
         match (key.modifiers, key.code) {
-            (_, KeyCode::Char('q') | KeyCode::Esc)
-                if !self.describe_filter.is_empty() =>
+            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
+            _ if (fires("quit") || fires("back"))
+                && !self.describe_filter.is_empty() =>
             {
                 self.describe_filter.clear();
                 self.describe_scroll = 0;
             }
-            (_, KeyCode::Char('q') | KeyCode::Esc) => self.close_describe(),
-            (_, KeyCode::Char('/')) => self.describe_search_open = true,
-            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
-            (_, KeyCode::Char('k') | KeyCode::Up) => {
-                self.describe_scroll = self.describe_scroll.saturating_sub(1);
-            }
-            (_, KeyCode::Char('j') | KeyCode::Down) => {
-                self.describe_scroll =
-                    (self.describe_scroll + 1).min(max_start);
-            }
-            (_, KeyCode::PageUp) => {
-                self.describe_scroll = self.describe_scroll.saturating_sub(10);
-            }
-            (_, KeyCode::PageDown) => {
-                self.describe_scroll =
-                    (self.describe_scroll + 10).min(max_start);
-            }
-            (_, KeyCode::Char('g') | KeyCode::Home) => self.describe_scroll = 0,
-            (_, KeyCode::Char('G') | KeyCode::End) => {
-                self.describe_scroll = max_start;
-            }
-            _ => {}
+            _ if fires("quit") || fires("back") => self.close_describe(),
+            _ if fires("search") => self.describe_search_open = true,
+            _ => match keymap.nav("describe", key.code) {
+                Some(Nav::Up) => {
+                    self.describe_scroll =
+                        self.describe_scroll.saturating_sub(1);
+                }
+                Some(Nav::Down) => {
+                    self.describe_scroll =
+                        (self.describe_scroll + 1).min(max_start);
+                }
+                Some(Nav::PageUp) => {
+                    self.describe_scroll =
+                        self.describe_scroll.saturating_sub(10);
+                }
+                Some(Nav::PageDown) => {
+                    self.describe_scroll =
+                        (self.describe_scroll + 10).min(max_start);
+                }
+                Some(Nav::Top) => self.describe_scroll = 0,
+                Some(Nav::Bottom) => self.describe_scroll = max_start,
+                Some(
+                    Nav::Left | Nav::Right | Nav::FirstColumn | Nav::LastColumn,
+                )
+                | None => {}
+            },
         }
     }
 
     fn on_key_connect_error(&mut self, key: KeyEvent) {
+        let keymap = &self.config.keymap;
+        let fires = |action| keymap.fires("connect-error", action, key.code);
         match (key.modifiers, key.code) {
-            (_, KeyCode::Char('r') | KeyCode::Enter) => {
-                self.connect();
-            }
-            (_, KeyCode::Char('q'))
-            | (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
-                self.quit();
-            }
+            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
+            _ if fires("retry") => self.connect(),
+            _ if fires("quit") => self.quit(),
             _ => {}
         }
     }
@@ -181,45 +185,46 @@ impl App {
 
         let max_start =
             self.log_view_len.saturating_sub(self.log_viewport_height);
-        match (key.modifiers, key.code) {
-            (_, KeyCode::Char('q') | KeyCode::Esc)
-                if self.log_filter.is_empty() =>
-            {
-                self.close_logs();
-            }
-            (_, KeyCode::Char('q') | KeyCode::Esc) => self.log_filter.clear(),
-            (_, KeyCode::Char('/')) => self.log_search_open = true,
-            (KeyModifiers::NONE, KeyCode::Char('d')) => {
-                self.log_dedup = self.log_dedup.next();
-            }
-            (_, KeyCode::Char('H')) => self.load_full_logs(),
-            (_, KeyCode::Char('p')) => self.toggle_previous_logs(),
-            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
-            (_, KeyCode::Char('k') | KeyCode::Up) => {
-                self.log_follow = false;
-                self.log_scroll = self.log_scroll.saturating_sub(1);
-            }
-            (_, KeyCode::Char('j') | KeyCode::Down) => {
-                self.log_scroll = (self.log_scroll + 1).min(max_start);
-                self.log_follow = self.log_scroll >= max_start;
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('u'))
-            | (_, KeyCode::PageUp) => {
+        let keymap = &self.config.keymap;
+        let fires = |action| keymap.fires("logs", action, key.code);
+        let nav = keymap.nav("logs", key.code);
+        match (key.modifiers, key.code, nav) {
+            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C'), _) => self.quit(),
+            (KeyModifiers::CONTROL, KeyCode::Char('u'), _)
+            | (_, _, Some(Nav::PageUp)) => {
                 self.log_follow = false;
                 self.log_scroll = self.log_scroll.saturating_sub(10);
             }
-            (KeyModifiers::CONTROL, KeyCode::Char('d'))
-            | (_, KeyCode::PageDown) => {
+            (KeyModifiers::CONTROL, KeyCode::Char('d'), _)
+            | (_, _, Some(Nav::PageDown)) => {
                 self.log_scroll = (self.log_scroll + 10).min(max_start);
                 self.log_follow = self.log_scroll >= max_start;
             }
-            (_, KeyCode::Char('g') | KeyCode::Home) => {
+            _ if (fires("quit") || fires("back"))
+                && self.log_filter.is_empty() =>
+            {
+                self.close_logs();
+            }
+            _ if fires("quit") || fires("back") => self.log_filter.clear(),
+            _ if fires("search") => self.log_search_open = true,
+            (KeyModifiers::NONE, ..) if fires("dedup") => {
+                self.log_dedup = self.log_dedup.next();
+            }
+            _ if fires("history") => self.load_full_logs(),
+            _ if fires("previous") => self.toggle_previous_logs(),
+            (_, _, Some(Nav::Up)) => {
+                self.log_follow = false;
+                self.log_scroll = self.log_scroll.saturating_sub(1);
+            }
+            (_, _, Some(Nav::Down)) => {
+                self.log_scroll = (self.log_scroll + 1).min(max_start);
+                self.log_follow = self.log_scroll >= max_start;
+            }
+            (_, _, Some(Nav::Top)) => {
                 self.log_follow = false;
                 self.log_scroll = 0;
             }
-            (_, KeyCode::Char('G') | KeyCode::End) => {
-                self.log_follow = true;
-            }
+            (_, _, Some(Nav::Bottom)) => self.log_follow = true,
             _ => {}
         }
     }
@@ -302,24 +307,24 @@ impl App {
             self.on_key_list_search(key);
             return true;
         }
+        let screen = self.list_screen();
+        let keymap = &self.config.keymap;
+        let fires = |action| keymap.fires(screen, action, key.code);
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
                 self.quit();
             }
-            (_, code)
-                if self.config.keymap.is("quit", code)
-                    && self.list_filter.is_empty() =>
-            {
+            _ if fires("quit") && self.list_filter.is_empty() => {
                 self.quit();
             }
-            (_, code) if self.config.keymap.is("quit", code) => {
+            _ if fires("quit") => {
                 self.list_filter.clear();
                 self.reapply_list_filter();
             }
-            (_, code) if self.config.keymap.is("search", code) => {
+            _ if fires("search") => {
                 self.list_search_open = true;
             }
-            (_, code) if self.config.keymap.is("command", code) => {
+            _ if fires("command") => {
                 self.list_search_open = true;
                 self.command_mode = true;
                 self.command_text.clear();
@@ -329,8 +334,16 @@ impl App {
         true
     }
 
-    #[allow(clippy::wildcard_enum_match_arm)]
-    #[allow(clippy::too_many_lines)] // flat key-dispatch match
+    /// The `config.toml` screen for the current list view.
+    const fn list_screen(&self) -> &'static str {
+        match self.view {
+            ResourceKind::Containers => "list",
+            ResourceKind::Images
+            | ResourceKind::Volumes
+            | ResourceKind::Networks => "resources",
+        }
+    }
+
     fn on_key_list<B: Backend>(
         &mut self,
         key: KeyEvent,
@@ -357,90 +370,55 @@ impl App {
             return Ok(());
         }
 
-        match (key.modifiers, key.code) {
-            (_, code) if self.config.keymap.is("width", code) => {
-                self.toggle_column_width_mode();
-            }
-            (_, KeyCode::Char('1')) => {
-                self.switch_view(ResourceKind::Containers);
-            }
-            (_, KeyCode::Char('2')) => self.switch_view(ResourceKind::Images),
-            (_, KeyCode::Char('3')) => self.switch_view(ResourceKind::Volumes),
-            (_, KeyCode::Char('4')) => self.switch_view(ResourceKind::Networks),
-            (_, KeyCode::Char('j') | KeyCode::Down) => {
-                self.navigate(Nav::Down);
-            }
-            (_, KeyCode::Char('k') | KeyCode::Up) => self.navigate(Nav::Up),
-            (_, KeyCode::Char('g')) => self.navigate(Nav::Top),
-            (_, KeyCode::Char('G')) => self.navigate(Nav::Bottom),
-            (_, code)
-                if self.view == ResourceKind::Containers
-                    && self.config.keymap.is("running", code) =>
-            {
-                self.running_only = !self.running_only;
-                self.reapply_list_filter();
-            }
-            (_, code)
-                if self.view == ResourceKind::Containers
-                    && (code == KeyCode::Char('S')
-                        || self.config.keymap.is("start-stop", code)) =>
-            {
-                if let Some(row) = self.selected_container().cloned() {
-                    if row.is_running() {
-                        self.stop_container(&row.id);
-                    } else {
-                        self.start_container(&row.id);
-                    }
+        let screen = self.list_screen();
+        let on_containers = self.view == ResourceKind::Containers;
+        let keymap = &self.config.keymap;
+        let fires = |action| keymap.fires(screen, action, key.code);
+        if fires("width") {
+            self.toggle_column_width_mode();
+        } else if fires("containers") {
+            self.switch_view(ResourceKind::Containers);
+        } else if fires("images") {
+            self.switch_view(ResourceKind::Images);
+        } else if fires("volumes") {
+            self.switch_view(ResourceKind::Volumes);
+        } else if fires("networks") {
+            self.switch_view(ResourceKind::Networks);
+        } else if on_containers && fires("running") {
+            self.running_only = !self.running_only;
+            self.reapply_list_filter();
+        } else if on_containers && fires("start-stop") {
+            if let Some(row) = self.selected_container().cloned() {
+                if row.is_running() {
+                    self.stop_container(&row.id);
+                } else {
+                    self.start_container(&row.id);
                 }
             }
-            (_, code)
-                if self.view == ResourceKind::Containers
-                    && self.config.keymap.is("restart", code) =>
-            {
-                if let Some(row) = self.selected_container().cloned() {
-                    self.restart_container(&row.id);
-                }
+        } else if on_containers && fires("restart") {
+            if let Some(row) = self.selected_container().cloned() {
+                self.restart_container(&row.id);
             }
-            (_, code)
-                if self.view == ResourceKind::Containers
-                    && self.config.keymap.is("processes", code) =>
-            {
-                if let Some(row) = self.selected_container().cloned() {
-                    self.open_processes(&row.id, &row.name);
-                }
+        } else if on_containers && fires("processes") {
+            if let Some(row) = self.selected_container().cloned() {
+                self.open_processes(&row.id, &row.name);
             }
-            (_, code)
-                if self.view == ResourceKind::Containers
-                    && self.config.keymap.is("logs", code) =>
-            {
-                if let Some(row) = self.selected_container().cloned() {
-                    self.open_logs(&row.id, &row.name);
-                }
+        } else if on_containers && fires("logs") {
+            if let Some(row) = self.selected_container().cloned() {
+                self.open_logs(&row.id, &row.name);
             }
-            (_, code)
-                if code == KeyCode::Enter
-                    || self.config.keymap.is("describe", code) =>
-            {
-                self.describe_selected();
+        } else if fires("describe") {
+            self.describe_selected();
+        } else if on_containers && fires("exec") {
+            if let Some(row) = self.selected_container().cloned() {
+                self.exec_shell(terminal, &row.id)?;
             }
-            (_, code)
-                if self.view == ResourceKind::Containers
-                    && self.config.keymap.is("exec", code) =>
-            {
-                if let Some(row) = self.selected_container().cloned() {
-                    self.exec_shell(terminal, &row.id)?;
-                }
-            }
-            (_, code) if self.config.keymap.is("health", code) => {
-                self.open_daemon_health();
-            }
-            (_, code)
-                if code == KeyCode::Delete
-                    || self.config.keymap.is("remove", code) =>
-            {
-                self.prompt_remove_selected();
-            }
-            _ => {}
+        } else if fires("health") {
+            self.open_daemon_health();
+        } else if fires("remove") {
+            self.prompt_remove_selected();
+        } else if let Some(nav) = keymap.nav(screen, key.code) {
+            self.navigate(nav);
         }
         Ok(())
     }
@@ -785,6 +763,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn info_closes_on_remapped_keys() {
+        let mut app = app();
+        assert!(app.config.keymap.set("health", KeyCode::Char('z')));
+        app.state = AppState::Connecting;
+        app.on_key_info(char_key('i'));
+        assert!(
+            matches!(app.state, AppState::Connecting),
+            "old key released"
+        );
+        app.on_key_info(char_key('z'));
+        assert!(matches!(app.state, AppState::List));
+    }
+
+    #[tokio::test]
+    async fn processes_close_on_remapped_back() {
+        let mut app = app();
+        assert!(app.config.keymap.set("back", KeyCode::Char('z')));
+        app.state = AppState::Connecting;
+        app.on_key_processes(key(KeyCode::Esc));
+        assert!(
+            matches!(app.state, AppState::Connecting),
+            "old key released"
+        );
+        app.on_key_processes(char_key('z'));
+        assert!(matches!(app.state, AppState::List));
+    }
+
+    #[tokio::test]
+    async fn describe_scrolls_on_remapped_down() {
+        let mut app = app();
+        assert!(app.config.keymap.set("down", KeyCode::Char('z')));
+        app.describe_view_len = 100;
+        app.describe_viewport_height = 10;
+        app.on_key_describe(char_key('j'));
+        assert_eq!(app.describe_scroll, 0, "old key released");
+        app.on_key_describe(char_key('z'));
+        assert_eq!(app.describe_scroll, 1);
+    }
+
+    #[tokio::test]
+    async fn logs_follow_remapped_keys() {
+        let mut app = app();
+        assert!(app.config.keymap.set("dedup", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("page-down", KeyCode::Char('y')));
+        app.log_view_len = 100;
+        app.log_viewport_height = 10;
+        let before = app.log_dedup;
+        app.on_key_logs(char_key('z'));
+        assert_ne!(app.log_dedup, before);
+        app.on_key_logs(char_key('y'));
+        assert_eq!(app.log_scroll, 10);
+    }
+
+    #[tokio::test]
+    async fn ctrl_u_pages_when_top_is_u() {
+        let mut app = app();
+        assert!(app.config.keymap.set("top", KeyCode::Char('u')));
+        app.log_view_len = 100;
+        app.log_viewport_height = 10;
+        app.log_scroll = 30;
+        app.on_key_logs(KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL,
+        ));
+        assert_eq!(app.log_scroll, 20, "Ctrl+u pages, it must not fire top");
+    }
+
+    #[tokio::test]
+    async fn list_view_keys_and_nav_follow_remap() {
+        let mut app = app();
+        let mut t = term();
+        assert!(app.config.keymap.set("images", KeyCode::Char('z')));
+        app.on_key_event(char_key('2'), &mut t).unwrap();
+        assert_eq!(app.view, ResourceKind::Containers, "old key released");
+        app.on_key_event(char_key('z'), &mut t).unwrap();
+        assert_eq!(app.view, ResourceKind::Images);
+    }
+
+    #[tokio::test]
+    async fn search_typing_ignores_remapped_nav() {
+        let mut app = app();
+        let mut t = term();
+        assert!(app.config.keymap.set("down", KeyCode::Char('x')));
+        app.on_key_event(char_key('/'), &mut t).unwrap();
+        app.on_key_event(char_key('x'), &mut t).unwrap();
+        assert_eq!(app.list_filter, "x");
+    }
+
+    #[tokio::test]
+    async fn connect_error_retry_follows_remap() {
+        let mut app = app();
+        app.running = true;
+        assert!(app.config.keymap.set("quit", KeyCode::Char('z')));
+        app.on_key_connect_error(char_key('q'));
+        assert!(app.running, "old key released");
+        app.on_key_connect_error(char_key('z'));
+        assert!(!app.running);
+    }
+
+    #[tokio::test]
     async fn remapped_keys_follow_config() {
         let mut app = app();
         let mut t = term();
@@ -796,23 +874,24 @@ mod tests {
         app.confirm_dialog = None;
         app.pending_remove = None;
         app.on_key_event(key(KeyCode::Delete), &mut t).unwrap();
-        assert!(app.confirm_dialog.is_some(), "Delete stays a fixed alias");
+        assert!(app.confirm_dialog.is_none(), "a remap replaces the list");
     }
 
     #[tokio::test]
-    async fn remapped_start_stop_keeps_s_alias() {
+    async fn remapped_start_stop_replaces_its_keys() {
         let mut t = term();
-        let mut released = app();
-        assert!(released.config.keymap.set("start-stop", KeyCode::Char('x')));
-        released.on_key_event(char_key('s'), &mut t).unwrap();
-        assert!(released.in_flight.is_empty(), "old key is released");
-
-        for c in ['x', 'S'] {
-            let mut app = app();
-            assert!(app.config.keymap.set("start-stop", KeyCode::Char('x')));
-            app.on_key_event(char_key(c), &mut t).unwrap();
-            assert!(!app.in_flight.is_empty(), "{c} fires");
+        for c in ['s', 'S'] {
+            let mut released = app();
+            assert!(
+                released.config.keymap.set("start-stop", KeyCode::Char('x'))
+            );
+            released.on_key_event(char_key(c), &mut t).unwrap();
+            assert!(released.in_flight.is_empty(), "{c} is released");
         }
+        let mut app = app();
+        assert!(app.config.keymap.set("start-stop", KeyCode::Char('x')));
+        app.on_key_event(char_key('x'), &mut t).unwrap();
+        assert!(!app.in_flight.is_empty(), "x fires");
     }
 
     #[tokio::test]
