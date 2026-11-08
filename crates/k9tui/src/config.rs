@@ -13,7 +13,7 @@ use directories::BaseDirs;
 use ratatui::style::Color;
 use toml::{Table, Value};
 
-use crate::keymap::{Keymap, parse_key};
+use crate::keymap::{Keymap, ScreenActions, parse_key};
 
 /// Built-in defaults, applied through the same path as a user's file.
 const DEFAULT_CONFIG: &str = include_str!("default_config.toml");
@@ -221,8 +221,11 @@ pub fn resolve(
     let keymap = Keymap::new(
         spec.actions
             .iter()
-            .copied()
-            .chain(SHARED_ACTIONS.map(|action| (action, KeyCode::Null))),
+            .map(|(action, code)| ((*action).to_owned(), vec![*code]))
+            .chain(
+                SHARED_ACTIONS
+                    .map(|action| (action.to_owned(), vec![KeyCode::Null])),
+            ),
     );
     let mut merge = Merge {
         spec,
@@ -241,7 +244,6 @@ pub fn resolve(
         "built-in config is invalid: {:?}",
         merge.errors
     );
-    let defaults = merge.config.keymap.clone();
 
     if let Some(text) = file {
         match text.parse::<Table>() {
@@ -252,11 +254,17 @@ pub fn resolve(
             Err(error) => return Err(vec![format!("{source}: {error}")]),
         }
     }
-    merge.errors.extend(merge.config.keymap.validate(
-        &defaults,
-        spec.screens,
-        spec.fixed,
-    ));
+    merge.config.keymap.set_screens(
+        spec.screens
+            .iter()
+            .map(|(name, actions)| ScreenActions {
+                name: (*name).to_owned(),
+                actions: actions.iter().map(|a| (*a).to_owned()).collect(),
+                typing: false,
+            })
+            .collect(),
+    );
+    merge.errors.extend(merge.config.keymap.validate());
     if merge.errors.is_empty() {
         Ok(merge.config)
     } else {
@@ -482,11 +490,6 @@ mod tests {
         fatal(inherited);
         let fixed = format!("{inherited}[app.keys]\nrefresh = \"z\"\n");
         assert_eq!(ok(&fixed).keymap.get("search"), c('r'));
-    }
-
-    #[test]
-    fn binding_a_fixed_key_is_fatal() {
-        assert!(fatal("[t7s.keys]\nsearch = \"j\"\n").contains("search"));
     }
 
     #[test]

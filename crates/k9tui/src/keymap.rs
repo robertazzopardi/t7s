@@ -20,6 +20,7 @@ pub fn parse_key(spec: &str) -> Option<KeyCode> {
         "esc" => KeyCode::Esc,
         "enter" => KeyCode::Enter,
         "tab" => KeyCode::Tab,
+        "back-tab" => KeyCode::BackTab,
         "backspace" => KeyCode::Backspace,
         "delete" => KeyCode::Delete,
         "space" => KeyCode::Char(' '),
@@ -39,64 +40,134 @@ fn key_name(code: KeyCode) -> String {
     format!("'{}'", Hotkey::code(code, "").key_label())
 }
 
-/// Current key for each named action.
+/// Actions live at the same time on one screen.
 #[derive(Debug, Clone)]
+pub struct ScreenActions {
+    pub name: String,
+    pub actions: Vec<String>,
+    /// Plain characters must reach a text buffer here, so can't be bound.
+    pub typing: bool,
+}
+
+/// Current keys for each named action. The first key is the primary.
+#[derive(Debug, Clone, Default)]
 pub struct Keymap {
-    bindings: HashMap<&'static str, KeyCode>,
+    bindings: HashMap<String, Vec<KeyCode>>,
+    screens: Vec<ScreenActions>,
 }
 
 impl Keymap {
     #[must_use]
     pub fn new(
-        defaults: impl IntoIterator<Item = (&'static str, KeyCode)>,
+        defaults: impl IntoIterator<Item = (String, Vec<KeyCode>)>,
     ) -> Self {
         Self {
             bindings: defaults.into_iter().collect(),
+            screens: Vec::new(),
         }
     }
 
-    /// The key bound to `action`.
+    /// Every key bound to `action`.
     ///
     /// # Panics
     ///
     /// If `action` is unknown, which is a programmer error rather than a
     /// config error: user input only reaches the keymap through [`Self::set`].
     #[must_use]
-    pub fn get(&self, action: &str) -> KeyCode {
-        *self
-            .bindings
+    pub fn keys(&self, action: &str) -> &[KeyCode] {
+        self.bindings
             .get(action)
             .unwrap_or_else(|| panic!("unknown keymap action: {action}"))
     }
 
-    /// The current key for `action`, as the hotkey bar shows it.
+    /// The primary key bound to `action`.
     ///
     /// # Panics
     ///
-    /// If `action` is unknown; see [`Self::get`].
+    /// If `action` is unknown; see [`Self::keys`].
+    #[must_use]
+    pub fn get(&self, action: &str) -> KeyCode {
+        self.keys(action).first().copied().unwrap_or(KeyCode::Null)
+    }
+
+    /// The primary key for `action`, as the hotkey bar shows it.
+    ///
+    /// # Panics
+    ///
+    /// If `action` is unknown; see [`Self::keys`].
     #[must_use]
     pub fn label(&self, action: &str) -> String {
         Hotkey::code(self.get(action), "").key_label()
     }
 
-    /// True if `code` is the key currently bound to `action`.
+    /// Every key for `action`, as help shows them.
+    ///
+    /// # Panics
+    ///
+    /// If `action` is unknown; see [`Self::keys`].
+    #[must_use]
+    pub fn labels(&self, action: &str) -> String {
+        self.keys(action)
+            .iter()
+            .map(|code| Hotkey::code(*code, "").key_label())
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
+
+    /// True if `code` is one of the keys bound to `action`.
     #[must_use]
     pub fn is(&self, action: &str, code: KeyCode) -> bool {
-        self.get(action) == code
+        self.keys(action).contains(&code)
+    }
+
+    /// True if `code` fires `action` on `screen`. A secondary key gives way
+    /// to another action's primary key on the same screen.
+    #[must_use]
+    pub fn fires(&self, screen: &str, action: &str, code: KeyCode) -> bool {
+        let keys = self.keys(action);
+        if !keys.contains(&code) {
+            return false;
+        }
+        if keys.first() == Some(&code) {
+            return true;
+        }
+        self.screens
+            .iter()
+            .find(|candidate| candidate.name == screen)
+            .is_none_or(|found| {
+                !found.actions.iter().any(|other| {
+                    other != action && self.primary(other) == Some(code)
+                })
+            })
+    }
+
+    fn primary(&self, action: &str) -> Option<KeyCode> {
+        self.bindings.get(action)?.first().copied()
     }
 
     /// True if any action is currently bound to `code`.
     #[must_use]
     pub fn binds(&self, code: KeyCode) -> bool {
-        self.bindings.values().any(|bound| *bound == code)
+        self.bindings.values().flatten().any(|bound| *bound == code)
     }
 
-    /// Rebind `action`. Returns false, changing nothing, if it is unknown.
+    /// Bind `action` to one key. Returns false, changing nothing, if it is
+    /// unknown.
     pub fn set(&mut self, action: &str, code: KeyCode) -> bool {
+        self.set_keys(action, vec![code])
+    }
+
+    /// Replace `action`'s keys. Returns false, changing nothing, if it is
+    /// unknown.
+    pub fn set_keys(&mut self, action: &str, keys: Vec<KeyCode>) -> bool {
         self.bindings
             .get_mut(action)
-            .map(|bound| *bound = code)
+            .map(|bound| *bound = keys)
             .is_some()
+    }
+
+    pub fn set_screens(&mut self, screens: Vec<ScreenActions>) {
+        self.screens = screens;
     }
 
     /// Copy of `hotkeys` with each action-tagged entry showing its current key.
@@ -107,48 +178,52 @@ impl Keymap {
             .cloned()
             .map(|mut hotkey| {
                 if let Some(code) =
-                    hotkey.action.and_then(|a| self.bindings.get(a))
+                    hotkey.action.and_then(|action| self.primary(action))
                 {
-                    hotkey.keycode = *code;
+                    hotkey.keycode = code;
                 }
                 hotkey
             })
             .collect()
     }
 
-    /// Check final bindings: no two actions on one key within a screen, and
-    /// no remap onto a key the app keeps fixed. A default may sit on a fixed
-    /// key (`w` is both `d7s` watch and next column), so only remaps count.
+    /// Check final bindings: every action has a key, no two primaries or two
+    /// secondaries share a key on one screen, and `typing` screens leave
+    /// plain characters alone.
     #[must_use]
-    pub fn validate(
-        &self,
-        defaults: &Self,
-        screens: &[(&str, &[&str])],
-        fixed: &[KeyCode],
-    ) -> Vec<String> {
+    pub fn validate(&self) -> Vec<String> {
         let mut errors = Vec::new();
         let mut actions: Vec<_> = self.bindings.iter().collect();
-        actions.sort_unstable_by_key(|(action, _)| **action);
-        for (action, code) in actions {
-            if defaults.bindings.get(action) != Some(code)
-                && fixed.contains(code)
-            {
-                errors.push(format!(
-                    "'{action}': {} is a fixed key and can't be rebound",
-                    key_name(*code)
-                ));
+        actions.sort_unstable_by_key(|(action, _)| action.as_str());
+        for (action, keys) in actions {
+            if keys.is_empty() {
+                errors.push(format!("'{action}' has no keys"));
             }
         }
-        for (screen, names) in screens {
-            for (i, a) in names.iter().enumerate() {
-                for b in names.iter().skip(i + 1) {
-                    if let (Some(ka), Some(kb)) =
-                        (self.bindings.get(a), self.bindings.get(b))
-                        && ka == kb
-                    {
+        for screen in &self.screens {
+            let known: Vec<_> = screen
+                .actions
+                .iter()
+                .filter_map(|a| Some((a, self.bindings.get(a)?)))
+                .collect();
+            for (i, (a, a_keys)) in known.iter().enumerate() {
+                if screen.typing
+                    && let Some(code) = a_keys
+                        .iter()
+                        .find(|code| matches!(code, KeyCode::Char(_)))
+                {
+                    errors.push(format!(
+                            "'{a}': {} is a plain character on the {} screen, where typing needs it",
+                            key_name(*code),
+                            screen.name
+                    ));
+                }
+                for (b, b_keys) in known.iter().skip(i + 1) {
+                    if let Some(code) = shared(a_keys, b_keys) {
                         errors.push(format!(
-                            "'{a}' and '{b}' both use {} on the {screen} screen",
-                            key_name(*ka)
+                            "'{a}' and '{b}' both use {} on the {} screen",
+                            key_name(code),
+                            screen.name
                         ));
                     }
                 }
@@ -156,6 +231,18 @@ impl Keymap {
         }
         errors
     }
+}
+
+/// The key two actions can't both have: equal primaries, or a secondary in
+/// common.
+fn shared(a: &[KeyCode], b: &[KeyCode]) -> Option<KeyCode> {
+    if !a.is_empty() && a.first() == b.first() {
+        return a.first().copied();
+    }
+    a.iter()
+        .skip(1)
+        .find(|code| b.iter().skip(1).any(|other| other == *code))
+        .copied()
 }
 
 #[cfg(test)]
@@ -166,7 +253,11 @@ mod tests {
     use crate::widgets::hotkey::Hotkey;
 
     fn char_map(pairs: &[(&'static str, char)]) -> Keymap {
-        Keymap::new(pairs.iter().map(|(a, c)| (*a, KeyCode::Char(*c))))
+        Keymap::new(
+            pairs
+                .iter()
+                .map(|(a, c)| ((*a).to_owned(), vec![KeyCode::Char(*c)])),
+        )
     }
 
     #[test]
@@ -233,16 +324,64 @@ mod tests {
         assert_eq!(out.get(1).map(|h| h.keycode), Some(KeyCode::Char('W')));
     }
 
+    fn list_map(pairs: &[(&str, &[KeyCode])]) -> Keymap {
+        Keymap::new(pairs.iter().map(|(a, k)| ((*a).to_owned(), k.to_vec())))
+    }
+
+    fn screen(name: &str, actions: &[&str], typing: bool) -> ScreenActions {
+        ScreenActions {
+            name: name.to_owned(),
+            actions: actions.iter().map(|a| (*a).to_owned()).collect(),
+            typing,
+        }
+    }
+
+    fn watch_map() -> Keymap {
+        let mut km = list_map(&[
+            ("watch", &[KeyCode::Char('w')]),
+            ("right", &[KeyCode::Char('l'), KeyCode::Char('w')]),
+        ]);
+        km.set_screens(vec![screen("sql", &["watch", "right"], false)]);
+        km
+    }
+
     #[test]
-    fn same_screen_duplicate_is_an_error() {
-        let defaults = char_map(&[("commit", 's'), ("delete-row", 'D')]);
-        let mut km = defaults.clone();
+    fn fires_any_listed_key() {
+        let km = watch_map();
+        assert!(km.fires("sql", "right", KeyCode::Char('l')));
+        assert!(km.fires("elsewhere", "right", KeyCode::Char('w')));
+        assert!(!km.fires("sql", "right", KeyCode::Char('z')));
+    }
+
+    #[test]
+    fn primary_beats_another_actions_secondary() {
+        let km = watch_map();
+        assert!(km.fires("sql", "watch", KeyCode::Char('w')));
+        assert!(!km.fires("sql", "right", KeyCode::Char('w')));
+    }
+
+    #[test]
+    fn secondary_fires_when_primary_moves_away() {
+        let mut km = watch_map();
+        km.set("watch", KeyCode::Char('z'));
+        assert!(km.fires("sql", "right", KeyCode::Char('w')));
+    }
+
+    #[test]
+    fn get_and_labels_use_the_list() {
+        let km = watch_map();
+        assert_eq!(km.get("right"), KeyCode::Char('l'));
+        assert_eq!(km.keys("right").len(), 2);
+        assert_eq!(km.label("right"), "l");
+        assert_eq!(km.labels("right"), "l / w");
+    }
+
+    #[test]
+    fn two_primaries_conflict() {
+        let mut km = char_map(&[("commit", 's'), ("delete-row", 'D')]);
         km.set("commit", KeyCode::Char('D'));
-        let errors = km.validate(
-            &defaults,
-            &[("table", &["commit", "delete-row"])],
-            &[],
-        );
+        km.set_screens(vec![screen("table", &["commit", "delete-row"], false)]);
+        let errors = km.validate();
         assert_eq!(errors.len(), 1, "{errors:?}");
         let error = errors.first().unwrap();
         for part in ["commit", "delete-row", "'D'", "table"] {
@@ -251,46 +390,66 @@ mod tests {
     }
 
     #[test]
+    fn two_secondaries_conflict() {
+        let mut km = list_map(&[
+            ("a", &[KeyCode::Char('x'), KeyCode::Char('z')]),
+            ("b", &[KeyCode::Char('y'), KeyCode::Char('z')]),
+        ]);
+        km.set_screens(vec![screen("s", &["a", "b"], false)]);
+        assert_eq!(km.validate().len(), 1);
+    }
+
+    #[test]
+    fn primary_over_secondary_is_not_a_conflict() {
+        assert_eq!(watch_map().validate(), Vec::<String>::new());
+    }
+
+    #[test]
     fn same_key_on_different_screens_is_allowed() {
-        let defaults =
-            char_map(&[("edit-connection", 'e'), ("sql-editor", 'e')]);
-        let errors = defaults.validate(
-            &defaults,
-            &[("list", &["edit-connection"]), ("db", &["sql-editor"])],
-            &[],
-        );
-        assert_eq!(errors, Vec::<String>::new());
+        let mut km = char_map(&[("edit-connection", 'e'), ("sql-editor", 'e')]);
+        km.set_screens(vec![
+            screen("list", &["edit-connection"], false),
+            screen("db", &["sql-editor"], false),
+        ]);
+        assert_eq!(km.validate(), Vec::<String>::new());
     }
 
     #[test]
     fn swapped_keys_are_valid() {
-        let defaults = char_map(&[("commit", 's'), ("delete-row", 'D')]);
-        let mut km = defaults.clone();
+        let mut km = char_map(&[("commit", 's'), ("delete-row", 'D')]);
         km.set("commit", KeyCode::Char('D'));
         km.set("delete-row", KeyCode::Char('s'));
-        let errors = km.validate(
-            &defaults,
-            &[("table", &["commit", "delete-row"])],
-            &[],
-        );
-        assert_eq!(errors, Vec::<String>::new());
+        km.set_screens(vec![screen("table", &["commit", "delete-row"], false)]);
+        assert_eq!(km.validate(), Vec::<String>::new());
     }
 
     #[test]
-    fn remap_onto_fixed_key_is_an_error() {
-        let defaults = char_map(&[("search", '/')]);
-        let mut km = defaults.clone();
-        km.set("search", KeyCode::Char('j'));
-        let errors = km.validate(&defaults, &[], &[KeyCode::Char('j')]);
+    fn empty_list_is_an_error() {
+        let mut km = char_map(&[("quit", 'q')]);
+        assert!(km.set_keys("quit", Vec::new()));
+        let errors = km.validate();
         assert_eq!(errors.len(), 1, "{errors:?}");
-        let error = errors.first().unwrap();
-        assert!(error.contains("search") && error.contains("'j'"), "{error}");
+        assert!(errors.first().unwrap().contains("quit"));
     }
 
     #[test]
-    fn default_on_a_fixed_key_is_allowed() {
-        let defaults = char_map(&[("watch", 'w')]);
-        let errors = defaults.validate(&defaults, &[], &[KeyCode::Char('w')]);
-        assert_eq!(errors, Vec::<String>::new());
+    fn typing_screen_rejects_plain_characters() {
+        let mut km = char_map(&[("cell-next", 'n')]);
+        km.set_screens(vec![screen("cell-edit", &["cell-next"], true)]);
+        let errors = km.validate();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors.first().unwrap().contains("cell-next"));
+    }
+
+    #[test]
+    fn typing_screen_allows_named_keys() {
+        let mut km = list_map(&[("cell-next", &[KeyCode::Tab])]);
+        km.set_screens(vec![screen("cell-edit", &["cell-next"], true)]);
+        assert_eq!(km.validate(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn parse_key_reads_back_tab() {
+        assert_eq!(parse_key("back-tab"), Some(KeyCode::BackTab));
     }
 }
