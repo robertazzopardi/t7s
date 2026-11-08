@@ -9,8 +9,8 @@ Esc | Back / clear filter / close help
 # Navigation | 
 j / ↓ | Move down
 k / ↑ | Move up
-h / ← | Move left (columns)
-l / → | Move right (columns)
+h / b / ← | Move left (columns)
+l / w / → | Move right (columns)
 g | Jump to top
 G | Jump to bottom
 0 | First column
@@ -37,8 +37,8 @@ Esc | Back / clear filter / close help
 # Navigation | 
 j / ↓ | Move down
 k / ↑ | Move up
-h / ← | Move left (columns)
-l / → | Move right (columns)
+h / b / ← | Move left (columns)
+l / w / → | Move right (columns)
 g | Jump to top
 G | Jump to bottom
 0 | First column
@@ -51,7 +51,7 @@ t | Table structure
 d | Describe selected table/column/row
 E | Run SQL
 Enter | Drill into selection
-1–5 | Open recent table
+1 / 2 / 3 / 4 / 5 | Open recent table
 : | Command bar (:tables, :sql, :log, :table/:schema <name>, :table conn.db.schema.table, :123 ... Tab completes)
 L | Query log (everything d7s ran this session)
 [TableData("s", "t")]
@@ -65,8 +65,8 @@ Esc | Back / clear filter / close help
 # Navigation | 
 j / ↓ | Move down
 k / ↑ | Move up
-h / ← | Move left (columns)
-l / → | Move right (columns)
+h / b / ← | Move left (columns)
+l / w / → | Move right (columns)
 g | Jump to top
 G | Jump to bottom
 0 | First column
@@ -79,22 +79,21 @@ t | Table structure
 d | Describe selected table/column/row
 E | Run SQL
 Enter | Drill into selection
-1–5 | Open recent table
+1 / 2 / 3 / 4 / 5 | Open recent table
 : | Command bar (:tables, :sql, :log, :table/:schema <name>, :table conn.db.schema.table, :123 ... Tab completes)
 L | Query log (everything d7s ran this session)
 # Table data | 
-n | New row (blank draft)
-a | Alias for new row (blank draft)
+n / a | New row (blank draft)
 N | New row (column defaults)
 c | Duplicate row as draft
 s | Commit draft row
-D | Delete row(s)
+D / Del | Delete row(s)
 i | Edit selected cell
-r | Refresh
+r / R | Refresh
 # Cell edit | 
 Esc | Cancel edit (revert cell)
 Enter | Commit cell
-Tab / Shift+Tab | Next / previous editable column
+Tab / BackTab | Next / previous editable column
 Ctrl+e | Multiline editor (modal)
 Backspace | Delete character in buffer
 # Not in top bar | 
@@ -116,8 +115,8 @@ Esc | Back / clear filter / close help
 # Navigation | 
 j / ↓ | Move down
 k / ↑ | Move up
-h / ← | Move left (columns)
-l / → | Move right (columns)
+h / b / ← | Move left (columns)
+l / w / → | Move right (columns)
 g | Jump to top
 G | Jump to bottom
 0 | First column
@@ -130,7 +129,7 @@ t | Table structure
 d | Describe selected table/column/row
 E | Run SQL
 Enter | Drill into selection
-1–5 | Open recent table
+1 / 2 / 3 / 4 / 5 | Open recent table
 : | Command bar (:tables, :sql, :log, :table/:schema <name>, :table conn.db.schema.table, :123 ... Tab completes)
 L | Query log (everything d7s ran this session)
 # SQL results | 

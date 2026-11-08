@@ -88,6 +88,7 @@ impl Hotkey {
             return label.clone();
         }
         match self.keycode {
+            KeyCode::Char(' ') => "Space".to_string(),
             KeyCode::Char(c) => c.to_string(),
             KeyCode::Esc => "Esc".to_string(),
             KeyCode::Enter => "Enter".to_string(),

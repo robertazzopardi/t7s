@@ -8,7 +8,7 @@ use crate::{theme, widgets::table::TableData};
 #[derive(Clone, Debug)]
 pub struct HelpRow {
     pub key: Cow<'static, str>,
-    pub desc: &'static str,
+    pub desc: Cow<'static, str>,
     pub section_header: bool,
 }
 

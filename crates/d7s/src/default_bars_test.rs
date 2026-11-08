@@ -28,7 +28,7 @@ fn section(out: &mut String, title: &str, hotkeys: &[Hotkey]) {
 
 fn help(out: &mut String, app: AppState, state: &DatabaseExplorerState) {
     writeln!(out, "[{state:?}]").unwrap();
-    for row in help_rows(app, state, &defaults(&SPEC).keymap) {
+    for row in help_rows(app, state, &defaults(&SPEC)) {
         let mark = if row.section_header { "# " } else { "" };
         writeln!(out, "{mark}{} | {}", row.key, row.desc).unwrap();
     }

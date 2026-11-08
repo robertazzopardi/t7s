@@ -163,7 +163,7 @@ impl App<'_> {
         self.help_table = TableDataState::new(help_rows(
             self.state,
             &self.database_explorer.state,
-            &self.config.keymap,
+            &self.config,
         ));
         self.show_help = true;
     }

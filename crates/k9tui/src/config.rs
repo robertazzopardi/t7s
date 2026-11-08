@@ -60,6 +60,13 @@ pub enum Row {
     Key { key: String, label: String },
 }
 
+/// One titled group of rows in the help table.
+#[derive(Debug, Clone, Default)]
+pub struct HelpSection {
+    pub title: String,
+    pub rows: Vec<Row>,
+}
+
 /// The bar for one screen and the actions live on it.
 #[derive(Debug, Clone, Default)]
 pub struct Screen {
@@ -101,7 +108,7 @@ pub struct Config {
     pub keymap: Keymap,
     pub screens: BTreeMap<String, Screen>,
     /// Help sections, by name.
-    pub help: BTreeMap<String, Vec<Row>>,
+    pub help: BTreeMap<String, HelpSection>,
     /// Problems that don't stop startup, for the status line.
     pub warnings: Vec<String>,
 }
@@ -324,11 +331,17 @@ impl Merge<'_> {
                 self.config
                     .warnings
                     .push(format!("[{context}] unknown section ignored"));
-            } else if let Some(rows) = value.get("rows") {
-                let rows = self.rows(&context, rows);
-                self.config.help.insert(section.clone(), rows);
             } else {
-                self.warn_shape(&context, "rows", "a list");
+                let mut merged =
+                    self.config.help.get(section).cloned().unwrap_or_default();
+                if let Some(title) = value.get("title").and_then(Value::as_str)
+                {
+                    title.clone_into(&mut merged.title);
+                }
+                if let Some(rows) = value.get("rows") {
+                    merged.rows = self.rows(&context, rows);
+                }
+                self.config.help.insert(section.clone(), merged);
             }
         }
     }

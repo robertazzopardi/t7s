@@ -129,3 +129,111 @@ hidden = ["describe", "search", "quit", "back", "down", "up", "top", "bottom"]
 
 [d7s.screens.query-log]
 hidden = ["query-log", "quit", "back", "down", "up", "top", "bottom"]
+
+[d7s.help.global]
+title = "Global"
+rows = [
+  { action = "help", label = "Toggle help" },
+  { action = "quit", label = "Quit" },
+  { key = "Ctrl+c", label = "Quit" },
+  { action = "copy", label = "Copy cell value" },
+  { action = "describe", label = "Describe selected object" },
+  { action = "back", label = "Back / clear filter / close help" },
+]
+
+[d7s.help.navigation]
+title = "Navigation"
+rows = [
+  { action = "down", label = "Move down" },
+  { action = "up", label = "Move up" },
+  { action = "left", label = "Move left (columns)" },
+  { action = "right", label = "Move right (columns)" },
+  { action = "top", label = "Jump to top" },
+  { action = "bottom", label = "Jump to bottom" },
+  { action = "first-column", label = "First column" },
+  { action = "last-column", label = "Last column" },
+  { action = "search", label = "Search filter" },
+  { action = "width", label = "Toggle column width (Fit / Content)" },
+]
+
+[d7s.help.connections]
+title = "Connections"
+rows = [
+  { action = "new-connection", label = "New connection" },
+  { action = "edit-connection", label = "Edit connection" },
+  { action = "delete-connection", label = "Delete connection" },
+  { action = "open-connection", label = "Open connection" },
+  { action = "reconnect", label = "Reconnect last connection" },
+  { action = "ping", label = "Ping all connections (reachability)" },
+  { action = "drill", label = "Connect" },
+  { action = "command", label = "Command bar (:q, :help, :log; Tab completes)" },
+]
+
+[d7s.help.database]
+title = "Database"
+rows = [
+  { action = "sql-editor", label = "SQL editor (external)" },
+  { action = "table-structure", label = "Table structure" },
+  { action = "describe", label = "Describe selected table/column/row" },
+  { action = "run-sql", label = "Run SQL" },
+  { action = "drill", label = "Drill into selection" },
+  { action = ["recent-1", "recent-2", "recent-3", "recent-4", "recent-5"], label = "Open recent table" },
+  { action = "command", label = "Command bar (:tables, :sql, :log, :table/:schema <name>, :table conn.db.schema.table, :123 ... Tab completes)" },
+  { action = "query-log", label = "Query log (everything d7s ran this session)" },
+]
+
+[d7s.help.table-data]
+title = "Table data"
+rows = [
+  { action = "new-row", label = "New row (blank draft)" },
+  { action = "defaults", label = "New row (column defaults)" },
+  { action = "duplicate", label = "Duplicate row as draft" },
+  { action = "commit", label = "Commit draft row" },
+  { action = "delete-row", label = "Delete row(s)" },
+  { action = "edit", label = "Edit selected cell" },
+  { action = "refresh", label = "Refresh" },
+]
+
+[d7s.help.cell-edit]
+title = "Cell edit"
+rows = [
+  { action = "cell-cancel", label = "Cancel edit (revert cell)" },
+  { action = "cell-done", label = "Commit cell" },
+  { action = ["cell-next", "cell-previous"], label = "Next / previous editable column" },
+  { key = "Ctrl+e", label = "Multiline editor (modal)" },
+  { key = "Backspace", label = "Delete character in buffer" },
+]
+
+[d7s.help.table-data-hidden]
+title = "Not in top bar"
+rows = [
+  { action = "toggle-select", label = "Toggle multi-select" },
+  { action = "drill", label = "Edit cell" },
+  { action = "copy-row", label = "Copy row (TSV)" },
+  { action = ["command", "jump-row"], label = "Jump to row number" },
+  { action = ["top", "bottom"], label = "Jump to top / bottom" },
+  { action = ["first-column", "last-column"], label = "First / last column" },
+]
+
+[d7s.help.sql-results]
+title = "SQL results"
+rows = [
+  { action = "run-sql", label = "Run SQL from editor" },
+  { action = "back", label = "Return to SQL editor" },
+  { action = "copy-row", label = "Copy row (TSV)" },
+  { key = "Ctrl+s", action = "export", label = "Export results to temp TSV" },
+]
+
+[d7s.help.sql-results-hidden]
+title = "Not in top bar"
+rows = [
+  { action = "copy-row", label = "Copy row (TSV)" },
+  { key = "Ctrl+s", action = "export", label = "Export results to temp TSV" },
+  { action = "back", label = "Return to explorer" },
+]
+
+[d7s.help.filter]
+title = "Filter"
+rows = [
+  { key = "", label = "Filter matches loaded page only (client-side)" },
+]
