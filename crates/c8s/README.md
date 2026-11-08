@@ -41,32 +41,51 @@ cargo install c8s --locked && c8s
 ## Configuration
 
 `c8s` reads `~/.config/t7s/config.toml`, or `$XDG_CONFIG_HOME/t7s/config.toml` if
-that is set. The file and everything in it are optional. Settings merge in this
-order, with the most specific winning: built-in defaults, `[t7s]`, then `[c8s]`.
+that is set. The file and everything in it are optional. The defaults live in
+TOML files in this repo: `crates/k9tui/src/config.toml` for shared settings and
+`crates/c8s/src/config.toml` for this app. Settings merge in this order, with
+the most specific winning: `k9tui`, the app's file, your `[t7s]`, your `[c8s]`.
+
+Every hotkey can be remapped, including navigation:
 
 ```toml
 [t7s.keys]
 quit = "q"
+down = ["j", "n", "down"]
 
 [c8s.keys]
 start-stop = "x"
 ```
 
-Keys are one character (case-sensitive) or a name such as `esc`, `page-up` or
-`f5`. Ctrl and Alt chords aren't supported.
+A key is one character (case-sensitive) or a name such as `esc`, `page-up`,
+`back-tab`, `space` or `f5`. An action can have several keys. The first is the
+one the hotkey bar shows. A list replaces the list below it, so `down = "z"`
+frees `j` and the Down arrow. Ctrl and Alt chords can't be bound.
 
-| Table | Actions (default key) |
-|---|---|
-| `[t7s.keys]` or `[c8s.keys]` | `quit` (`q`), `search` (`/`), `command` (`:`) |
-| `[c8s.keys]` | `running` (`a`), `processes` (`p`), `start-stop` (`s`), `restart` (`r`), `logs` (`l`), `exec` (`e`), `describe` (`d`), `remove` (`D`), `health` (`i`), `width` (`W`) |
+Shared actions go in `[t7s.keys]` or `[c8s.keys]`. See
+`crates/k9tui/src/config.toml` for them and `crates/c8s/src/config.toml` for
+every action this app has.
 
-These stay fixed: `j k g G`, arrow keys, `1`-`4`, `Esc`, `Enter` (describe), `Delete`
-(remove), `S` (start/stop), `Ctrl-C` (quit), and keys in the log, process and
-describe views.
+The hotkey bars use the same files, and you can override them:
+
+```toml
+[c8s.screens.list]
+hotkeys = [
+  { action = "logs", label = "my label" },
+  { key = "Ctrl+c", label = "quit" },
+]
+```
+
+A row with `action` shows that action's current key. A row with `key` is display
+text. Editing a bar never changes which keys work.
 
 `c8s` won't start, and prints every error to stderr, if the file has a TOML
-syntax error or can't be read, a key name is unknown, two actions share a key, or
-an action is bound to a fixed key. Other problems, such as an unknown setting,
-show in the status line and are printed on exit.
+syntax error or can't be read, a key name is unknown, an action has no keys, or
+two actions share a key on one screen. An action's later keys may share another
+action's first key, and the first key wins on that screen. Other problems, such
+as an unknown setting, show in the status line and are printed on exit.
+
+These can't be remapped: `Ctrl-C` always quits, `Ctrl-U` and `Ctrl-D` page in logs, and typing inside
+text inputs, modals and the search and command bars.
 
 `skin`, `theme` and `colours` are accepted but don't change anything yet.

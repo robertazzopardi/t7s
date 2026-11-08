@@ -84,35 +84,51 @@ Tab completes; Esc cancels. Unique prefixes work (`:sch`). Draft row pending blo
 ## Configuration
 
 `d7s` reads `~/.config/t7s/config.toml`, or `$XDG_CONFIG_HOME/t7s/config.toml` if
-that is set. The file and everything in it are optional. Settings merge in this
-order, with the most specific winning: built-in defaults, `[t7s]`, then `[d7s]`.
+that is set. The file and everything in it are optional. The defaults live in
+TOML files in this repo: `crates/k9tui/src/config.toml` for shared settings and
+`crates/d7s/src/config.toml` for this app. Settings merge in this order, with
+the most specific winning: `k9tui`, the app's file, your `[t7s]`, your `[d7s]`.
+
+Every hotkey can be remapped, including navigation:
 
 ```toml
 [t7s.keys]
 quit = "q"
+down = ["j", "n", "down"]
 
 [d7s.keys]
-new-connection = "m"
+new-connection = "x"
 ```
 
-Keys are one character (case-sensitive) or a name such as `esc`, `page-up` or
-`f5`. Ctrl and Alt chords aren't supported.
+A key is one character (case-sensitive) or a name such as `esc`, `page-up`,
+`back-tab`, `space` or `f5`. An action can have several keys. The first is the
+one the hotkey bar shows. A list replaces the list below it, so `down = "z"`
+frees `j` and the Down arrow. Ctrl and Alt chords can't be bound.
 
-| Table | Actions (default key) |
-|---|---|
-| `[t7s.keys]` or `[d7s.keys]` | `quit` (`q`), `search` (`/`), `command` (`:`) |
-| `[d7s.keys]`, connection list | `new-connection` (`n`), `edit-connection` (`e`), `delete-connection` (`D`), `open-connection` (`o`), `reconnect` (`O`), `ping` (`p`) |
-| `[d7s.keys]`, connected | `sql-editor` (`e`), `table-structure` (`t`), `run-sql` (`E`), `watch` (`w`), `query-log` (`L`), `activity` (`A`), `export` (`x`) |
-| `[d7s.keys]`, table data | `refresh` (`r`), `new-row` (`n`), `defaults` (`N`), `edit` (`i`), `duplicate` (`c`), `commit` (`s`), `delete-row` (`D`) |
-| `[d7s.keys]`, everywhere | `describe` (`d`), `copy` (`y`), `copy-row` (`Y`), `width` (`W`), `help` (`?`) |
+Shared actions go in `[t7s.keys]` or `[d7s.keys]`. See
+`crates/k9tui/src/config.toml` for them and `crates/d7s/src/config.toml` for
+every action this app has.
 
-These stay fixed: `h j k l`, `b w`, `g G`, `0 $`, arrow keys, `1`-`5`, `#`, space,
-`Esc`, `Enter`, `Backspace`, `Delete`, `R` (refresh), `a` (new row), `Ctrl+s`
-(export), `Ctrl+c` (quit), and keys in modals, text inputs and the describe view.
+The hotkey bars and `?` help use the same files, and you can override them:
+
+```toml
+[d7s.screens.connections]
+hotkeys = [
+  { action = "new-connection", label = "my label" },
+  { key = "Ctrl+c", label = "quit" },
+]
+```
+
+A row with `action` shows that action's current key. A row with `key` is display
+text. Editing a bar never changes which keys work.
 
 `d7s` won't start, and prints every error to stderr, if the file has a TOML
-syntax error or can't be read, a key name is unknown, two actions share a key on
-one screen, or an action is bound to a fixed key. Other problems, such as an
-unknown setting, show in the status line and are printed on exit.
+syntax error or can't be read, a key name is unknown, an action has no keys, or
+two actions share a key on one screen. An action's later keys may share another
+action's first key, and the first key wins on that screen. Other problems, such
+as an unknown setting, show in the status line and are printed on exit.
+
+These can't be remapped: `Ctrl-C` always quits, `Ctrl-S` exports SQL results, `Ctrl-E` opens the cell editor, and typing inside
+text inputs, modals and the search and command bars.
 
 `skin`, `theme` and `colours` are accepted but don't change anything yet.
