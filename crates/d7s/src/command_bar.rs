@@ -155,7 +155,7 @@ impl App<'_> {
     pub(crate) fn draft_pending_hint(&self) -> String {
         format!(
             "Draft row pending - Esc to discard, {} to commit",
-            self.keymap.label("commit")
+            self.config.keymap.label("commit")
         )
     }
 
@@ -163,7 +163,7 @@ impl App<'_> {
         self.help_table = TableDataState::new(help_rows(
             self.state,
             &self.database_explorer.state,
-            &self.keymap,
+            &self.config.keymap,
         ));
         self.show_help = true;
     }

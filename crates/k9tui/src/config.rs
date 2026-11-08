@@ -13,7 +13,10 @@ use directories::BaseDirs;
 use ratatui::style::Color;
 use toml::{Table, Value};
 
-use crate::keymap::{Keymap, ScreenActions, parse_key};
+use crate::{
+    keymap::{Keymap, ScreenActions, parse_key},
+    widgets::hotkey::Hotkey,
+};
 
 /// Built-in globals, applied through the same path as a user's file.
 const GLOBAL_CONFIG: &str = include_str!("config.toml");
@@ -483,6 +486,34 @@ pub fn resolve(
     }
 }
 
+impl Config {
+    /// The hotkey bar for `screen`, showing current keys.
+    ///
+    /// # Panics
+    ///
+    /// If `screen` is unknown, which is a programmer error.
+    #[must_use]
+    pub fn bar(&self, screen: &str) -> Vec<Hotkey> {
+        let found = self
+            .screens
+            .get(screen)
+            .unwrap_or_else(|| panic!("unknown screen: {screen}"));
+        found
+            .hotkeys
+            .iter()
+            .map(|row| match row {
+                Row::Action { actions, label, .. } => {
+                    let action = actions.first().map_or("", String::as_str);
+                    Hotkey::code(self.keymap.get(action), label).action(action)
+                }
+                Row::Key { key, label } => {
+                    Hotkey::labeled(key, KeyCode::Null, label)
+                }
+            })
+            .collect()
+    }
+}
+
 /// Built-in config only; never reads a file, so tests and constructors can
 /// use it freely.
 ///
@@ -685,6 +716,32 @@ hidden = ["quit", "search", "command"]
     #[test]
     fn bad_key_in_a_list_is_fatal() {
         assert!(fatal("[app.keys]\nlogs = [\"nonsense\"]\n").contains("logs"));
+    }
+
+    #[test]
+    fn bar_shows_current_key_and_row_text() {
+        let config = ok("[app.keys]
+refresh = \"z\"
+");
+        let bar = config.bar("main");
+        assert_eq!(bar.first().map(Hotkey::key_label).as_deref(), Some("z"));
+        assert_eq!(
+            bar.get(1).map(Hotkey::key_label).as_deref(),
+            Some("Ctrl+x")
+        );
+    }
+
+    #[test]
+    fn user_row_edit_shows_on_bar() {
+        let file = "[app.screens.main]
+hotkeys = [
+\
+                    { action = \"refresh\", label = \"Again\" },
+]
+";
+        let bar = ok(file).bar("main");
+        assert_eq!(bar.len(), 1);
+        assert_eq!(bar.first().unwrap().description.display_suffix(), "Again");
     }
 
     #[test]

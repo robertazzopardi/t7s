@@ -1,7 +1,7 @@
 use k9tui::{
     theme,
     widgets::{
-        hotkey::Hotkey,
+        hotkey::HotkeyDescription,
         status_line::FOOTER_HEIGHT,
         table::DataTable,
         text_search::filter_and_highlight,
@@ -21,10 +21,6 @@ use crate::{
     command::suggest,
     docker::{client::DaemonHealth, short_id},
     log_dedup::fold,
-    ui::widgets::hotkeys::{
-        GLOBAL_HOTKEYS, VIEW_SWITCH_HOTKEYS, describe_hotkeys, log_hotkeys,
-        process_hotkeys,
-    },
 };
 
 const SEARCH_BAR_HEIGHT: u16 = 3;
@@ -70,7 +66,7 @@ impl App {
         let content_area = layout.get(1).copied().unwrap_or_default();
         let footer_area = layout.get(2).copied().unwrap_or_default();
 
-        let hotkeys = process_hotkeys();
+        let hotkeys = self.config.bar("processes");
         frame.render_widget(
             TopBarView {
                 summary: &self.container_summary("Processes", name),
@@ -181,15 +177,17 @@ impl App {
         let content_area = layout.get(1).copied().unwrap_or_default();
         let footer_area = layout.get(2).copied().unwrap_or_default();
 
-        let mut global: Vec<Hotkey> = VIEW_SWITCH_HOTKEYS.to_vec();
-        global.extend(GLOBAL_HOTKEYS);
+        let mut global = self.config.bar("views");
+        global.extend(self.config.bar("global"));
         if !self.list_filter.is_empty() {
             // `q` clears the active filter instead of quitting while one is
             // set (see event_handlers.rs); keep the hint truthful.
-            if let Some(q) =
-                global.iter_mut().find(|h| h.action == Some("quit"))
+            if let Some(q) = global
+                .iter_mut()
+                .find(|h| h.action.as_deref() == Some("quit"))
             {
-                *q = Hotkey::new('q', "clear filter").action("quit");
+                q.description =
+                    HotkeyDescription::Static("clear filter".to_owned());
             }
         }
         let label = self.view.to_string();
@@ -200,8 +198,12 @@ impl App {
             ResourceKind::Networks => self.networks.model.items.len(),
         };
         let summary = format!("{label}: {n}");
-        let hotkeys = self.keymap.relabel(&self.hotkeys);
-        let global = self.keymap.relabel(&global);
+        let hotkeys = self.config.bar(match self.view {
+            ResourceKind::Containers => "list",
+            ResourceKind::Images
+            | ResourceKind::Volumes
+            | ResourceKind::Networks => "resources",
+        });
 
         frame.render_widget(
             TopBarView {
@@ -326,7 +328,7 @@ impl App {
         let content_area = layout.get(1).copied().unwrap_or_default();
         let footer_area = layout.get(2).copied().unwrap_or_default();
 
-        let hotkeys = log_hotkeys();
+        let hotkeys = self.config.bar("logs");
         frame.render_widget(
             TopBarView {
                 summary: &self.container_summary("Logs", name),
@@ -418,7 +420,7 @@ impl App {
         let content_area = layout.get(1).copied().unwrap_or_default();
         let footer_area = layout.get(2).copied().unwrap_or_default();
 
-        let hotkeys = describe_hotkeys();
+        let hotkeys = self.config.bar("describe");
         frame.render_widget(
             TopBarView {
                 summary: &self.container_summary("Describe", name),

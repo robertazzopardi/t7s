@@ -1,19 +1,13 @@
 //! Today's default hotkey bars, so moving their definitions can't change them.
 use std::fmt::Write as _;
 
-use k9tui::{config::defaults, widgets::hotkey::Hotkey};
+use k9tui::config::defaults;
 
-use crate::{
-    keymap::SPEC,
-    ui::widgets::hotkeys::{
-        GLOBAL_HOTKEYS, LIST_HOTKEYS, RESOURCE_HOTKEYS, VIEW_SWITCH_HOTKEYS,
-        describe_hotkeys, log_hotkeys, process_hotkeys,
-    },
-};
+use crate::keymap::SPEC;
 
-fn section(out: &mut String, title: &str, hotkeys: &[Hotkey]) {
+fn section(out: &mut String, title: &str) {
     writeln!(out, "[{title}]").unwrap();
-    for hotkey in defaults(&SPEC).keymap.relabel(hotkeys) {
+    for hotkey in defaults(&SPEC).bar(title) {
         writeln!(
             out,
             "{} {}",
@@ -27,12 +21,12 @@ fn section(out: &mut String, title: &str, hotkeys: &[Hotkey]) {
 #[test]
 fn default_bars_are_unchanged() {
     let mut out = String::new();
-    section(&mut out, "list", &LIST_HOTKEYS);
-    section(&mut out, "resources", &RESOURCE_HOTKEYS);
-    section(&mut out, "views", &VIEW_SWITCH_HOTKEYS);
-    section(&mut out, "global", &GLOBAL_HOTKEYS);
-    section(&mut out, "logs", &log_hotkeys());
-    section(&mut out, "processes", &process_hotkeys());
-    section(&mut out, "describe", &describe_hotkeys());
+    section(&mut out, "list");
+    section(&mut out, "resources");
+    section(&mut out, "views");
+    section(&mut out, "global");
+    section(&mut out, "logs");
+    section(&mut out, "processes");
+    section(&mut out, "describe");
     assert_eq!(out, include_str!("default_bars.golden"));
 }

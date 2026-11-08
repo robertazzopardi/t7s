@@ -532,8 +532,8 @@ impl App<'_> {
         let Some(sel) = sel else {
             self.set_status(format!(
                 "Select a draft row to commit ({} / {}).",
-                self.keymap.label("new-row"),
-                self.keymap.label("duplicate")
+                self.config.keymap.label("new-row"),
+                self.config.keymap.label("duplicate")
             ));
             return Ok(());
         };
@@ -756,13 +756,13 @@ impl App<'_> {
             return Ok(false);
         }
         match key.code {
-            code if self.keymap.is("refresh", code)
+            code if self.config.keymap.is("refresh", code)
                 || code == KeyCode::Char('R') =>
             {
                 self.reload_current_table_data(None);
                 Ok(true)
             }
-            code if self.keymap.is("new-row", code)
+            code if self.config.keymap.is("new-row", code)
                 || code == KeyCode::Char('a') =>
             {
                 if self.table_data_add_blank_draft()? {
@@ -770,7 +770,7 @@ impl App<'_> {
                 }
                 Ok(true)
             }
-            code if self.keymap.is("defaults", code) => {
+            code if self.config.keymap.is("defaults", code) => {
                 if let Some(n) = self.table_data_add_defaults_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                     // Set after begin so EDIT status does not clobber the count.
@@ -780,21 +780,21 @@ impl App<'_> {
                 }
                 Ok(true)
             }
-            code if self.keymap.is("edit", code) => {
+            code if self.config.keymap.is("edit", code) => {
                 self.begin_cell_edit(None);
                 Ok(true)
             }
-            code if self.keymap.is("duplicate", code) => {
+            code if self.config.keymap.is("duplicate", code) => {
                 if self.table_data_duplicate_as_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                 }
                 Ok(true)
             }
-            code if self.keymap.is("commit", code) => {
+            code if self.config.keymap.is("commit", code) => {
                 self.table_data_commit_draft()?;
                 Ok(true)
             }
-            code if self.keymap.is("delete-row", code) => {
+            code if self.config.keymap.is("delete-row", code) => {
                 self.table_data_request_delete();
                 Ok(true)
             }
@@ -813,7 +813,7 @@ impl App<'_> {
             // A remapped action must reach `handle_hotkeys`, not start an edit.
             KeyCode::Char(c)
                 if !is_table_data_browse_binding(c)
-                    && !self.keymap.binds(key.code) =>
+                    && !self.config.keymap.binds(key.code) =>
             {
                 if self.table_data_column_is_selected() {
                     self.begin_cell_edit(Some(c.to_string()));
@@ -873,7 +873,7 @@ mod tests {
     #[tokio::test]
     async fn remapped_delete_row_follows_config() {
         let mut app = table_app();
-        assert!(app.keymap.set("delete-row", KeyCode::Char('x')));
+        assert!(app.config.keymap.set("delete-row", KeyCode::Char('x')));
         let old = key(KeyCode::Char('D'), KeyModifiers::SHIFT);
         assert!(!app.handle_table_data_hotkeys(old).unwrap());
         let new = key(KeyCode::Char('x'), KeyModifiers::NONE);
@@ -885,7 +885,7 @@ mod tests {
         let mut app = table_app();
         let z = key(KeyCode::Char('z'), KeyModifiers::NONE);
         assert!(app.handle_table_data_hotkeys(z).unwrap());
-        assert!(app.keymap.set("describe", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("describe", KeyCode::Char('z')));
         assert!(!app.handle_table_data_hotkeys(z).unwrap());
     }
 

@@ -29,7 +29,7 @@ mod virtual_table;
 
 use app::{App, PKG_NAME, PKG_VERSION};
 use k9tui::{
-    config::{Config, load_or_exit, summarize},
+    config::{load_or_exit, summarize},
     error::{Result, err},
     terminal::run,
 };
@@ -83,13 +83,12 @@ fn parse_launch_args() -> Result<Option<String>> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let launch_connection = parse_launch_args()?;
-    let Config {
-        keymap, warnings, ..
-    } = load_or_exit(&keymap::SPEC);
+    let config = load_or_exit(&keymap::SPEC);
+    let warnings = config.warnings.clone();
     let status = summarize(&warnings);
     let result = run(|terminal| {
         let mut app = App::default().init()?;
-        app.keymap = keymap;
+        app.config = config;
         if let Some(status) = status {
             app.set_status(status);
         }

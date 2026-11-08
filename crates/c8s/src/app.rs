@@ -9,15 +9,13 @@ use ansi_to_tui::IntoText;
 use crossterm::event::{Event, KeyEventKind, read};
 use k9tui::{
     bg::{KeyedFailure, spawn_keyed},
-    config::defaults,
+    config::{Config, defaults},
     error::Result,
     event::poll_input,
     in_flight::InFlight,
-    keymap::Keymap,
     terminal::suspend,
     widgets::{
         constraint_len_calculator,
-        hotkey::Hotkey,
         modal::ConfirmDialog,
         status_line::StatusLine,
         table::{ColumnWidthMode, TableData, TableDataState, filter_rows},
@@ -43,7 +41,6 @@ use crate::{
     in_flight::DAEMON_KEY,
     keymap::SPEC,
     log_dedup::DedupMode,
-    ui::widgets::hotkeys::LIST_HOTKEYS,
 };
 
 pub const APP_NAME: &str = r"         ______
@@ -126,8 +123,7 @@ pub struct App {
     /// Which resource table the list view currently shows.
     pub(crate) view: ResourceKind,
     pub(crate) docker: Option<DockerClient>,
-    pub(crate) hotkeys: Vec<Hotkey>,
-    pub(crate) keymap: Keymap,
+    pub(crate) config: Config,
     pub(crate) containers: TableDataState<ContainerRow>,
     pub(crate) images: TableDataState<ImageRow>,
     pub(crate) volumes: TableDataState<VolumeRow>,
@@ -212,8 +208,7 @@ impl App {
             state: AppState::default(),
             view: ResourceKind::default(),
             docker: None,
-            hotkeys: LIST_HOTKEYS.to_vec(),
-            keymap: defaults(&SPEC).keymap,
+            config: defaults(&SPEC),
             containers: TableDataState::new(Vec::new()),
             images: TableDataState::new(Vec::new()),
             volumes: TableDataState::new(Vec::new()),

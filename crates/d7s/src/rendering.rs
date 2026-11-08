@@ -1,6 +1,7 @@
 use core::fmt;
 
 use k9tui::{
+    config::Config,
     theme,
     widgets::{
         help_view::HelpRow,
@@ -20,23 +21,36 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{APP_NAME, App},
-    app_state::DatabaseExplorerState,
-    db::{connection::Connection, query_log::QueryLogEntry},
+    app_state::{AppState, DatabaseExplorerState},
+    db::{
+        connection::{Connection, ConnectionType},
+        query_log::QueryLogEntry,
+    },
     filtered_data::FilteredData,
     ui::{
         theme as d7s_theme,
         widgets::{
             connection_modal::ConnectionModalWidget,
-            describe_content::DescribeRow,
-            global_hotkeys::global_hotkeys,
-            hotkeys::{CELL_EDIT_HOTKEYS, TABLE_DATA_VIEW_HOTKEYS},
-            idle_hint::default_idle_hint,
+            describe_content::DescribeRow, idle_hint::default_idle_hint,
             sql_executor::SqlExecutor,
         },
     },
 };
 
 const FILTER_BAR_HEIGHT: u16 = 3;
+
+/// The database bar for a backend: the activity view is Postgres-only.
+#[must_use]
+pub fn database_bar(
+    config: &Config,
+    connection_type: ConnectionType,
+) -> Vec<Hotkey> {
+    let mut bar = config.bar("database");
+    if !connection_type.has_activity_view() {
+        bar.retain(|hotkey| hotkey.action.as_deref() != Some("activity"));
+    }
+    bar
+}
 
 impl App<'_> {
     #[allow(clippy::too_many_lines)]
@@ -45,7 +59,7 @@ impl App<'_> {
         let idle_hint = default_idle_hint(
             self.state,
             &self.database_explorer.state,
-            &self.keymap,
+            &self.config.keymap,
         );
         self.status_line.set_idle_hint(if self.watch_active {
             format!("● WATCHING · {idle_hint}")
@@ -70,7 +84,11 @@ impl App<'_> {
             self.database_explorer.state,
             DatabaseExplorerState::Connections
         );
-        let global = self.keymap.relabel(&global_hotkeys(on_connection_list));
+        let global = self.config.bar(if on_connection_list {
+            "global-connections"
+        } else {
+            "global-explorer"
+        });
 
         let (connection, build_info, recent_hotkeys) = if on_connection_list {
             (
@@ -88,24 +106,21 @@ impl App<'_> {
 
         let summary = connection.summary_stack();
 
-        let table_data_ext: Vec<Hotkey> = if matches!(
+        let mut hotkey_bar = if self.state == AppState::DatabaseConnected {
+            database_bar(&self.config, self.database_explorer.connection.r#type)
+        } else {
+            self.config.bar("connections")
+        };
+        if matches!(
             self.database_explorer.state,
             DatabaseExplorerState::TableData(_, _)
         ) {
-            let table_hotkeys: &[Hotkey] = if self.is_cell_editing() {
-                &CELL_EDIT_HOTKEYS
+            hotkey_bar.extend(self.config.bar(if self.is_cell_editing() {
+                "cell-edit"
             } else {
-                &TABLE_DATA_VIEW_HOTKEYS
-            };
-            self.hotkeys.iter().chain(table_hotkeys).cloned().collect()
-        } else {
-            Vec::new()
-        };
-        let hotkey_bar = self.keymap.relabel(if table_data_ext.is_empty() {
-            &self.hotkeys
-        } else {
-            &table_data_ext
-        });
+                "table-data"
+            }));
+        }
 
         frame.render_widget(
             TopBarView {
@@ -318,7 +333,7 @@ impl App<'_> {
             {
                 Some(format!(
                     "Press {} to add your first connection",
-                    self.keymap.label("new-connection")
+                    self.config.keymap.label("new-connection")
                 ))
             }
             DatabaseExplorerState::Connections
@@ -506,8 +521,8 @@ impl App<'_> {
             DatabaseExplorerState::SqlResults(_) => {
                 frame.render_stateful_widget(
                     SqlExecutor {
-                        open_key: self.keymap.label("sql-editor"),
-                        run_key: self.keymap.label("run-sql"),
+                        open_key: self.config.keymap.label("sql-editor"),
+                        run_key: self.config.keymap.label("run-sql"),
                     },
                     area,
                     &mut self.database_explorer.sql_executor,

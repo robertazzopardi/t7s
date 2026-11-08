@@ -57,7 +57,7 @@ impl App<'_> {
         }
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                if should_clear_status_on_key(key, &self.keymap) {
+                if should_clear_status_on_key(key, &self.config.keymap) {
                     self.clear_status();
                 }
                 // Nav keys leave the "Esc again to discard" status on screen
@@ -65,7 +65,7 @@ impl App<'_> {
                 // must not silently clear the pending flag it describes.
                 // Esc is excluded here because its own handler below reads
                 // this flag to decide first-press vs. second-press.
-                if should_clear_status_on_key(key, &self.keymap)
+                if should_clear_status_on_key(key, &self.config.keymap)
                     && !matches!(key.code, KeyCode::Esc)
                 {
                     self.draft_discard_pending = false;
@@ -114,11 +114,12 @@ impl App<'_> {
                     self.quit();
                 }
                 (_, code)
-                    if code == KeyCode::Esc || self.keymap.is("help", code) =>
+                    if code == KeyCode::Esc
+                        || self.config.keymap.is("help", code) =>
                 {
                     self.show_help = false;
                 }
-                (_, code) if self.keymap.is("quit", code) => {
+                (_, code) if self.config.keymap.is("quit", code) => {
                     self.quit();
                 }
                 _ => {
@@ -146,7 +147,7 @@ impl App<'_> {
                 (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
                     self.quit();
                 }
-                (_, code) if self.keymap.is("quit", code) => {
+                (_, code) if self.config.keymap.is("quit", code) => {
                     self.quit();
                 }
                 _ => {
@@ -164,8 +165,8 @@ impl App<'_> {
                 }
                 (_, code)
                     if code == KeyCode::Esc
-                        || self.keymap.is("quit", code)
-                        || self.keymap.is("query-log", code) =>
+                        || self.config.keymap.is("quit", code)
+                        || self.config.keymap.is("query-log", code) =>
                 {
                     self.show_query_log = false;
                 }
@@ -284,15 +285,15 @@ impl App<'_> {
                 self.export_sql_results_tsv();
                 true
             }
-            (_, code) if self.keymap.is("quit", code) => {
+            (_, code) if self.config.keymap.is("quit", code) => {
                 self.quit();
                 true
             }
-            (_, code) if self.keymap.is("copy", code) => {
+            (_, code) if self.config.keymap.is("copy", code) => {
                 self.copy();
                 true
             }
-            (_, code) if self.keymap.is("copy-row", code) => {
+            (_, code) if self.config.keymap.is("copy-row", code) => {
                 if matches!(
                     self.database_explorer.state,
                     DatabaseExplorerState::TableData(_, _)
@@ -304,7 +305,7 @@ impl App<'_> {
                     false
                 }
             }
-            (_, code) if self.keymap.is("help", code) => {
+            (_, code) if self.config.keymap.is("help", code) => {
                 self.open_help();
                 true
             }
@@ -323,13 +324,14 @@ impl App<'_> {
             }
             (_, code)
                 if on_connections
-                    && self.keymap.is("open-connection", code) =>
+                    && self.config.keymap.is("open-connection", code) =>
             {
                 self.connect_to_database();
                 true
             }
             (_, code)
-                if on_connections && self.keymap.is("reconnect", code) =>
+                if on_connections
+                    && self.config.keymap.is("reconnect", code) =>
             {
                 if let Some(name) = PreferencesService::last_connection() {
                     let before = self.state;
@@ -343,47 +345,50 @@ impl App<'_> {
                 true
             }
             (_, code)
-                if on_connections && self.keymap.is("new-connection", code) =>
+                if on_connections
+                    && self.config.keymap.is("new-connection", code) =>
             {
                 self.modal_manager.open_new_connection_modal();
                 true
             }
-            (_, code) if on_connections && self.keymap.is("ping", code) => {
+            (_, code)
+                if on_connections && self.config.keymap.is("ping", code) =>
+            {
                 self.check_connections_health();
                 true
             }
             (_, code)
                 if on_connections
-                    && self.keymap.is("delete-connection", code) =>
+                    && self.config.keymap.is("delete-connection", code) =>
             {
                 self.handle_delete_connection();
                 true
             }
             (_, code)
                 if on_connections
-                    && self.keymap.is("edit-connection", code) =>
+                    && self.config.keymap.is("edit-connection", code) =>
             {
                 self.handle_edit_connection();
                 true
             }
             (_, code)
                 if self.state == AppState::DatabaseConnected
-                    && self.keymap.is("sql-editor", code) =>
+                    && self.config.keymap.is("sql-editor", code) =>
             {
                 self.request_editor();
                 true
             }
-            (_, code) if self.keymap.is("describe", code) => {
+            (_, code) if self.config.keymap.is("describe", code) => {
                 self.spawn_describe_rows()
             }
             (_, code)
                 if self.state == AppState::DatabaseConnected
-                    && self.keymap.is("table-structure", code) =>
+                    && self.config.keymap.is("table-structure", code) =>
             {
                 self.handle_toggle_table_view();
                 true
             }
-            (_, code) if self.keymap.is("run-sql", code) => {
+            (_, code) if self.config.keymap.is("run-sql", code) => {
                 if matches!(
                     self.database_explorer.state,
                     DatabaseExplorerState::SqlResults(_)
@@ -407,7 +412,7 @@ impl App<'_> {
                 false
             }
             (_, code)
-                if self.keymap.is("watch", code)
+                if self.config.keymap.is("watch", code)
                     && matches!(
                         self.database_explorer.state,
                         DatabaseExplorerState::SqlResults(_)
@@ -416,19 +421,19 @@ impl App<'_> {
                 self.toggle_watch();
                 true
             }
-            (_, code) if self.keymap.is("width", code) => {
+            (_, code) if self.config.keymap.is("width", code) => {
                 self.toggle_column_width_mode();
                 true
             }
             (_, code)
-                if self.keymap.is("query-log", code)
+                if self.config.keymap.is("query-log", code)
                     && self.state == AppState::DatabaseConnected =>
             {
                 self.open_query_log_view();
                 true
             }
             (_, code)
-                if self.keymap.is("activity", code)
+                if self.config.keymap.is("activity", code)
                     && self.state == AppState::DatabaseConnected
                     && self
                         .database_explorer
@@ -440,7 +445,7 @@ impl App<'_> {
                 true
             }
             (_, code)
-                if self.keymap.is("export", code)
+                if self.config.keymap.is("export", code)
                     && matches!(
                         self.database_explorer.state,
                         DatabaseExplorerState::SqlResults(_)
@@ -449,7 +454,7 @@ impl App<'_> {
                 self.export_sql_results_tsv();
                 true
             }
-            (_, code) if self.keymap.is("command", code) => {
+            (_, code) if self.config.keymap.is("command", code) => {
                 self.open_command_bar();
                 true
             }
@@ -484,7 +489,7 @@ impl App<'_> {
                         self.draft_discard_pending = true;
                         self.set_status(format!(
                             "Draft row pending — Esc again to discard, {} to commit",
-                            self.keymap.label("commit")
+                            self.config.keymap.label("commit")
                         ));
                     }
                 } else if self
@@ -579,7 +584,7 @@ impl App<'_> {
                 self.handle_database_table_navigation(KeyCode::Char('G'));
             }
             (_, code)
-                if self.keymap.is("search", code)
+                if self.config.keymap.is("search", code)
                     && !self.modal_manager.is_any_modal_open() =>
             {
                 self.open_filter_bar();
@@ -863,12 +868,16 @@ mod tests {
     #[tokio::test]
     async fn edit_connection_remap_leaves_sql_editor_on_e() {
         let mut app = connected_app();
-        assert!(app.keymap.set("edit-connection", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("edit-connection", KeyCode::Char('z')));
         assert!(app.handle_hotkeys(key('e')));
         assert!(app.open_editor_requested, "e still opens the editor");
 
         let mut list = App::default();
-        assert!(list.keymap.set("edit-connection", KeyCode::Char('z')));
+        assert!(
+            list.config
+                .keymap
+                .set("edit-connection", KeyCode::Char('z'))
+        );
         assert!(!list.handle_hotkeys(key('e')), "e is free on the list");
         assert!(!list.open_editor_requested);
         assert!(list.handle_hotkeys(key('z')), "z edits on the list");
@@ -877,7 +886,7 @@ mod tests {
     #[tokio::test]
     async fn sql_editor_remap_leaves_edit_connection_on_e() {
         let mut app = connected_app();
-        assert!(app.keymap.set("sql-editor", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("sql-editor", KeyCode::Char('z')));
         assert!(!app.handle_hotkeys(key('e')), "e is free when connected");
         assert!(!app.open_editor_requested);
         assert!(app.handle_hotkeys(key('z')));
@@ -887,7 +896,7 @@ mod tests {
     #[tokio::test]
     async fn new_connection_remap_does_not_swallow_key_on_other_screens() {
         let mut app = connected_app();
-        assert!(app.keymap.set("new-connection", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("new-connection", KeyCode::Char('z')));
         assert!(!app.handle_hotkeys(key('z')));
     }
 
@@ -897,7 +906,7 @@ mod tests {
             running: true,
             ..App::default()
         };
-        assert!(app.keymap.set("quit", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("quit", KeyCode::Char('z')));
         assert!(!app.handle_hotkeys(key('q')));
         assert!(app.running, "old key is released");
         assert!(app.handle_hotkeys(key('z')));
@@ -910,7 +919,7 @@ mod tests {
             running: true,
             ..App::default()
         };
-        assert!(app.keymap.set("quit", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("quit", KeyCode::Char('z')));
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert!(app.handle_hotkeys(ctrl_c));
         assert!(!app.running);
@@ -924,7 +933,7 @@ mod tests {
         };
         app.database_explorer.state =
             DatabaseExplorerState::SqlResults("select 1".into());
-        assert!(app.keymap.set("quit", KeyCode::Char('s')));
+        assert!(app.config.keymap.set("quit", KeyCode::Char('s')));
         let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
         assert!(app.handle_hotkeys(ctrl_s));
         assert!(app.running, "Ctrl+s must not fire the bare-key action");
@@ -944,14 +953,14 @@ mod tests {
     async fn draft_pending_hint_names_the_commit_key() {
         let mut app = App::default();
         assert!(app.draft_pending_hint().contains("s to commit"));
-        assert!(app.keymap.set("commit", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("commit", KeyCode::Char('z')));
         assert!(app.draft_pending_hint().contains("z to commit"));
     }
 
     #[tokio::test]
     async fn connected_hint_names_the_help_key() {
         let mut app = App::default();
-        assert!(app.keymap.set("help", KeyCode::F(1)));
+        assert!(app.config.keymap.set("help", KeyCode::F(1)));
         let hint = app.connect_status_message("db", Environment::default());
         assert!(hint.contains("press F1 for help"), "{hint}");
     }
@@ -959,7 +968,7 @@ mod tests {
     #[tokio::test]
     async fn empty_list_hint_names_the_new_connection_key() {
         let mut app = App::default();
-        assert!(app.keymap.set("new-connection", KeyCode::Char('m')));
+        assert!(app.config.keymap.set("new-connection", KeyCode::Char('m')));
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal.draw(|f| app.render(f)).unwrap();
         let screen: String = terminal
@@ -975,7 +984,7 @@ mod tests {
     #[tokio::test]
     async fn watch_status_names_the_watch_key() {
         let mut app = App::default();
-        assert!(app.keymap.set("watch", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("watch", KeyCode::Char('z')));
         app.toggle_watch();
         assert!(
             app.status_line.message().contains("press z to stop"),
@@ -991,8 +1000,8 @@ mod tests {
             show_help: true,
             ..App::default()
         };
-        assert!(app.keymap.set("help", KeyCode::Char('z')));
-        assert!(app.keymap.set("quit", KeyCode::Char('x')));
+        assert!(app.config.keymap.set("help", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("quit", KeyCode::Char('x')));
         app.on_key_event(key('q')).unwrap();
         assert!(app.running, "a freed q must not quit");
         app.on_key_event(key('?')).unwrap();
@@ -1011,7 +1020,7 @@ mod tests {
             show_describe: true,
             ..App::default()
         };
-        assert!(app.keymap.set("quit", KeyCode::Char('x')));
+        assert!(app.config.keymap.set("quit", KeyCode::Char('x')));
         app.on_key_event(key('q')).unwrap();
         assert!(app.running, "a freed q must not quit");
         app.on_key_event(key('x')).unwrap();
@@ -1024,7 +1033,7 @@ mod tests {
             show_query_log: true,
             ..App::default()
         };
-        assert!(app.keymap.set("query-log", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("query-log", KeyCode::Char('z')));
         app.on_key_event(key('L')).unwrap();
         assert!(app.show_query_log, "a freed L must not close the log");
         app.on_key_event(key('z')).unwrap();
@@ -1034,7 +1043,7 @@ mod tests {
     #[tokio::test]
     async fn remapped_search_opens_filter_bar() {
         let mut app = App::default();
-        assert!(app.keymap.set("search", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("search", KeyCode::Char('z')));
         app.handle_navigation_keys(key('/'));
         assert!(app.search_filter.is_none(), "old key is released");
         app.handle_navigation_keys(key('z'));
@@ -1044,10 +1053,10 @@ mod tests {
     #[tokio::test]
     async fn copy_status_survives_remapped_copy_key() {
         let mut app = App::default();
-        assert!(!should_clear_status_on_key(key('y'), &app.keymap));
-        assert!(app.keymap.set("copy", KeyCode::Char('z')));
-        assert!(!should_clear_status_on_key(key('z'), &app.keymap));
-        assert!(should_clear_status_on_key(key('y'), &app.keymap));
+        assert!(!should_clear_status_on_key(key('y'), &app.config.keymap));
+        assert!(app.config.keymap.set("copy", KeyCode::Char('z')));
+        assert!(!should_clear_status_on_key(key('z'), &app.config.keymap));
+        assert!(should_clear_status_on_key(key('y'), &app.config.keymap));
     }
 
     #[tokio::test]

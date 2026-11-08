@@ -170,23 +170,6 @@ impl Keymap {
         self.screens = screens;
     }
 
-    /// Copy of `hotkeys` with each action-tagged entry showing its current key.
-    #[must_use]
-    pub fn relabel(&self, hotkeys: &[Hotkey]) -> Vec<Hotkey> {
-        hotkeys
-            .iter()
-            .cloned()
-            .map(|mut hotkey| {
-                if let Some(code) =
-                    hotkey.action.and_then(|action| self.primary(action))
-                {
-                    hotkey.keycode = code;
-                }
-                hotkey
-            })
-            .collect()
-    }
-
     /// Check final bindings: every action has a key, no two primaries or two
     /// secondaries share a key on one screen, and `typing` screens leave
     /// plain characters alone.
@@ -250,7 +233,6 @@ mod tests {
     use crossterm::event::KeyCode;
 
     use super::*;
-    use crate::widgets::hotkey::Hotkey;
 
     fn char_map(pairs: &[(&'static str, char)]) -> Keymap {
         Keymap::new(
@@ -309,19 +291,6 @@ mod tests {
         km.set("quit", KeyCode::Char('z'));
         assert!(km.binds(KeyCode::Char('z')));
         assert!(!km.binds(KeyCode::Char('q')));
-    }
-
-    #[test]
-    fn relabel_follows_remap_and_skips_untagged() {
-        let mut km = char_map(&[("remove", 'D')]);
-        km.set("remove", KeyCode::F(5));
-        let bar = [
-            Hotkey::new('D', "remove").action("remove"),
-            Hotkey::new('W', "width"),
-        ];
-        let out = km.relabel(&bar);
-        assert_eq!(out.first().map(|h| h.keycode), Some(KeyCode::F(5)));
-        assert_eq!(out.get(1).map(|h| h.keycode), Some(KeyCode::Char('W')));
     }
 
     fn list_map(pairs: &[(&str, &[KeyCode])]) -> Keymap {

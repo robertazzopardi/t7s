@@ -2,25 +2,20 @@
 //! change them.
 use std::fmt::Write as _;
 
+use crossterm::event::KeyCode;
 use k9tui::{config::defaults, widgets::hotkey::Hotkey};
 
 use crate::{
     app_state::{AppState, DatabaseExplorerState},
     db::connection::ConnectionType,
     keymap::SPEC,
-    ui::widgets::{
-        global_hotkeys::global_hotkeys,
-        help_content::help_rows,
-        hotkeys::{
-            CELL_EDIT_HOTKEYS, CONNECTION_HOTKEYS, TABLE_DATA_VIEW_HOTKEYS,
-            database_hotkeys,
-        },
-    },
+    rendering::database_bar,
+    ui::widgets::help_content::help_rows,
 };
 
 fn section(out: &mut String, title: &str, hotkeys: &[Hotkey]) {
     writeln!(out, "[{title}]").unwrap();
-    for hotkey in defaults(&SPEC).keymap.relabel(hotkeys) {
+    for hotkey in hotkeys {
         writeln!(
             out,
             "{} {}",
@@ -41,22 +36,27 @@ fn help(out: &mut String, app: AppState, state: &DatabaseExplorerState) {
 
 #[test]
 fn default_bars_are_unchanged() {
+    let config = defaults(&SPEC);
     let mut out = String::new();
-    section(&mut out, "connections", &CONNECTION_HOTKEYS);
+    section(&mut out, "connections", &config.bar("connections"));
     section(
         &mut out,
         "database-postgres",
-        &database_hotkeys(ConnectionType::Postgres),
+        &database_bar(&config, ConnectionType::Postgres),
     );
     section(
         &mut out,
         "database-sqlite",
-        &database_hotkeys(ConnectionType::Sqlite),
+        &database_bar(&config, ConnectionType::Sqlite),
     );
-    section(&mut out, "table-data", &TABLE_DATA_VIEW_HOTKEYS);
-    section(&mut out, "cell-edit", &CELL_EDIT_HOTKEYS);
-    section(&mut out, "global-connections", &global_hotkeys(true));
-    section(&mut out, "global-explorer", &global_hotkeys(false));
+    section(&mut out, "table-data", &config.bar("table-data"));
+    section(&mut out, "cell-edit", &config.bar("cell-edit"));
+    section(
+        &mut out,
+        "global-connections",
+        &config.bar("global-connections"),
+    );
+    section(&mut out, "global-explorer", &config.bar("global-explorer"));
     assert_eq!(out, include_str!("default_bars.golden"));
 }
 
@@ -84,4 +84,17 @@ fn default_help_is_unchanged() {
         &DatabaseExplorerState::SqlResults("q".into()),
     );
     assert_eq!(out, include_str!("default_help.golden"));
+}
+
+#[test]
+fn activity_row_hides_by_action_when_remapped() {
+    let mut config = defaults(&SPEC);
+    assert!(config.keymap.set("activity", KeyCode::Char('z')));
+    let has_activity = |t| {
+        database_bar(&config, t)
+            .iter()
+            .any(|h| h.action.as_deref() == Some("activity"))
+    };
+    assert!(has_activity(ConnectionType::Postgres));
+    assert!(!has_activity(ConnectionType::Sqlite));
 }

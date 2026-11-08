@@ -6,7 +6,7 @@ use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug, Clone)]
 pub enum HotkeyDescription {
-    Static(&'static str),
+    Static(String),
     /// Digit hotkey to reopen a recently viewed table (`schema.table` in the bar).
     RecentTable {
         schema: String,
@@ -18,7 +18,7 @@ impl HotkeyDescription {
     #[must_use]
     pub fn display_suffix(&self) -> Cow<'_, str> {
         match self {
-            Self::Static(s) => Cow::Borrowed(*s),
+            Self::Static(s) => Cow::Borrowed(s),
             Self::RecentTable { schema, table } => {
                 Cow::Owned(format!("{schema}.{table}"))
             }
@@ -31,9 +31,9 @@ pub struct Hotkey {
     pub keycode: KeyCode,
     pub description: HotkeyDescription,
     /// When set, shown instead of the `KeyCode` label (e.g. `Ctrl+e`).
-    pub key_display: Option<&'static str>,
+    pub key_display: Option<String>,
     /// Keymap action this hotkey triggers, so the bar can show remapped keys.
-    pub action: Option<&'static str>,
+    pub action: Option<String>,
 }
 
 impl Display for Hotkey {
@@ -44,10 +44,10 @@ impl Display for Hotkey {
 
 impl Hotkey {
     #[must_use]
-    pub const fn new(c: char, description: &'static str) -> Self {
+    pub fn new(c: char, description: &str) -> Self {
         Self {
             keycode: KeyCode::Char(c),
-            description: HotkeyDescription::Static(description),
+            description: HotkeyDescription::Static(description.to_owned()),
             key_display: None,
             action: None,
         }
@@ -55,16 +55,16 @@ impl Hotkey {
 
     /// Tag with the keymap action this hotkey triggers.
     #[must_use]
-    pub const fn action(mut self, action: &'static str) -> Self {
-        self.action = Some(action);
+    pub fn action(mut self, action: &str) -> Self {
+        self.action = Some(action.to_owned());
         self
     }
 
     #[must_use]
-    pub const fn code(keycode: KeyCode, description: &'static str) -> Self {
+    pub fn code(keycode: KeyCode, description: &str) -> Self {
         Self {
             keycode,
-            description: HotkeyDescription::Static(description),
+            description: HotkeyDescription::Static(description.to_owned()),
             key_display: None,
             action: None,
         }
@@ -72,15 +72,11 @@ impl Hotkey {
 
     /// Custom key label for chords the `KeyCode` alone cannot show (e.g. `Ctrl+e`).
     #[must_use]
-    pub const fn labeled(
-        display: &'static str,
-        keycode: KeyCode,
-        description: &'static str,
-    ) -> Self {
+    pub fn labeled(display: &str, keycode: KeyCode, description: &str) -> Self {
         Self {
             keycode,
-            description: HotkeyDescription::Static(description),
-            key_display: Some(display),
+            description: HotkeyDescription::Static(description.to_owned()),
+            key_display: Some(display.to_owned()),
             action: None,
         }
     }
@@ -88,8 +84,8 @@ impl Hotkey {
     #[must_use]
     #[allow(clippy::wildcard_enum_match_arm)] // KeyCode is crossterm's; only label keys we show
     pub fn key_label(&self) -> String {
-        if let Some(label) = self.key_display {
-            return label.to_string();
+        if let Some(label) = &self.key_display {
+            return label.clone();
         }
         match self.keycode {
             KeyCode::Char(c) => c.to_string(),

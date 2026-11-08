@@ -16,7 +16,6 @@ use crate::{
     app::App,
     app_state::{AppState, ResourceKind},
     command::{Command, resolve, suggest},
-    ui::widgets::hotkeys::{LIST_HOTKEYS, RESOURCE_HOTKEYS},
 };
 
 impl App {
@@ -307,19 +306,19 @@ impl App {
                 self.quit();
             }
             (_, code)
-                if self.keymap.is("quit", code)
+                if self.config.keymap.is("quit", code)
                     && self.list_filter.is_empty() =>
             {
                 self.quit();
             }
-            (_, code) if self.keymap.is("quit", code) => {
+            (_, code) if self.config.keymap.is("quit", code) => {
                 self.list_filter.clear();
                 self.reapply_list_filter();
             }
-            (_, code) if self.keymap.is("search", code) => {
+            (_, code) if self.config.keymap.is("search", code) => {
                 self.list_search_open = true;
             }
-            (_, code) if self.keymap.is("command", code) => {
+            (_, code) if self.config.keymap.is("command", code) => {
                 self.list_search_open = true;
                 self.command_mode = true;
                 self.command_text.clear();
@@ -358,7 +357,7 @@ impl App {
         }
 
         match (key.modifiers, key.code) {
-            (_, code) if self.keymap.is("width", code) => {
+            (_, code) if self.config.keymap.is("width", code) => {
                 self.toggle_column_width_mode();
             }
             (_, KeyCode::Char('1')) => {
@@ -375,7 +374,7 @@ impl App {
             (_, KeyCode::Char('G')) => self.navigate(KeyCode::Char('G')),
             (_, code)
                 if self.view == ResourceKind::Containers
-                    && self.keymap.is("running", code) =>
+                    && self.config.keymap.is("running", code) =>
             {
                 self.running_only = !self.running_only;
                 self.reapply_list_filter();
@@ -383,7 +382,7 @@ impl App {
             (_, code)
                 if self.view == ResourceKind::Containers
                     && (code == KeyCode::Char('S')
-                        || self.keymap.is("start-stop", code)) =>
+                        || self.config.keymap.is("start-stop", code)) =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     if row.is_running() {
@@ -395,7 +394,7 @@ impl App {
             }
             (_, code)
                 if self.view == ResourceKind::Containers
-                    && self.keymap.is("restart", code) =>
+                    && self.config.keymap.is("restart", code) =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     self.restart_container(&row.id);
@@ -403,7 +402,7 @@ impl App {
             }
             (_, code)
                 if self.view == ResourceKind::Containers
-                    && self.keymap.is("processes", code) =>
+                    && self.config.keymap.is("processes", code) =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     self.open_processes(&row.id, &row.name);
@@ -411,7 +410,7 @@ impl App {
             }
             (_, code)
                 if self.view == ResourceKind::Containers
-                    && self.keymap.is("logs", code) =>
+                    && self.config.keymap.is("logs", code) =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     self.open_logs(&row.id, &row.name);
@@ -419,24 +418,24 @@ impl App {
             }
             (_, code)
                 if code == KeyCode::Enter
-                    || self.keymap.is("describe", code) =>
+                    || self.config.keymap.is("describe", code) =>
             {
                 self.describe_selected();
             }
             (_, code)
                 if self.view == ResourceKind::Containers
-                    && self.keymap.is("exec", code) =>
+                    && self.config.keymap.is("exec", code) =>
             {
                 if let Some(row) = self.selected_container().cloned() {
                     self.exec_shell(terminal, &row.id)?;
                 }
             }
-            (_, code) if self.keymap.is("health", code) => {
+            (_, code) if self.config.keymap.is("health", code) => {
                 self.open_daemon_health();
             }
             (_, code)
                 if code == KeyCode::Delete
-                    || self.keymap.is("remove", code) =>
+                    || self.config.keymap.is("remove", code) =>
             {
                 self.prompt_remove_selected();
             }
@@ -447,14 +446,8 @@ impl App {
 
     /// Switch the active list view. Selection state per resource kind is
     /// preserved on its own `TableDataState`, so no reset is needed here.
-    fn switch_view(&mut self, kind: ResourceKind) {
+    const fn switch_view(&mut self, kind: ResourceKind) {
         self.view = kind;
-        self.hotkeys = match kind {
-            ResourceKind::Containers => LIST_HOTKEYS.to_vec(),
-            ResourceKind::Images
-            | ResourceKind::Volumes
-            | ResourceKind::Networks => RESOURCE_HOTKEYS.to_vec(),
-        };
     }
 
     fn navigate(&mut self, key: KeyCode) {
@@ -688,7 +681,6 @@ mod tests {
             client::{DaemonHealth, DockerClient},
         },
         in_flight::container_key,
-        ui::widgets::hotkeys::RESOURCE_HOTKEYS,
     };
 
     type Term = Terminal<TestBackend>;
@@ -795,7 +787,7 @@ mod tests {
     async fn remapped_keys_follow_config() {
         let mut app = app();
         let mut t = term();
-        assert!(app.keymap.set("remove", KeyCode::Char('x')));
+        assert!(app.config.keymap.set("remove", KeyCode::Char('x')));
         app.on_key_event(shift_d(), &mut t).unwrap();
         assert!(app.confirm_dialog.is_none(), "old key is released");
         app.on_key_event(char_key('x'), &mut t).unwrap();
@@ -810,13 +802,13 @@ mod tests {
     async fn remapped_start_stop_keeps_s_alias() {
         let mut t = term();
         let mut released = app();
-        assert!(released.keymap.set("start-stop", KeyCode::Char('x')));
+        assert!(released.config.keymap.set("start-stop", KeyCode::Char('x')));
         released.on_key_event(char_key('s'), &mut t).unwrap();
         assert!(released.in_flight.is_empty(), "old key is released");
 
         for c in ['x', 'S'] {
             let mut app = app();
-            assert!(app.keymap.set("start-stop", KeyCode::Char('x')));
+            assert!(app.config.keymap.set("start-stop", KeyCode::Char('x')));
             app.on_key_event(char_key(c), &mut t).unwrap();
             assert!(!app.in_flight.is_empty(), "{c} fires");
         }
@@ -842,8 +834,8 @@ mod tests {
         let mut app = app();
         let mut t = term();
         app.running = true;
-        assert!(app.keymap.set("quit", KeyCode::Char('z')));
-        assert!(app.keymap.set("search", KeyCode::Char('x')));
+        assert!(app.config.keymap.set("quit", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("search", KeyCode::Char('x')));
         app.on_key_event(char_key('q'), &mut t).unwrap();
         assert!(app.running, "old quit key is released");
         app.on_key_event(char_key('/'), &mut t).unwrap();
@@ -881,8 +873,8 @@ mod tests {
     async fn hotkey_bar_shows_remapped_keys() {
         let mut app = app();
         let mut t = term();
-        assert!(app.keymap.set("remove", KeyCode::F(5)));
-        assert!(app.keymap.set("search", KeyCode::F(6)));
+        assert!(app.config.keymap.set("remove", KeyCode::F(5)));
+        assert!(app.config.keymap.set("search", KeyCode::F(6)));
         let out = screen(&mut app, &mut t);
         assert!(out.contains("F5") && out.contains("F6"), "{out}");
     }
@@ -1061,7 +1053,6 @@ mod tests {
         app.on_key_event(key(KeyCode::Enter), &mut t).unwrap();
         assert!(!app.command_mode && !app.list_search_open);
         assert_eq!(app.view, ResourceKind::Images);
-        assert_eq!(app.hotkeys.len(), RESOURCE_HOTKEYS.len());
     }
 
     #[tokio::test]
@@ -1500,7 +1491,7 @@ mod filter_tests {
     #[test]
     fn ctrl_c_quits_with_a_filter_when_quit_is_c() {
         let mut app = app();
-        assert!(app.keymap.set("quit", KeyCode::Char('c')));
+        assert!(app.config.keymap.set("quit", KeyCode::Char('c')));
         press(&mut app, KeyCode::Char('/'));
         type_str(&mut app, "ab");
         press(&mut app, KeyCode::Enter);

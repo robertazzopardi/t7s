@@ -15,20 +15,19 @@ mod ui;
 
 use app::App;
 use k9tui::{
-    config::{Config, load_or_exit, summarize},
+    config::{load_or_exit, summarize},
     error::Result,
     terminal::run,
 };
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let Config {
-        keymap, warnings, ..
-    } = load_or_exit(&keymap::SPEC);
+    let config = load_or_exit(&keymap::SPEC);
+    let warnings = config.warnings.clone();
     let status = summarize(&warnings);
     let result = run(|terminal| {
         let mut app = App::new();
-        app.keymap = keymap;
+        app.config = config;
         if let Some(status) = status {
             app.status_line.set_message(status);
         }
