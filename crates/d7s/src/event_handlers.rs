@@ -275,6 +275,15 @@ impl App<'_> {
                 self.quit();
                 true
             }
+            (KeyModifiers::CONTROL, KeyCode::Char('s' | 'S'))
+                if matches!(
+                    self.database_explorer.state,
+                    DatabaseExplorerState::SqlResults(_)
+                ) =>
+            {
+                self.export_sql_results_tsv();
+                true
+            }
             (_, code) if self.keymap.is("quit", code) => {
                 self.quit();
                 true
@@ -430,10 +439,8 @@ impl App<'_> {
                 self.open_activity_view();
                 true
             }
-            (modifiers, code)
-                if (self.keymap.is("export", code)
-                    || (modifiers == KeyModifiers::CONTROL
-                        && matches!(code, KeyCode::Char('s' | 'S'))))
+            (_, code)
+                if self.keymap.is("export", code)
                     && matches!(
                         self.database_explorer.state,
                         DatabaseExplorerState::SqlResults(_)
@@ -907,6 +914,30 @@ mod tests {
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert!(app.handle_hotkeys(ctrl_c));
         assert!(!app.running);
+    }
+
+    #[tokio::test]
+    async fn ctrl_s_still_exports_when_s_is_remapped() {
+        let mut app = App {
+            running: true,
+            ..App::default()
+        };
+        app.database_explorer.state =
+            DatabaseExplorerState::SqlResults("select 1".into());
+        assert!(app.keymap.set("quit", KeyCode::Char('s')));
+        let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert!(app.handle_hotkeys(ctrl_s));
+        assert!(app.running, "Ctrl+s must not fire the bare-key action");
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|f| app.render(f)).unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(Cell::symbol)
+            .collect();
+        assert!(screen.contains("No results to export"), "{screen}");
     }
 
     #[tokio::test]

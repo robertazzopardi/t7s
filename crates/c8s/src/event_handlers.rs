@@ -303,6 +303,9 @@ impl App {
             return true;
         }
         match (key.modifiers, key.code) {
+            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
+                self.quit();
+            }
             (_, code)
                 if self.keymap.is("quit", code)
                     && self.list_filter.is_empty() =>
@@ -312,9 +315,6 @@ impl App {
             (_, code) if self.keymap.is("quit", code) => {
                 self.list_filter.clear();
                 self.reapply_list_filter();
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
-                self.quit();
             }
             (_, code) if self.keymap.is("search", code) => {
                 self.list_search_open = true;
@@ -1495,6 +1495,19 @@ mod filter_tests {
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert!(app.on_key_list_filter_or_quit(ctrl_c));
         assert!(!app.running);
+    }
+
+    #[test]
+    fn ctrl_c_quits_with_a_filter_when_quit_is_c() {
+        let mut app = app();
+        assert!(app.keymap.set("quit", KeyCode::Char('c')));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "ab");
+        press(&mut app, KeyCode::Enter);
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(app.on_key_list_filter_or_quit(ctrl_c));
+        assert!(!app.running);
+        assert_eq!(app.list_filter, "ab");
     }
 
     #[test]
