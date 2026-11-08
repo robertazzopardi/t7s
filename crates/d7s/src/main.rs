@@ -13,6 +13,8 @@ mod connection_manager;
 mod database_explorer;
 mod database_explorer_state;
 mod db;
+#[cfg(test)]
+mod default_bars_test;
 mod event_handlers;
 mod filtered_data;
 mod filtering;

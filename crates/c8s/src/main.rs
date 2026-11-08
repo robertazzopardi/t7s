@@ -3,6 +3,8 @@ extern crate alloc;
 mod app;
 mod app_state;
 mod command;
+#[cfg(test)]
+mod default_bars_test;
 mod docker;
 mod event_handlers;
 mod in_flight;

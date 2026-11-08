@@ -1,0 +1,58 @@
+[list]
+a running only
+p processes
+s start/stop
+r restart
+l logs
+e exec shell
+d describe
+D remove
+i daemon health
+W column width
+: command
+[resources]
+d describe
+D remove
+i daemon health
+W column width
+: command
+[views]
+1 containers
+2 images
+3 volumes
+4 networks
+[global]
+/ search
+q quit
+[logs]
+j down
+k up
+PgUp page up
+PgDn page down
+g top
+G follow
+/ search
+d dedup
+p previous run
+H full history
+Esc back
+q back
+[processes]
+l output
+j down
+k up
+g top
+G bottom
+W column width
+Esc back
+q back
+[describe]
+j down
+k up
+PgUp page up
+PgDn page down
+g top
+G bottom
+/ search
+Esc back
+q back

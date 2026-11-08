@@ -1,0 +1,48 @@
+[connections]
+n New Connection
+e Edit Connection
+D Delete Connection
+o Open Connection
+p Ping Health
+d Describe
+/ Search
+: Command
+[database-postgres]
+e SQL Editor
+t Table structure
+d Describe
+E Run SQL
+/ Search
+: Command
+y Copy value
+A Activity (Postgres)
+L Query log
+[database-sqlite]
+e SQL Editor
+t Table structure
+d Describe
+E Run SQL
+/ Search
+: Command
+y Copy value
+L Query log
+[table-data]
+n New row
+N Defaults
+c Duplicate
+s Commit
+D Delete
+i Edit
+[cell-edit]
+Esc Cancel
+Enter Done
+Tab Next col
+BackTab Prev col
+Ctrl+e Modal
+Backspace Delete char
+[global-connections]
+? Help
+q Quit
+[global-explorer]
+? Help
+Esc Back

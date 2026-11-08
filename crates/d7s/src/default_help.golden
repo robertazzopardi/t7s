@@ -1,0 +1,144 @@
+[Connections]
+# Global | 
+? | Toggle help
+q | Quit
+Ctrl+c | Quit
+y | Copy cell value
+d | Describe selected object
+Esc | Back / clear filter / close help
+# Navigation | 
+j / ↓ | Move down
+k / ↑ | Move up
+h / ← | Move left (columns)
+l / → | Move right (columns)
+g | Jump to top
+G | Jump to bottom
+0 | First column
+$ | Last column
+/ | Search filter
+W | Toggle column width (Fit / Content)
+# Connections | 
+n | New connection
+e | Edit connection
+D | Delete connection
+o | Open connection
+O | Reconnect last connection
+p | Ping all connections (reachability)
+Enter | Connect
+: | Command bar (:q, :help, :log; Tab completes)
+[Databases]
+# Global | 
+? | Toggle help
+q | Quit
+Ctrl+c | Quit
+y | Copy cell value
+d | Describe selected object
+Esc | Back / clear filter / close help
+# Navigation | 
+j / ↓ | Move down
+k / ↑ | Move up
+h / ← | Move left (columns)
+l / → | Move right (columns)
+g | Jump to top
+G | Jump to bottom
+0 | First column
+$ | Last column
+/ | Search filter
+W | Toggle column width (Fit / Content)
+# Database | 
+e | SQL editor (external)
+t | Table structure
+d | Describe selected table/column/row
+E | Run SQL
+Enter | Drill into selection
+1–5 | Open recent table
+: | Command bar (:tables, :sql, :log, :table/:schema <name>, :table conn.db.schema.table, :123 ... Tab completes)
+L | Query log (everything d7s ran this session)
+[TableData("s", "t")]
+# Global | 
+? | Toggle help
+q | Quit
+Ctrl+c | Quit
+y | Copy cell value
+d | Describe selected object
+Esc | Back / clear filter / close help
+# Navigation | 
+j / ↓ | Move down
+k / ↑ | Move up
+h / ← | Move left (columns)
+l / → | Move right (columns)
+g | Jump to top
+G | Jump to bottom
+0 | First column
+$ | Last column
+/ | Search filter
+W | Toggle column width (Fit / Content)
+# Database | 
+e | SQL editor (external)
+t | Table structure
+d | Describe selected table/column/row
+E | Run SQL
+Enter | Drill into selection
+1–5 | Open recent table
+: | Command bar (:tables, :sql, :log, :table/:schema <name>, :table conn.db.schema.table, :123 ... Tab completes)
+L | Query log (everything d7s ran this session)
+# Table data | 
+n | New row (blank draft)
+a | Alias for new row (blank draft)
+N | New row (column defaults)
+c | Duplicate row as draft
+s | Commit draft row
+D | Delete row(s)
+i | Edit selected cell
+r | Refresh
+# Cell edit | 
+Esc | Cancel edit (revert cell)
+Enter | Commit cell
+Tab / Shift+Tab | Next / previous editable column
+Ctrl+e | Multiline editor (modal)
+Backspace | Delete character in buffer
+# Not in top bar | 
+Space | Toggle multi-select
+Enter | Edit cell
+Y | Copy row (TSV)
+: / # | Jump to row number
+g / G | Jump to top / bottom
+0 / $ | First / last column
+# Filter | Filter matches loaded page only (client-side)
+[SqlResults("q")]
+# Global | 
+? | Toggle help
+q | Quit
+Ctrl+c | Quit
+y | Copy cell value
+d | Describe selected object
+Esc | Back / clear filter / close help
+# Navigation | 
+j / ↓ | Move down
+k / ↑ | Move up
+h / ← | Move left (columns)
+l / → | Move right (columns)
+g | Jump to top
+G | Jump to bottom
+0 | First column
+$ | Last column
+/ | Search filter
+W | Toggle column width (Fit / Content)
+# Database | 
+e | SQL editor (external)
+t | Table structure
+d | Describe selected table/column/row
+E | Run SQL
+Enter | Drill into selection
+1–5 | Open recent table
+: | Command bar (:tables, :sql, :log, :table/:schema <name>, :table conn.db.schema.table, :123 ... Tab completes)
+L | Query log (everything d7s ran this session)
+# SQL results | 
+E | Run SQL from editor
+Esc | Return to SQL editor
+Y | Copy row (TSV)
+Ctrl+s / x | Export results to temp TSV
+# Not in top bar | 
+Y | Copy row (TSV)
+Ctrl+s / x | Export results to temp TSV
+Esc | Return to explorer
