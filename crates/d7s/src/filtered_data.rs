@@ -1,7 +1,9 @@
-use crossterm::event::KeyCode;
-use k9tui::widgets::{
-    navigation::TableNavigationHandler,
-    table::{TableData, TableDataState, filter_rows},
+use k9tui::{
+    keymap::Nav,
+    widgets::{
+        navigation::TableNavigationHandler,
+        table::{TableData, TableDataState, filter_rows},
+    },
 };
 
 /// A wrapper for managing filtered data with original data preservation
@@ -49,11 +51,11 @@ impl<T: TableData + Clone> FilteredData<T> {
     }
 
     /// Navigate the table using a key event
-    pub fn navigate(&mut self, key: KeyCode) {
+    pub fn navigate(&mut self, nav: Nav) {
         TableNavigationHandler::navigate_table(
             &self.table.model,
             &mut self.table.view,
-            key,
+            nav,
         );
     }
 

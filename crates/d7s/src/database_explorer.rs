@@ -5,6 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use k9tui::{
     bg::spawn_keyed,
     error::Result,
+    keymap::Nav,
     widgets::{navigation::TableNavigationHandler, table::TableDataState},
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -1422,16 +1423,16 @@ impl App<'_> {
     }
 
     /// Handle table navigation for the current database table
-    pub fn handle_database_table_navigation(&mut self, key: KeyCode) {
+    pub fn handle_database_table_navigation(&mut self, nav: Nav) {
         match self.database_explorer.state {
             DatabaseExplorerState::Connections => {
-                self.database_explorer.connections.navigate(key);
+                self.database_explorer.connections.navigate(nav);
             }
             DatabaseExplorerState::SqlResults(_) => {
                 TableNavigationHandler::navigate_table(
                     &self.database_explorer.sql_executor.table_state.model,
                     &mut self.database_explorer.sql_executor.table_state.view,
-                    key,
+                    nav,
                 );
             }
             DatabaseExplorerState::Databases
@@ -1439,7 +1440,7 @@ impl App<'_> {
             | DatabaseExplorerState::Tables(_)
             | DatabaseExplorerState::Columns(..)
             | DatabaseExplorerState::TableData(..) => {
-                self.database_explorer.navigate_current(key);
+                self.database_explorer.navigate_current(nav);
             }
         }
     }

@@ -40,6 +40,34 @@ fn key_name(code: KeyCode) -> String {
     format!("'{}'", Hotkey::code(code, "").key_label())
 }
 
+/// A movement every table understands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Nav {
+    Down,
+    Up,
+    Left,
+    Right,
+    Top,
+    Bottom,
+    FirstColumn,
+    LastColumn,
+    PageUp,
+    PageDown,
+}
+
+const NAV_ACTIONS: [(&str, Nav); 10] = [
+    ("down", Nav::Down),
+    ("up", Nav::Up),
+    ("left", Nav::Left),
+    ("right", Nav::Right),
+    ("top", Nav::Top),
+    ("bottom", Nav::Bottom),
+    ("first-column", Nav::FirstColumn),
+    ("last-column", Nav::LastColumn),
+    ("page-up", Nav::PageUp),
+    ("page-down", Nav::PageDown),
+];
+
 /// Actions live at the same time on one screen.
 #[derive(Debug, Clone)]
 pub struct ScreenActions {
@@ -139,6 +167,18 @@ impl Keymap {
                     other != action && self.primary(other) == Some(code)
                 })
             })
+    }
+
+    /// The movement `code` fires on `screen`, if any.
+    #[must_use]
+    pub fn nav(&self, screen: &str, code: KeyCode) -> Option<Nav> {
+        NAV_ACTIONS
+            .into_iter()
+            .find(|(action, _)| {
+                self.bindings.contains_key(*action)
+                    && self.fires(screen, action, code)
+            })
+            .map(|(_, nav)| nav)
     }
 
     fn primary(&self, action: &str) -> Option<KeyCode> {
@@ -420,5 +460,39 @@ mod tests {
     #[test]
     fn parse_key_reads_back_tab() {
         assert_eq!(parse_key("back-tab"), Some(KeyCode::BackTab));
+    }
+
+    fn nav_map() -> Keymap {
+        let mut km = list_map(&[
+            ("down", &[KeyCode::Char('j'), KeyCode::Down]),
+            ("up", &[KeyCode::Char('k'), KeyCode::Up]),
+            ("right", &[KeyCode::Char('l'), KeyCode::Char('w')]),
+            ("watch", &[KeyCode::Char('w')]),
+        ]);
+        km.set_screens(vec![screen("sql", &["right", "watch"], false)]);
+        km
+    }
+
+    #[test]
+    fn nav_follows_remap() {
+        let mut km = nav_map();
+        assert_eq!(km.nav("any", KeyCode::Char('j')), Some(Nav::Down));
+        km.set("down", KeyCode::Char('z'));
+        assert_eq!(km.nav("any", KeyCode::Char('z')), Some(Nav::Down));
+    }
+
+    #[test]
+    fn remapped_nav_drops_old_keys() {
+        let mut km = nav_map();
+        km.set("down", KeyCode::Char('z'));
+        assert_eq!(km.nav("any", KeyCode::Char('j')), None);
+        assert_eq!(km.nav("any", KeyCode::Down), None);
+    }
+
+    #[test]
+    fn nav_respects_primary_on_screen() {
+        let km = nav_map();
+        assert_eq!(km.nav("sql", KeyCode::Char('w')), None);
+        assert_eq!(km.nav("other", KeyCode::Char('w')), Some(Nav::Right));
     }
 }

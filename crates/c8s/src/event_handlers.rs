@@ -4,6 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use k9tui::{
     bg::spawn_keyed,
     error::Result,
+    keymap::Nav,
     theme,
     widgets::{
         modal::{ConfirmDialog, DialogAction},
@@ -67,23 +68,23 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
             (_, KeyCode::Char('l')) => self.open_process_output(),
             (_, KeyCode::Char('W')) => self.toggle_column_width_mode(),
-            (_, KeyCode::Char('j')) => self.navigate_processes(KeyCode::Down),
-            (_, KeyCode::Char('k')) => self.navigate_processes(KeyCode::Up),
-            (
-                _,
-                code @ (KeyCode::Down | KeyCode::Up | KeyCode::Char('g' | 'G')),
-            ) => {
-                self.navigate_processes(code);
+            (_, KeyCode::Char('j') | KeyCode::Down) => {
+                self.navigate_processes(Nav::Down);
             }
+            (_, KeyCode::Char('k') | KeyCode::Up) => {
+                self.navigate_processes(Nav::Up);
+            }
+            (_, KeyCode::Char('g')) => self.navigate_processes(Nav::Top),
+            (_, KeyCode::Char('G')) => self.navigate_processes(Nav::Bottom),
             _ => {}
         }
     }
 
-    fn navigate_processes(&mut self, key: KeyCode) {
+    fn navigate_processes(&mut self, nav: Nav) {
         TableNavigationHandler::navigate_table(
             &self.processes.model,
             &mut self.processes.view,
-            key,
+            nav,
         );
     }
 
@@ -367,11 +368,11 @@ impl App {
             (_, KeyCode::Char('3')) => self.switch_view(ResourceKind::Volumes),
             (_, KeyCode::Char('4')) => self.switch_view(ResourceKind::Networks),
             (_, KeyCode::Char('j') | KeyCode::Down) => {
-                self.navigate(KeyCode::Down);
+                self.navigate(Nav::Down);
             }
-            (_, KeyCode::Char('k') | KeyCode::Up) => self.navigate(KeyCode::Up),
-            (_, KeyCode::Char('g')) => self.navigate(KeyCode::Char('g')),
-            (_, KeyCode::Char('G')) => self.navigate(KeyCode::Char('G')),
+            (_, KeyCode::Char('k') | KeyCode::Up) => self.navigate(Nav::Up),
+            (_, KeyCode::Char('g')) => self.navigate(Nav::Top),
+            (_, KeyCode::Char('G')) => self.navigate(Nav::Bottom),
             (_, code)
                 if self.view == ResourceKind::Containers
                     && self.config.keymap.is("running", code) =>
@@ -450,27 +451,27 @@ impl App {
         self.view = kind;
     }
 
-    fn navigate(&mut self, key: KeyCode) {
+    fn navigate(&mut self, nav: Nav) {
         match self.view {
             ResourceKind::Containers => TableNavigationHandler::navigate_table(
                 &self.containers.model,
                 &mut self.containers.view,
-                key,
+                nav,
             ),
             ResourceKind::Images => TableNavigationHandler::navigate_table(
                 &self.images.model,
                 &mut self.images.view,
-                key,
+                nav,
             ),
             ResourceKind::Volumes => TableNavigationHandler::navigate_table(
                 &self.volumes.model,
                 &mut self.volumes.view,
-                key,
+                nav,
             ),
             ResourceKind::Networks => TableNavigationHandler::navigate_table(
                 &self.networks.model,
                 &mut self.networks.view,
-                key,
+                nav,
             ),
         }
     }

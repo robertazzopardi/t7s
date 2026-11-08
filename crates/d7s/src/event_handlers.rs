@@ -4,7 +4,10 @@ use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
 use k9tui::{
-    bg::spawn_keyed, error::Result, event::poll_input, keymap::Keymap,
+    bg::spawn_keyed,
+    error::Result,
+    event::poll_input,
+    keymap::{Keymap, Nav},
     widgets::navigation::TableNavigationHandler,
 };
 use ratatui::widgets::TableState;
@@ -123,11 +126,14 @@ impl App<'_> {
                     self.quit();
                 }
                 _ => {
-                    TableNavigationHandler::navigate_table(
-                        &self.help_table.model,
-                        &mut self.help_table.view,
-                        key.code,
-                    );
+                    if let Some(nav) = self.config.keymap.nav("help", key.code)
+                    {
+                        TableNavigationHandler::navigate_table(
+                            &self.help_table.model,
+                            &mut self.help_table.view,
+                            nav,
+                        );
+                    }
                 }
             }
             return Ok(());
@@ -151,7 +157,11 @@ impl App<'_> {
                     self.quit();
                 }
                 _ => {
-                    self.describe_table.navigate(key.code);
+                    if let Some(nav) =
+                        self.config.keymap.nav("describe", key.code)
+                    {
+                        self.describe_table.navigate(nav);
+                    }
                 }
             }
             return Ok(());
@@ -171,11 +181,15 @@ impl App<'_> {
                     self.show_query_log = false;
                 }
                 _ => {
-                    TableNavigationHandler::navigate_table(
-                        &self.query_log_table.model,
-                        &mut self.query_log_table.view,
-                        key.code,
-                    );
+                    if let Some(nav) =
+                        self.config.keymap.nav("query-log", key.code)
+                    {
+                        TableNavigationHandler::navigate_table(
+                            &self.query_log_table.model,
+                            &mut self.query_log_table.view,
+                            nav,
+                        );
+                    }
                 }
             }
             return Ok(());
@@ -222,8 +236,9 @@ impl App<'_> {
                     (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
                         self.quit();
                     }
-                    (_, KeyCode::Up | KeyCode::Down) => {
-                        self.describe_table.navigate(key.code);
+                    (_, KeyCode::Up) => self.describe_table.navigate(Nav::Up),
+                    (_, KeyCode::Down) => {
+                        self.describe_table.navigate(Nav::Down);
                     }
                     _ => {}
                 }
@@ -559,29 +574,29 @@ impl App<'_> {
         match (key.modifiers, key.code) {
             // Vim keybindings for table navigation (Connections and DatabaseConnected use same handler)
             (_, KeyCode::Char('j') | KeyCode::Down) => {
-                self.handle_database_table_navigation(KeyCode::Down);
+                self.handle_database_table_navigation(Nav::Down);
             }
             (_, KeyCode::Char('k') | KeyCode::Up) => {
-                self.handle_database_table_navigation(KeyCode::Up);
+                self.handle_database_table_navigation(Nav::Up);
             }
             (_, KeyCode::Char('h' | 'b') | KeyCode::Left) => {
-                self.handle_database_table_navigation(KeyCode::Left);
+                self.handle_database_table_navigation(Nav::Left);
             }
             (_, KeyCode::Char('l' | 'w') | KeyCode::Right) => {
-                self.handle_database_table_navigation(KeyCode::Right);
+                self.handle_database_table_navigation(Nav::Right);
             }
             // Jump to edges
             (_, KeyCode::Char('0')) => {
-                self.handle_database_table_navigation(KeyCode::Char('0'));
+                self.handle_database_table_navigation(Nav::FirstColumn);
             }
             (_, KeyCode::Char('$')) => {
-                self.handle_database_table_navigation(KeyCode::Char('$'));
+                self.handle_database_table_navigation(Nav::LastColumn);
             }
             (_, KeyCode::Char('g')) => {
-                self.handle_database_table_navigation(KeyCode::Char('g'));
+                self.handle_database_table_navigation(Nav::Top);
             }
             (_, KeyCode::Char('G')) => {
-                self.handle_database_table_navigation(KeyCode::Char('G'));
+                self.handle_database_table_navigation(Nav::Bottom);
             }
             (_, code)
                 if self.config.keymap.is("search", code)

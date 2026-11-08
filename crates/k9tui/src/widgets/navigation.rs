@@ -1,8 +1,8 @@
-use crossterm::event::KeyCode;
 use ratatui::widgets::TableState;
 
-use crate::widgets::table::{
-    TableData, TableDataState, TableModel, TableViewState,
+use crate::{
+    keymap::Nav,
+    widgets::table::{TableData, TableDataState, TableModel, TableViewState},
 };
 
 /// Helper for table navigation operations
@@ -55,14 +55,13 @@ impl TableNavigationHandler {
     }
 
     /// Generic table navigation handler for any `TableState`
-    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn navigate_table<T: TableData + Clone>(
         model: &TableModel<T>,
         view: &mut TableViewState,
-        key: KeyCode,
+        nav: Nav,
     ) {
-        match key {
-            KeyCode::Char('j') | KeyCode::Down => {
+        match nav {
+            Nav::Down => {
                 if let Some(selected) = view.state.selected()
                     && !model.items.is_empty()
                 {
@@ -73,7 +72,7 @@ impl TableNavigationHandler {
                     }
                 }
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            Nav::Up => {
                 if let Some(selected) = view.state.selected()
                     && !model.items.is_empty()
                 {
@@ -84,7 +83,7 @@ impl TableNavigationHandler {
                     }
                 }
             }
-            KeyCode::Char('h' | 'b') | KeyCode::Left => {
+            Nav::Left => {
                 let num_cols =
                     model.items.first().map_or(0, TableData::num_columns);
                 if num_cols == 0 {
@@ -101,7 +100,7 @@ impl TableNavigationHandler {
                     view.state.select_column(Some(num_cols - 1));
                 }
             }
-            KeyCode::Char('l' | 'w') | KeyCode::Right => {
+            Nav::Right => {
                 let num_cols =
                     model.items.first().map_or(0, TableData::num_columns);
                 if num_cols == 0 {
@@ -118,15 +117,21 @@ impl TableNavigationHandler {
                     view.state.select_column(Some(0));
                 }
             }
-            KeyCode::Char('g') => {
+            Nav::Top => {
                 view.state.select(Some(0));
                 Self::wrap_rows(&mut view.state, &model.items);
                 view.column_offset = 0;
             }
-            KeyCode::Char('G') if !model.items.is_empty() => {
-                view.state.select(Some(model.items.len() - 1));
+            Nav::Bottom => {
+                if !model.items.is_empty() {
+                    view.state.select(Some(model.items.len() - 1));
+                }
             }
-            _ => {}
+            // Handled by views that scroll, or not implemented for tables.
+            Nav::FirstColumn
+            | Nav::LastColumn
+            | Nav::PageUp
+            | Nav::PageDown => {}
         }
     }
 
@@ -134,10 +139,10 @@ impl TableNavigationHandler {
     #[allow(dead_code)]
     pub fn navigate<T: TableData + Clone>(
         table_data: &mut Option<TableDataState<T>>,
-        key: KeyCode,
+        nav: Nav,
     ) {
         if let Some(table) = table_data {
-            Self::navigate_table(&table.model, &mut table.view, key);
+            Self::navigate_table(&table.model, &mut table.view, nav);
         }
     }
 }
@@ -193,7 +198,7 @@ mod tests {
         TableNavigationHandler::navigate_table(
             &table.model,
             &mut table.view,
-            KeyCode::Char('j'),
+            Nav::Down,
         );
         assert_eq!(table.view.state.selected(), Some(0));
     }
@@ -205,7 +210,7 @@ mod tests {
         TableNavigationHandler::navigate_table(
             &table.model,
             &mut table.view,
-            KeyCode::Char('k'),
+            Nav::Up,
         );
         assert_eq!(table.view.state.selected(), Some(2));
     }
@@ -217,7 +222,7 @@ mod tests {
         TableNavigationHandler::navigate_table(
             &table.model,
             &mut table.view,
-            KeyCode::Char('g'),
+            Nav::Top,
         );
         assert_eq!(table.view.state.selected(), Some(0));
     }
@@ -229,7 +234,7 @@ mod tests {
         TableNavigationHandler::navigate_table(
             &table.model,
             &mut table.view,
-            KeyCode::Char('G'),
+            Nav::Bottom,
         );
         assert_eq!(table.view.state.selected(), Some(2));
     }
