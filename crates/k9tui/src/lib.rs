@@ -11,3 +11,5 @@ pub mod keymap;
 pub mod terminal;
 pub mod theme;
 pub mod widgets;
+
+pub use terminal::{TuiApp, launch};

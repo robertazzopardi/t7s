@@ -8,8 +8,9 @@ use std::{
 use ansi_to_tui::IntoText;
 use crossterm::event::{Event, KeyEventKind, read};
 use k9tui::{
+    TuiApp,
     bg::{KeyedFailure, spawn_keyed},
-    config::{Config, defaults},
+    config::{AppSpec, Config, defaults},
     error::Result,
     event::poll_input,
     in_flight::InFlight,
@@ -897,6 +898,21 @@ impl App {
     /// Leave the describe view.
     pub(crate) fn close_describe(&mut self) {
         self.state = AppState::List;
+    }
+}
+
+impl TuiApp for App {
+    const SPEC: AppSpec = SPEC;
+    type Args = ();
+
+    fn build(config: Config, (): ()) -> Result<Self> {
+        let mut app = Self::new();
+        app.config = config;
+        Ok(app)
+    }
+
+    fn start(&mut self, terminal: DefaultTerminal) -> Result<()> {
+        self.run(terminal)
     }
 }
 

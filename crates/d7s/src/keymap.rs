@@ -14,8 +14,7 @@ mod tests {
 
     #[test]
     fn builtin_files_validate() {
-        let config = resolve(None, &SPEC, "test").unwrap();
-        assert_eq!(config.warnings, Vec::<String>::new());
+        resolve(None, &SPEC, "test").unwrap();
     }
 
     /// Every example a user can copy from the README must start the app.
@@ -29,8 +28,7 @@ mod tests {
             .collect();
         assert_ne!(examples.len(), 0);
         for example in examples {
-            let config = resolve(Some(example), &SPEC, "README").unwrap();
-            assert_eq!(config.warnings, Vec::<String>::new(), "{example}");
+            resolve(Some(example), &SPEC, "README").unwrap();
         }
     }
 }

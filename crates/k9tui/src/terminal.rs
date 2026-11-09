@@ -1,7 +1,7 @@
 //! Terminal setup/teardown and handing the screen to a child process.
 
 use std::{
-    io::{self, stdout},
+    io::stdout,
     panic::{set_hook, take_hook},
 };
 
@@ -16,17 +16,40 @@ use crossterm::{
 };
 use ratatui::{DefaultTerminal, Terminal, backend::Backend};
 
-use crate::error::{Result, err};
+use crate::{
+    config::{AppSpec, Config, load_or_exit},
+    error::{Result, err},
+};
 
-/// Init the terminal with bracketed paste, run `app`, then restore it
-/// (also on panic).
+/// An app `launch` can start.
+pub trait TuiApp: Sized {
+    const SPEC: AppSpec;
+    /// What the app needs from its command line.
+    type Args;
+
+    /// Build the app once its config has loaded.
+    ///
+    /// # Errors
+    ///
+    /// Whatever stops the app from starting.
+    fn build(config: Config, args: Self::Args) -> Result<Self>;
+
+    /// Run until the user quits.
+    ///
+    /// # Errors
+    ///
+    /// Whatever ends the app early.
+    fn start(&mut self, terminal: DefaultTerminal) -> Result<()>;
+}
+
+/// Load the config, init the terminal with bracketed paste, run the app, then
+/// restore the terminal (also on panic). A bad config exits before the TUI.
 ///
 /// # Errors
 ///
-/// Returns the error from enabling bracketed paste, or `app`'s own error.
-pub fn run<T, E: From<io::Error>>(
-    app: impl FnOnce(DefaultTerminal) -> Result<T, E>,
-) -> Result<T, E> {
+/// Returns the error from enabling bracketed paste, or the app's own error.
+pub fn launch<A: TuiApp>(args: A::Args) -> Result<()> {
+    let config = load_or_exit(&A::SPEC);
     let terminal = ratatui::init();
     execute!(stdout(), EnableBracketedPaste)?;
     let prev_hook = take_hook();
@@ -34,7 +57,7 @@ pub fn run<T, E: From<io::Error>>(
         let _ = execute!(stdout(), DisableBracketedPaste);
         prev_hook(info);
     }));
-    let result = app(terminal);
+    let result = A::build(config, args).and_then(|mut app| app.start(terminal));
     let _ = execute!(stdout(), DisableBracketedPaste);
     ratatui::restore();
     result

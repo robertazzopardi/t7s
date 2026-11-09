@@ -165,6 +165,27 @@ impl Keymap {
                 }))
     }
 
+    /// The action `code` fires on `screen`, or `""` if none does. Validation
+    /// leaves at most one per key on a known screen.
+    #[must_use]
+    pub fn action(&self, screen: &str, code: KeyCode) -> &str {
+        let Some(found) = self
+            .screens
+            .iter()
+            .find(|candidate| candidate.name == screen)
+        else {
+            return "";
+        };
+        found
+            .actions
+            .iter()
+            .find(|action| {
+                self.bindings.contains_key(*action)
+                    && self.fires(screen, action, code)
+            })
+            .map_or("", String::as_str)
+    }
+
     /// The movement `code` fires on `screen`, if any.
     #[must_use]
     pub fn nav(&self, screen: &str, code: KeyCode) -> Option<Nav> {
@@ -347,6 +368,16 @@ mod tests {
         ]);
         km.set_screens(vec![screen("sql", &["watch", "right"], false)]);
         km
+    }
+
+    #[test]
+    fn action_names_what_fires_on_a_screen() {
+        let km = watch_map();
+        assert_eq!(km.action("sql", KeyCode::Char('l')), "right");
+        // `w` is `right`'s secondary, so `watch`'s primary wins.
+        assert_eq!(km.action("sql", KeyCode::Char('w')), "watch");
+        assert_eq!(km.action("sql", KeyCode::Char('x')), "");
+        assert_eq!(km.action("elsewhere", KeyCode::Char('l')), "");
     }
 
     #[test]

@@ -122,11 +122,12 @@ hotkeys = [
 A row with `action` shows that action's current key. A row with `key` is display
 text. Editing a bar never changes which keys work.
 
-`d7s` won't start, and prints every error to stderr, if the file has a TOML
-syntax error or can't be read, a key name is unknown, an action has no keys, or
-two actions share a key on one screen. An action's later keys may share another
-action's first key, and the first key wins on that screen. Other problems, such
-as an unknown setting, show in the status line and are printed on exit.
+`d7s` won't start, and prints the error to stderr, if the file has a TOML
+syntax error or can't be read, a setting, action, screen, key name or colour is
+unknown or malformed, an action has no keys, or two actions share a key on one
+screen. Every table in the file must be valid, including another app's. An
+action's later keys may share another action's first key, and the first key
+wins on that screen.
 
 These can't be remapped: `Ctrl-C` always quits, `Ctrl-S` exports SQL results, `Ctrl-E` opens the cell editor, and typing inside
 text inputs, modals and the search and command bars.

@@ -64,7 +64,45 @@ fn quoted(text: &str) -> Vec<&str> {
     text.split('"').skip(1).step_by(2).collect()
 }
 
-/// `(screen, action)` for each `fires(...)` and `action` for each label call.
+fn is_action_name(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// The action names matched on after one `.action(...)` call: quoted arms up
+/// to the end of the method.
+fn arms(body: &str) -> Vec<&str> {
+    let body = body.split("\n    }\n").next().unwrap_or_default();
+    let mut names = Vec::new();
+    for line in body.lines() {
+        let line = line.trim_start().trim_start_matches("| ");
+        if !line.starts_with('"') {
+            continue;
+        }
+        let end = line.rfind('"').unwrap_or_default();
+        let rest = line.get(end + 1..).unwrap_or_default();
+        if !(rest.is_empty()
+            || rest.starts_with(" =>")
+            || rest.starts_with(" if")
+            || rest.starts_with(" |"))
+        {
+            continue;
+        }
+        names.extend(
+            line.get(..=end)
+                .map(quoted)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|name| is_action_name(name)),
+        );
+    }
+    names
+}
+
+/// `(screen, action)` for each `fires(...)` or `.action(...)` and `action` for
+/// each label call.
 fn uses(source: &str) -> (Vec<&str>, Vec<&str>) {
     let mut screens = Vec::new();
     let mut names = Vec::new();
@@ -84,6 +122,11 @@ fn uses(source: &str) -> (Vec<&str>, Vec<&str>) {
             }
             [] => {}
         }
+    }
+    for call in source.split(".action(").skip(1) {
+        let args = call.split(')').next().unwrap_or_default();
+        screens.extend(quoted(args).first());
+        names.extend(arms(call));
     }
     for needle in [".label(\"", ".labels(\"", "keymap.get(\""] {
         for call in source.split(needle).skip(1) {

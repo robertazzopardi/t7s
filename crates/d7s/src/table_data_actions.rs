@@ -5,6 +5,7 @@ use alloc::collections::BTreeSet;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use k9tui::{
     error::{Result, err},
+    event::is_ctrl_c,
     widgets::navigation::TableNavigationHandler,
 };
 
@@ -734,19 +735,20 @@ impl App<'_> {
         // Uppercase letters (`D`, `A`, ...) arrive with SHIFT set; only
         // reject other modifiers (Ctrl/Alt chords).
         if self.cell_edit.is_some() {
-            let keymap = &self.config.keymap;
-            let fires = |action| keymap.fires("cell-edit", action, key.code);
-            if fires("cell-next") {
-                self.finish_cell_edit_and_move_editable_column(true);
-                return Ok(true);
-            }
-            if fires("cell-previous") {
-                self.finish_cell_edit_and_move_editable_column(false);
-                return Ok(true);
-            }
-            if fires("cell-done") {
-                self.finish_cell_edit();
-                return Ok(true);
+            match self.config.keymap.action("cell-edit", key.code) {
+                "cell-next" => {
+                    self.finish_cell_edit_and_move_editable_column(true);
+                    return Ok(true);
+                }
+                "cell-previous" => {
+                    self.finish_cell_edit_and_move_editable_column(false);
+                    return Ok(true);
+                }
+                "cell-done" => {
+                    self.finish_cell_edit();
+                    return Ok(true);
+                }
+                _ => {}
             }
             if matches!(
                 (key.modifiers, key.code),
@@ -755,10 +757,7 @@ impl App<'_> {
                 self.open_cell_value_modal_from_cell_edit();
                 return Ok(true);
             }
-            if matches!(
-                (key.modifiers, key.code),
-                (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C'))
-            ) {
+            if is_ctrl_c(key) {
                 self.quit();
                 return Ok(true);
             }
@@ -767,23 +766,18 @@ impl App<'_> {
         if !allows_hotkey_modifiers(key.modifiers) {
             return Ok(false);
         }
-        match key.code {
-            code if self.config.keymap.fires("table-data", "refresh", code) => {
+        match self.config.keymap.action("table-data", key.code) {
+            "refresh" => {
                 self.reload_current_table_data(None);
                 Ok(true)
             }
-            code if self.config.keymap.fires("table-data", "new-row", code) => {
+            "new-row" => {
                 if self.table_data_add_blank_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                 }
                 Ok(true)
             }
-            code if self.config.keymap.fires(
-                "table-data",
-                "defaults",
-                code,
-            ) =>
-            {
+            "defaults" => {
                 if let Some(n) = self.table_data_add_defaults_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                     // Set after begin so EDIT status does not clobber the count.
@@ -793,65 +787,52 @@ impl App<'_> {
                 }
                 Ok(true)
             }
-            code if self.config.keymap.fires("table-data", "edit", code) => {
+            "edit" => {
                 self.begin_cell_edit(None);
                 Ok(true)
             }
-            code if self.config.keymap.fires(
-                "table-data",
-                "duplicate",
-                code,
-            ) =>
-            {
+            "duplicate" => {
                 if self.table_data_duplicate_as_draft()? {
                     self.begin_cell_edit_on_first_editable_column();
                 }
                 Ok(true)
             }
-            code if self.config.keymap.fires("table-data", "commit", code) => {
+            "commit" => {
                 self.table_data_commit_draft()?;
                 Ok(true)
             }
-            code if self.config.keymap.fires(
-                "table-data",
-                "delete-row",
-                code,
-            ) =>
-            {
+            "delete-row" => {
                 self.table_data_request_delete();
                 Ok(true)
             }
-            code if self.config.keymap.fires(
-                "table-data",
-                "toggle-select",
-                code,
-            ) =>
-            {
+            "toggle-select" => {
                 self.table_data_toggle_multi_select();
                 Ok(true)
             }
-            KeyCode::Backspace | KeyCode::Delete
-                if !self.config.keymap.binds(key.code) =>
-            {
-                // Require an explicit column selection so a stray key on a
-                // freshly opened table cannot overwrite column 0 (often the PK).
-                if self.table_data_column_is_selected() {
-                    self.begin_cell_edit(Some(String::new()));
+            _ => match key.code {
+                KeyCode::Backspace | KeyCode::Delete
+                    if !self.config.keymap.binds(key.code) =>
+                {
+                    // Require an explicit column selection so a stray key on a
+                    // freshly opened table cannot overwrite column 0 (often the PK).
+                    if self.table_data_column_is_selected() {
+                        self.begin_cell_edit(Some(String::new()));
+                    }
+                    Ok(true)
                 }
-                Ok(true)
-            }
-            // A remapped action must reach `handle_hotkeys`, not start an edit.
-            // `C` and `S` have no action, but have never started an edit.
-            KeyCode::Char(c)
-                if !matches!(c, 'C' | 'S')
-                    && !self.config.keymap.binds(key.code) =>
-            {
-                if self.table_data_column_is_selected() {
-                    self.begin_cell_edit(Some(c.to_string()));
+                // A remapped action must reach `handle_hotkeys`, not start an edit.
+                // `C` and `S` have no action, but have never started an edit.
+                KeyCode::Char(c)
+                    if !matches!(c, 'C' | 'S')
+                        && !self.config.keymap.binds(key.code) =>
+                {
+                    if self.table_data_column_is_selected() {
+                        self.begin_cell_edit(Some(c.to_string()));
+                    }
+                    Ok(true)
                 }
-                Ok(true)
-            }
-            _ => Ok(false),
+                _ => Ok(false),
+            },
         }
     }
 }

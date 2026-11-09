@@ -1570,6 +1570,7 @@ dependencies = [
  "directories",
  "ratatui",
  "ratatui-textarea",
+ "serde",
  "tokio",
  "toml",
  "unicode-width",

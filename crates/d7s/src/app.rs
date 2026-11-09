@@ -11,8 +11,9 @@ use std::{
 
 use crossterm::{clipboard, execute};
 use k9tui::{
+    TuiApp,
     bg::spawn_keyed,
-    config::{Config, defaults},
+    config::{AppSpec, Config, defaults},
     error::Result,
     in_flight::InFlight,
     terminal::suspend,
@@ -170,6 +171,25 @@ impl Default for App<'_> {
             pending_nav: None,
             column_width_mode: ColumnWidthMode::Fit,
         }
+    }
+}
+
+impl TuiApp for App<'_> {
+    const SPEC: AppSpec = SPEC;
+    type Args = Option<String>;
+
+    /// `args` names a connection to open on launch.
+    fn build(config: Config, args: Option<String>) -> Result<Self> {
+        let mut app = Self::default().init()?;
+        app.config = config;
+        if let Some(name) = args {
+            app.connect_to_named_connection(&name);
+        }
+        Ok(app)
+    }
+
+    fn start(&mut self, terminal: DefaultTerminal) -> Result<()> {
+        self.run(terminal)
     }
 }
 

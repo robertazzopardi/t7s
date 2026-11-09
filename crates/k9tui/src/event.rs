@@ -3,7 +3,7 @@
 use core::time::Duration;
 use std::{io, time::Instant};
 
-use crossterm::event::poll;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, poll};
 
 /// How often `poll_input` re-checks `wake` while waiting for input.
 const WAKE_CHECK: Duration = Duration::from_millis(10);
@@ -33,6 +33,15 @@ pub fn poll_input(
         }
     }
     Ok(false)
+}
+
+/// True for the Ctrl-C that always quits.
+#[must_use]
+pub const fn is_ctrl_c(key: KeyEvent) -> bool {
+    matches!(
+        (key.modifiers, key.code),
+        (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C'))
+    )
 }
 
 #[cfg(test)]

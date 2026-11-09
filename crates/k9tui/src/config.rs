@@ -11,7 +11,7 @@ use std::{
 use crossterm::event::KeyCode;
 use directories::BaseDirs;
 use ratatui::style::Color;
-use toml::{Table, Value};
+use serde::{Deserialize, Deserializer};
 
 use crate::{
     keymap::{Keymap, ScreenActions, parse_key},
@@ -47,17 +47,51 @@ pub struct AppSpec {
     pub config: &'static str,
 }
 
+/// A TOML string, or a list of strings.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OneOrMany {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl From<OneOrMany> for Vec<String> {
+    fn from(value: OneOrMany) -> Self {
+        match value {
+            OneOrMany::One(one) => vec![one],
+            OneOrMany::Many(many) => many,
+        }
+    }
+}
+
+fn one_or_many<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    OneOrMany::deserialize(deserializer).map(Into::into)
+}
+
 /// One line of a hotkey bar or help section.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum Row {
     /// Shows the current keys of `actions`, after `key` if it is set.
     Action {
+        #[serde(rename = "action", deserialize_with = "one_or_many")]
         actions: Vec<String>,
         key: Option<String>,
         label: String,
     },
     /// Display text for something Rust handles, such as a Ctrl chord.
     Key { key: String, label: String },
+}
+
+impl Row {
+    fn actions(&self) -> &[String] {
+        match self {
+            Self::Action { actions, .. } => actions,
+            Self::Key { .. } => &[],
+        }
+    }
 }
 
 /// One titled group of rows in the help table.
@@ -82,11 +116,9 @@ impl Screen {
         let mut actions: Vec<String> = self
             .hotkeys
             .iter()
-            .flat_map(|row| match row {
-                Row::Action { actions, .. } => actions.clone(),
-                Row::Key { .. } => Vec::new(),
-            })
-            .chain(self.hidden.iter().cloned())
+            .flat_map(Row::actions)
+            .chain(&self.hidden)
+            .cloned()
             .collect();
         actions.sort_unstable();
         actions.dedup();
@@ -109,8 +141,6 @@ pub struct Config {
     pub screens: BTreeMap<String, Screen>,
     /// Help sections, by name.
     pub help: BTreeMap<String, HelpSection>,
-    /// Problems that don't stop startup, for the status line.
-    pub warnings: Vec<String>,
 }
 
 fn parse_colour(spec: &str) -> Option<Color> {
@@ -147,31 +177,69 @@ fn parse_colour(spec: &str) -> Option<Color> {
     })
 }
 
-/// A string, or a list of strings.
-fn string_list(value: &Value) -> Option<Vec<String>> {
-    if let Some(one) = value.as_str() {
-        return Some(vec![one.to_owned()]);
+#[derive(Deserialize)]
+#[serde(try_from = "OneOrMany")]
+struct Keys(Vec<KeyCode>);
+
+impl TryFrom<OneOrMany> for Keys {
+    type Error = String;
+
+    fn try_from(value: OneOrMany) -> Result<Self, String> {
+        Vec::<String>::from(value)
+            .iter()
+            .map(|key| parse_key(key).ok_or_else(|| format!("bad key '{key}'")))
+            .collect::<Result<_, _>>()
+            .map(Self)
     }
-    value
-        .as_array()?
-        .iter()
-        .map(|item| item.as_str().map(str::to_owned))
-        .collect()
 }
 
-fn parse_keys(value: &Value) -> Option<Vec<KeyCode>> {
-    string_list(value)?
-        .iter()
-        .map(|key| parse_key(key))
-        .collect()
+#[derive(Deserialize)]
+#[serde(try_from = "String")]
+struct Colour(Color);
+
+impl TryFrom<String> for Colour {
+    type Error = String;
+
+    fn try_from(spec: String) -> Result<Self, String> {
+        parse_colour(&spec)
+            .map(Self)
+            .ok_or_else(|| format!("bad colour '{spec}'"))
+    }
 }
 
-/// The keys of `[<name>.keys]` in a built-in file.
-fn action_names(file: &Table, name: &str) -> BTreeSet<String> {
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ScreenLayer {
+    hotkeys: Option<Vec<Row>>,
+    hidden: Option<Vec<String>>,
+    typing: Option<bool>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct HelpLayer {
+    title: Option<String>,
+    rows: Option<Vec<Row>>,
+}
+
+/// One `[t7s]` or `[<app>]` table.
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct Layer {
+    theme: Option<String>,
+    skin: Option<String>,
+    colours: BTreeMap<String, Colour>,
+    keys: BTreeMap<String, Keys>,
+    screens: BTreeMap<String, ScreenLayer>,
+    help: BTreeMap<String, HelpLayer>,
+}
+
+type File = BTreeMap<String, Layer>;
+
+/// The action names in `[<name>.keys]` of a built-in file.
+fn action_names(file: &File, name: &str) -> BTreeSet<String> {
     file.get(name)
-        .and_then(|level| level.get("keys"))
-        .and_then(Value::as_table)
-        .map(|keys| keys.keys().cloned().collect())
+        .map(|layer| layer.keys.keys().cloned().collect())
         .unwrap_or_default()
 }
 
@@ -189,229 +257,105 @@ struct Merge<'a> {
 }
 
 impl Merge<'_> {
-    fn apply_level(&mut self, name: &str, level: &Table) {
-        if let Some(value) = level.get("theme") {
-            if let Some(theme) = value.as_str() {
-                self.config.theme = Some(theme.to_string());
-                // The more specific level's theme replaces inherited colours.
-                self.config.colours.clear();
-            } else {
-                self.warn_shape(name, "theme", "a string");
-            }
+    fn apply(&mut self, name: &str, layer: Layer) {
+        if layer.theme.is_some() {
+            self.config.theme = layer.theme;
+            // The more specific level's theme replaces inherited colours.
+            self.config.colours.clear();
         }
-        for (key, value) in level {
-            match key.as_str() {
-                "theme" => {}
-                "skin" => {
-                    if let Some(skin) = value.as_str() {
-                        self.config.skin = Some(skin.to_string());
-                    } else {
-                        self.warn_shape(name, "skin", "a string");
-                    }
-                }
-                "colours" => {
-                    if let Some(colours) = value.as_table() {
-                        self.apply_colours(name, colours);
-                    } else {
-                        self.warn_shape(name, "colours", "a table");
-                    }
-                }
-                "keys" => {
-                    if let Some(keys) = value.as_table() {
-                        self.apply_keys(name, keys);
-                    } else {
-                        self.errors
-                            .push(format!("[{name}] 'keys' must be a table"));
-                    }
-                }
-                "screens" if name == self.spec.name => {
-                    if let Some(screens) = value.as_table() {
-                        self.apply_screens(name, screens);
-                    } else {
-                        self.warn_shape(name, "screens", "a table");
-                    }
-                }
-                "help" if name == self.spec.name => {
-                    if let Some(help) = value.as_table() {
-                        self.apply_help(name, help);
-                    } else {
-                        self.warn_shape(name, "help", "a table");
-                    }
-                }
-                other => self.config.warnings.push(format!(
-                    "[{name}] unknown setting '{other}' ignored"
-                )),
-            }
+        if layer.skin.is_some() {
+            self.config.skin = layer.skin;
         }
-    }
-
-    fn warn_shape(&mut self, name: &str, key: &str, expected: &str) {
-        self.config
-            .warnings
-            .push(format!("[{name}] '{key}' must be {expected}; ignored"));
-    }
-
-    fn apply_colours(&mut self, name: &str, colours: &Table) {
-        for (key, value) in colours {
-            if !COLOUR_NAMES.contains(&key.as_str()) {
-                self.config.warnings.push(format!(
-                    "[{name}.colours] unknown colour '{key}' ignored"
-                ));
-            } else if let Some(colour) = value.as_str().and_then(parse_colour) {
-                self.config.colours.insert(key.clone(), colour);
-            } else {
-                self.config.warnings.push(format!(
-                    "[{name}.colours] '{key}': bad colour {value}; keeping \
-                     inherited"
-                ));
-            }
-        }
-    }
-
-    fn apply_keys(&mut self, name: &str, keys: &Table) {
-        for (action, value) in keys {
-            let known = self.shared.contains(action)
-                || (name == self.spec.name && self.own.contains(action));
-            if !known {
-                self.config.warnings.push(format!(
-                    "[{name}.keys] unknown action '{action}' ignored"
-                ));
-            } else if let Some(codes) = parse_keys(value) {
-                self.config.keymap.set_keys(action, codes);
+        for (key, Colour(colour)) in layer.colours {
+            if COLOUR_NAMES.contains(&key.as_str()) {
+                self.config.colours.insert(key, colour);
             } else {
                 self.errors
-                    .push(format!("[{name}.keys] '{action}': bad key {value}"));
+                    .push(format!("[{name}.colours] unknown colour '{key}'"));
             }
         }
-    }
-
-    fn action_exists(&self, action: &str) -> bool {
-        self.shared.contains(action) || self.own.contains(action)
-    }
-
-    fn apply_screens(&mut self, name: &str, screens: &Table) {
-        for (screen_name, value) in screens {
-            let context = format!("{name}.screens.{screen_name}");
-            if !self.builtin && !self.config.screens.contains_key(screen_name) {
-                self.config
-                    .warnings
-                    .push(format!("[{context}] unknown screen ignored"));
-                continue;
-            }
-            let Some(table) = value.as_table() else {
-                self.warn_shape(&context, "screen", "a table");
-                continue;
-            };
-            let mut screen = self
-                .config
-                .screens
-                .get(screen_name)
-                .cloned()
-                .unwrap_or_default();
-            for (field, value) in table {
-                match field.as_str() {
-                    "hotkeys" => screen.hotkeys = self.rows(&context, value),
-                    "hidden" => screen.hidden = self.hidden(&context, value),
-                    "typing" => {
-                        screen.typing = value.as_bool().unwrap_or_default();
-                    }
-                    other => self.config.warnings.push(format!(
-                        "[{context}] unknown setting '{other}' ignored"
-                    )),
-                }
-            }
-            self.config.screens.insert(screen_name.clone(), screen);
-        }
-    }
-
-    fn apply_help(&mut self, name: &str, help: &Table) {
-        for (section, value) in help {
-            let context = format!("{name}.help.{section}");
-            if !self.builtin && !self.config.help.contains_key(section) {
-                self.config
-                    .warnings
-                    .push(format!("[{context}] unknown section ignored"));
+        for (action, Keys(keys)) in layer.keys {
+            if self.shared.contains(&action)
+                || (name == self.spec.name && self.own.contains(&action))
+            {
+                self.config.keymap.set_keys(&action, keys);
             } else {
-                let mut merged =
-                    self.config.help.get(section).cloned().unwrap_or_default();
-                if let Some(title) = value.get("title").and_then(Value::as_str)
-                {
-                    title.clone_into(&mut merged.title);
-                }
-                if let Some(rows) = value.get("rows") {
-                    merged.rows = self.rows(&context, rows);
-                }
-                self.config.help.insert(section.clone(), merged);
+                self.errors
+                    .push(format!("[{name}.keys] unknown action '{action}'"));
+            }
+        }
+        if name != self.spec.name {
+            if !layer.screens.is_empty() || !layer.help.is_empty() {
+                self.errors.push(format!(
+                    "[{name}] 'screens' and 'help' belong in an app's table"
+                ));
+            }
+            return;
+        }
+        for (screen, part) in layer.screens {
+            self.apply_screen(name, screen, part);
+        }
+        for (section, part) in layer.help {
+            self.apply_help(name, section, part);
+        }
+    }
+
+    fn check_actions<'r>(
+        &mut self,
+        context: &str,
+        actions: impl Iterator<Item = &'r String>,
+    ) {
+        for action in actions {
+            if !self.shared.contains(action) && !self.own.contains(action) {
+                self.errors
+                    .push(format!("[{context}] unknown action '{action}'"));
             }
         }
     }
 
-    fn hidden(&mut self, context: &str, value: &Value) -> Vec<String> {
-        let names = string_list(value).unwrap_or_default();
-        names
-            .into_iter()
-            .filter(|action| {
-                let known = self.action_exists(action);
-                if !known {
-                    self.config.warnings.push(format!(
-                        "[{context}] unknown action '{action}' ignored"
-                    ));
-                }
-                known
-            })
-            .collect()
+    fn apply_screen(&mut self, name: &str, id: String, part: ScreenLayer) {
+        let context = format!("{name}.screens.{id}");
+        if !self.builtin && !self.config.screens.contains_key(&id) {
+            self.errors.push(format!("[{context}] unknown screen"));
+            return;
+        }
+        let rows = part.hotkeys.iter().flatten().flat_map(Row::actions);
+        self.check_actions(&context, rows.chain(part.hidden.iter().flatten()));
+        let screen = self.config.screens.entry(id).or_default();
+        if let Some(hotkeys) = part.hotkeys {
+            screen.hotkeys = hotkeys;
+        }
+        if let Some(hidden) = part.hidden {
+            screen.hidden = hidden;
+        }
+        if let Some(typing) = part.typing {
+            screen.typing = typing;
+        }
     }
 
-    fn rows(&mut self, context: &str, value: &Value) -> Vec<Row> {
-        let Some(items) = value.as_array() else {
-            self.warn_shape(context, "rows", "a list");
-            return Vec::new();
-        };
-        items
-            .iter()
-            .filter_map(|item| self.row(context, item))
-            .collect()
+    fn apply_help(&mut self, name: &str, id: String, part: HelpLayer) {
+        let context = format!("{name}.help.{id}");
+        if !self.builtin && !self.config.help.contains_key(&id) {
+            self.errors.push(format!("[{context}] unknown section"));
+            return;
+        }
+        let rows = part.rows.iter().flatten().flat_map(Row::actions);
+        self.check_actions(&context, rows);
+        let section = self.config.help.entry(id).or_default();
+        if let Some(title) = part.title {
+            section.title = title;
+        }
+        if let Some(rows) = part.rows {
+            section.rows = rows;
+        }
     }
 
-    fn row(&mut self, context: &str, item: &Value) -> Option<Row> {
-        let label = item.get("label").and_then(Value::as_str);
-        let key = item.get("key").and_then(Value::as_str).map(str::to_owned);
-        let actions = item.get("action").and_then(string_list);
-        let row = match (label, key, actions) {
-            (Some(label), key, Some(actions)) => {
-                if let Some(action) =
-                    actions.iter().find(|a| !self.action_exists(a))
-                {
-                    self.config.warnings.push(format!(
-                        "[{context}] unknown action '{action}' ignored"
-                    ));
-                    return None;
-                }
-                Row::Action {
-                    actions,
-                    key,
-                    label: label.to_owned(),
-                }
+    /// Apply `[t7s]`, then `[<app>]`. Other apps' tables stay unused.
+    fn apply_file(&mut self, mut file: File) {
+        for name in ["t7s", self.spec.name] {
+            if let Some(layer) = file.remove(name) {
+                self.apply(name, layer);
             }
-            (Some(label), Some(key), None) => Row::Key {
-                key,
-                label: label.to_owned(),
-            },
-            _ => {
-                self.config
-                    .warnings
-                    .push(format!("[{context}] bad row {item}; ignored"));
-                return None;
-            }
-        };
-        Some(row)
-    }
-
-    fn apply_table(&mut self, file: &Table, name: &str) {
-        match file.get(name) {
-            None => {}
-            Some(Value::Table(level)) => self.apply_level(name, level),
-            Some(_) => self.errors.push(format!("'{name}' must be a table")),
         }
     }
 }
@@ -421,9 +365,8 @@ impl Merge<'_> {
 ///
 /// # Errors
 ///
-/// Every problem that could change how the app behaves: bad TOML, bad key
-/// names and key conflicts. Lesser problems end up in [`Config::warnings`]
-/// instead.
+/// Every problem in the user's file: bad TOML, unknown settings, names or
+/// values, and key conflicts.
 ///
 /// # Panics
 ///
@@ -433,9 +376,9 @@ pub fn resolve(
     spec: &AppSpec,
     source: &str,
 ) -> Result<Config, Vec<String>> {
-    let global: Table =
-        GLOBAL_CONFIG.parse().expect("global config is valid TOML");
-    let app: Table = spec.config.parse().expect("app config is valid TOML");
+    let global: File =
+        toml::from_str(GLOBAL_CONFIG).expect("global config is valid");
+    let app: File = toml::from_str(spec.config).expect("app config is valid");
     let shared = action_names(&global, "t7s");
     let own = action_names(&app, spec.name);
     let keymap = Keymap::new(
@@ -453,20 +396,18 @@ pub fn resolve(
             keymap,
             screens: BTreeMap::new(),
             help: BTreeMap::new(),
-            warnings: Vec::new(),
         },
         errors: Vec::new(),
         shared,
         own,
         builtin: true,
     };
-    merge.apply_table(&global, "t7s");
-    merge.apply_table(&app, spec.name);
+    merge.apply_file(global);
+    merge.apply_file(app);
     assert!(
-        merge.errors.is_empty() && merge.config.warnings.is_empty(),
-        "built-in config is invalid: {:?} {:?}",
-        merge.errors,
-        merge.config.warnings
+        merge.errors.is_empty(),
+        "built-in config is invalid: {:?}",
+        merge.errors
     );
     // Taken before the user's file, so editing a bar can't hide a conflict.
     let screens = merge
@@ -479,11 +420,8 @@ pub fn resolve(
     merge.builtin = false;
 
     if let Some(text) = file {
-        match text.parse::<Table>() {
-            Ok(table) => {
-                merge.apply_table(&table, "t7s");
-                merge.apply_table(&table, spec.name);
-            }
+        match toml::from_str(text) {
+            Ok(user) => merge.apply_file(user),
             Err(error) => return Err(vec![format!("{source}: {error}")]),
         }
     }
@@ -583,18 +521,6 @@ pub fn load_or_exit(spec: &AppSpec) -> Config {
             eprintln!("{}: {error}", spec.name);
         }
         process::exit(1);
-    })
-}
-
-/// One status-line message for any number of warnings; the full list goes to
-/// stderr on exit.
-#[must_use]
-pub fn summarize(warnings: &[String]) -> Option<String> {
-    let (first, rest) = warnings.split_first()?;
-    Some(if rest.is_empty() {
-        format!("Config: {first}")
-    } else {
-        format!("Config: {first} (+{} more, see stderr on exit)", rest.len())
     })
 }
 
@@ -700,18 +626,15 @@ hidden = ["quit", "search", "command"]
     }
 
     #[test]
-    fn user_row_with_unknown_action_warns_and_is_dropped() {
+    fn user_row_with_unknown_action_is_fatal() {
         let file = "[app.screens.main]\nhotkeys = [\n\
                     { action = \"nope\", label = \"X\" },\n]\n";
-        let mut config = ok(file);
-        assert!(config.warnings.iter().any(|w| w.contains("nope")));
-        assert_eq!(config.screens.remove("main").unwrap().hotkeys.len(), 0);
+        assert!(fatal(file).contains("nope"));
     }
 
     #[test]
-    fn user_unknown_screen_warns() {
-        let config = ok("[app.screens.nope]\nhidden = []\n");
-        assert!(config.warnings.iter().any(|w| w.contains("nope")));
+    fn user_unknown_screen_is_fatal() {
+        assert!(fatal("[app.screens.nope]\nhidden = []\n").contains("nope"));
     }
 
     #[test]
@@ -765,7 +688,6 @@ hotkeys = [
             assert_eq!(config.keymap.get("search"), c('/'));
             assert_eq!(config.keymap.get("command"), c(':'));
             assert_eq!(config.keymap.get("refresh"), c('r'));
-            assert_eq!(config.warnings, Vec::<String>::new());
             assert!(config.colours.is_empty());
             assert_eq!(config.theme, None);
             assert_eq!(config.skin, None);
@@ -807,9 +729,14 @@ hotkeys = [
     }
 
     #[test]
-    fn other_app_tables_are_ignored() {
-        let config = ok("[other]\nnonsense = 1\n[other.keys]\nnope = \"!!\"\n");
-        assert_eq!(config.warnings, Vec::<String>::new());
+    fn other_app_tables_are_not_applied() {
+        let config = ok("[other.keys]\nquit = \"z\"\nnope = \"y\"\n");
+        assert_eq!(config.keymap.get("quit"), c('q'));
+    }
+
+    #[test]
+    fn other_app_tables_must_still_be_valid() {
+        assert!(fatal("[other]\nnonsense = 1\n").contains("nonsense"));
     }
 
     #[test]
@@ -833,7 +760,9 @@ hotkeys = [
     fn unknown_key_name_is_fatal() {
         let error = fatal("[t7s.keys]\nquit = \"ctrl+s\"\n");
         assert!(
-            error.contains("quit") && error.contains("ctrl+s"),
+            error.contains("quit")
+                && error.contains("ctrl+s")
+                && error.contains("line 2"),
             "{error}"
         );
     }
@@ -872,74 +801,53 @@ hotkeys = [
     }
 
     #[test]
-    fn every_fatal_error_is_reported_at_once() {
-        let error =
-            fatal("[t7s.keys]\nquit = \"ctrl+s\"\nsearch = \"ctrl+f\"\n");
-        assert!(
-            error.contains("quit") && error.contains("search"),
-            "{error}"
-        );
+    fn every_name_error_is_reported_at_once() {
+        let error = fatal("[app.keys]\nnope = \"z\"\nnada = \"y\"\n");
+        assert!(error.contains("nope") && error.contains("nada"), "{error}");
     }
 
     #[test]
-    fn bad_colour_warns_and_keeps_inherited() {
+    fn bad_colour_is_fatal() {
         for bad in ["#12345", "#+12345", "notacolour"] {
-            let config = ok(&format!(
-                "[t7s.colours]\nborder = \"blue\"\n\
-                 [app.colours]\nborder = \"{bad}\"\n"
-            ));
-            assert_eq!(config.colours.get("border"), Some(&Color::Blue));
-            assert_eq!(config.warnings.len(), 1, "{:?}", config.warnings);
-            let warning = config.warnings.first().unwrap();
-            assert!(warning.contains("border"), "{warning}");
+            let error = fatal(&format!("[app.colours]\nborder = \"{bad}\"\n"));
+            assert!(error.contains(bad), "{error}");
         }
     }
 
     #[test]
-    fn non_string_colour_warns() {
-        assert_eq!(ok("[t7s.colours]\nborder = 3\n").warnings.len(), 1);
+    fn non_string_colour_is_fatal() {
+        assert!(fatal("[t7s.colours]\nborder = 3\n").contains("border"));
     }
 
     #[test]
-    fn unknown_colour_name_warns() {
-        let config = ok("[t7s.colours]\nnope = \"red\"\n");
-        assert!(config.colours.is_empty());
-        assert_eq!(config.warnings.len(), 1, "{:?}", config.warnings);
+    fn unknown_colour_name_is_fatal() {
+        assert!(fatal("[t7s.colours]\nnope = \"red\"\n").contains("nope"));
     }
 
     #[test]
-    fn colours_with_wrong_shape_warns() {
-        let config = ok("[t7s]\ncolours = 3\n");
-        assert_eq!(config.warnings.len(), 1, "{:?}", config.warnings);
+    fn colours_with_wrong_shape_is_fatal() {
+        assert!(fatal("[t7s]\ncolours = 3\n").contains("colours"));
     }
 
     #[test]
-    fn unknown_setting_warns() {
-        let config = ok("[t7s]\ntypo = 1\n");
-        let warning = config.warnings.first().unwrap();
-        assert!(warning.contains("typo"), "{warning}");
+    fn unknown_setting_is_fatal() {
+        assert!(fatal("[t7s]\ntypo = 1\n").contains("typo"));
     }
 
     #[test]
-    fn non_string_theme_and_skin_warn() {
-        let config = ok("[t7s]\ntheme = 1\nskin = 2\n");
-        assert_eq!(config.theme, None);
-        assert_eq!(config.skin, None);
-        assert_eq!(config.warnings.len(), 2, "{:?}", config.warnings);
+    fn non_string_theme_and_skin_are_fatal() {
+        assert!(fatal("[t7s]\ntheme = 1\n").contains("theme"));
+        assert!(fatal("[t7s]\nskin = 2\n").contains("skin"));
     }
 
     #[test]
-    fn app_action_in_t7s_keys_warns() {
-        let config = ok("[t7s.keys]\nrefresh = \"z\"\n");
-        assert_eq!(config.keymap.get("refresh"), c('r'));
-        let warning = config.warnings.first().unwrap();
-        assert!(warning.contains("refresh"), "{warning}");
+    fn app_action_in_t7s_keys_is_fatal() {
+        assert!(fatal("[t7s.keys]\nrefresh = \"z\"\n").contains("refresh"));
     }
 
     #[test]
-    fn unknown_action_in_app_keys_warns() {
-        let config = ok("[app.keys]\nnope = \"z\"\n");
-        assert_eq!(config.warnings.len(), 1, "{:?}", config.warnings);
+    fn unknown_action_in_app_keys_is_fatal() {
+        assert!(fatal("[app.keys]\nnope = \"z\"\n").contains("nope"));
     }
 
     #[test]
@@ -968,20 +876,6 @@ hotkeys = [
         assert_eq!(
             config_path(None, Path::new("/home/u")),
             Path::new("/home/u/.config/t7s/config.toml")
-        );
-    }
-
-    #[test]
-    fn summary_is_one_line() {
-        assert_eq!(summarize(&[]), None);
-        let one = vec!["a".to_string()];
-        assert_eq!(summarize(&one).as_deref(), Some("Config: a"));
-        let many: Vec<String> = (0..50).map(|i| i.to_string()).collect();
-        let summary = summarize(&many).unwrap();
-        assert!(summary.contains("+49 more"), "{summary}");
-        assert!(
-            !summary.contains(';') && !summary.contains('\n'),
-            "{summary}"
         );
     }
 }

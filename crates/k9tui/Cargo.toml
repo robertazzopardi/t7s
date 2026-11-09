@@ -21,6 +21,7 @@ directories = "6.0.0"
 ratatui = { version = "0.30.2", features = ["crossterm"], default-features = false }
 ratatui-textarea = "0.9.3"
 tokio = { version = "1.54.1", default-features = false, features = ["rt", "sync"] }
+serde = { version = "1", features = ["derive"] }
 toml = "1"
 unicode-width = { version = "0.2", default-features = false }
 
