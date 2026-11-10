@@ -32,6 +32,11 @@ const STYLIZE_COLOURS: [&str; 16] = [
     "white",
 ];
 
+/// Other ways to name a colour: ratatui's `palette::tailwind` constants, an
+/// aliased `Color`, and bare `Rgb`/`Indexed` after `use Color::*`.
+const COLOUR_PATTERNS: [&str; 5] =
+    ["Color::", "palette::", "Color as", "Rgb(", "Indexed("];
+
 fn rust_files(dir: &Path, found: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
@@ -65,7 +70,7 @@ fn colours_in(text: &str) -> Vec<(usize, &str)> {
             }
         } else if trimmed.trim_end() == "#[cfg(test)]" {
             test_item_indent = Some(indent);
-        } else if line.contains("Color::")
+        } else if COLOUR_PATTERNS.iter().any(|pattern| line.contains(pattern))
             || shorthand.iter().any(|pattern| line.contains(pattern))
         {
             hits.push((number + 1, line.trim()));
@@ -86,9 +91,14 @@ mod tests {
 }
 let d = e.on_light_blue();
 self.on_key();
+use ratatui::style::palette::tailwind;
+use ratatui::style::Color as C;
+let f = Rgb(1, 2, 3);
+let g = Indexed(4);
+let h = theme_source::palette(name);
 ";
     let lines: Vec<_> = colours_in(text).iter().map(|hit| hit.0).collect();
-    assert_eq!(lines, [3, 8]);
+    assert_eq!(lines, [3, 8, 10, 11, 12, 13]);
 }
 
 #[test]
