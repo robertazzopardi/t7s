@@ -17,7 +17,7 @@ impl App {
     pub fn on_key_event(&mut self, key: KeyEvent) {
         match &self.state {
             AppState::List => self.on_key_list(key),
-            AppState::Info(_) => self.on_key_info(key),
+            AppState::Info => self.on_key_info(key),
             AppState::Describe { .. } => self.on_key_describe(key),
             AppState::Signal { .. } => self.on_key_signal(key),
         }
@@ -36,6 +36,7 @@ impl App {
             (_, KeyCode::Char('d') | KeyCode::Enter) => self.open_describe(),
             (_, KeyCode::Char('i')) => self.open_info(),
             (_, KeyCode::Char('u')) => self.toggle_stat_units(),
+            (_, KeyCode::Char('f')) => self.toggle_follow(),
             (_, KeyCode::Char('K') | KeyCode::Delete) => {
                 self.open_signal_picker();
             }
@@ -239,6 +240,8 @@ impl App {
     }
 
     fn navigate(&mut self, nav: Nav) {
+        // Moving by hand ends a follow, or the next poll would undo the move.
+        self.following = None;
         TableNavigationHandler::navigate_table(
             &self.processes.model,
             &mut self.processes.view,
@@ -340,6 +343,64 @@ mod tests {
     }
 
     #[test]
+    fn follow_pins_the_highlight_to_the_process() {
+        let mut app = app();
+        app.processes.view.state.select(Some(0));
+        app.on_key_event(key(KeyCode::Char('f')));
+        assert!(screen(&mut app).contains("following: 4096"));
+
+        let mut snap = demo_snapshot();
+        if let Some(r) = snap.rows.iter_mut().find(|r| r.pid == 1) {
+            r.cpu = 99.0;
+        }
+        app.apply_snapshot(snap);
+        assert_eq!(app.processes.view.state.selected(), Some(1));
+        assert_eq!(app.selected_row().map(|r| r.pid), Some(4096));
+
+        app.on_key_event(key(KeyCode::Char('f')));
+        assert_eq!(app.following, None);
+    }
+
+    #[test]
+    fn follow_ends_on_manual_move_and_when_the_process_exits() {
+        let mut app = app();
+        app.on_key_event(key(KeyCode::Char('f')));
+        app.on_key_event(key(KeyCode::Char('j')));
+        assert_eq!(app.following, None);
+
+        app.on_key_event(key(KeyCode::Char('f')));
+        let followed = app.selected_row().map(|r| r.pid);
+        let mut snap = demo_snapshot();
+        snap.rows.retain(|r| Some(r.pid) != followed);
+        app.apply_snapshot(snap);
+        assert_eq!(app.following, None);
+        assert!(screen(&mut app).contains("Stopped following"));
+    }
+
+    #[test]
+    fn column_widths_do_not_shrink_between_polls() {
+        let mut app = app();
+        let mut snap = demo_snapshot();
+        if let Some(r) = snap.rows.first_mut() {
+            r.user = "a-very-long-user-name".to_string();
+        }
+        app.apply_snapshot(snap);
+        let wide = app.processes.model.longest_item_lens.clone();
+        app.apply_snapshot(demo_snapshot());
+        assert_eq!(app.processes.model.longest_item_lens, wide);
+    }
+
+    #[test]
+    fn info_panel_updates_while_open() {
+        let mut app = app();
+        app.on_key_event(key(KeyCode::Char('i')));
+        let mut snap = demo_snapshot();
+        snap.info.host = "renamed-host".to_string();
+        app.apply_snapshot(snap);
+        assert!(screen(&mut app).contains("renamed-host"));
+    }
+
+    #[test]
     fn navigation_wraps() {
         let mut app = app();
         app.on_key_event(key(KeyCode::Char('p')));
@@ -365,7 +426,7 @@ mod tests {
     fn info_opens_and_closes() {
         let mut app = app();
         app.on_key_event(key(KeyCode::Char('i')));
-        assert!(matches!(&app.state, AppState::Info(_)));
+        assert!(matches!(&app.state, AppState::Info));
         let out = screen(&mut app);
         assert!(out.contains(" System "), "{out}");
         assert!(out.contains("Load avg:"), "{out}");

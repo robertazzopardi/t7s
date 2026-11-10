@@ -11,6 +11,7 @@ pub fn list_hotkeys() -> Vec<Hotkey> {
         Hotkey::new('d', "describe"),
         Hotkey::new('i', "system info"),
         Hotkey::new('u', "% / values"),
+        Hotkey::new('f', "follow"),
         Hotkey::new('K', "signal"),
         Hotkey::new(':', "command"),
     ]

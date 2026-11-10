@@ -1,13 +1,11 @@
-use crate::proc::SystemInfo;
-
 /// Top-level application state.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum AppState {
     /// The process list (main view).
     #[default]
     List,
     /// System summary panel (`i`).
-    Info(SystemInfo),
+    Info,
     /// Full describe text for one process (`d` or Enter).
     Describe {
         pid: i32,

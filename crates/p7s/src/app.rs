@@ -61,6 +61,8 @@ pub struct App {
     /// Unfiltered rows from the last poll.
     pub(crate) all: Vec<ProcessRow>,
     pub(crate) info: SystemInfo,
+    /// `(pid, start_time)` the highlight is pinned to, while following.
+    pub(crate) following: Option<(i32, u64)>,
     /// Case-insensitive substring filter applied to the process list.
     pub(crate) filter: String,
     /// True while the `/` search bar is open for editing.
@@ -98,6 +100,7 @@ impl App {
             processes: TableDataState::new(Vec::new()),
             all: Vec::new(),
             info: SystemInfo::default(),
+            following: None,
             filter: String::new(),
             search_open: false,
             command_mode: false,
@@ -196,19 +199,49 @@ impl App {
     }
 
     /// Re-filter and re-sort. The highlight keeps its row number, moving only
-    /// when the list shrinks past it.
+    /// when the list shrinks past it, unless a process is being followed.
     pub(crate) fn rebuild_view(&mut self) {
         let mut rows = filter_rows(&self.all, &self.filter);
         sort_rows(&mut rows, self.sort_key, self.sort_desc);
-        self.processes.model.longest_item_lens =
-            constraint_len_calculator(&rows);
+        // Widths only grow, so columns do not shift between polls.
+        let lens = constraint_len_calculator(&rows);
+        let widest = &mut self.processes.model.longest_item_lens;
+        widest.resize(lens.len().max(widest.len()), 0);
+        for (width, len) in widest.iter_mut().zip(lens) {
+            *width = (*width).max(len);
+        }
         self.processes.model.items = rows;
-        let row = self.processes.view.state.selected().unwrap_or(0);
+        let followed = self.followed_row();
+        if let (Some((pid, _)), None) = (self.following, followed) {
+            self.following = None;
+            self.set_status(format!("Stopped following PID {pid}"));
+        }
+        let row = followed
+            .or_else(|| self.processes.view.state.selected())
+            .unwrap_or(0);
         let last = self.processes.model.items.len().checked_sub(1);
         self.processes
             .view
             .state
             .select(last.map(|last| row.min(last)));
+    }
+
+    /// Visible row of the followed process, if it is still listed.
+    fn followed_row(&self) -> Option<usize> {
+        let (pid, start_time) = self.following?;
+        self.processes
+            .model
+            .items
+            .iter()
+            .position(|r| r.pid == pid && r.start_time == start_time)
+    }
+
+    /// `f`: pin the highlight to the selected process, or release it.
+    pub(crate) fn toggle_follow(&mut self) {
+        self.following = match self.following {
+            Some(_) => None,
+            None => self.selected_row().map(|r| (r.pid, r.start_time)),
+        };
     }
 
     pub(crate) const fn quit(&mut self) {
@@ -265,7 +298,7 @@ impl App {
 
     /// `i`: show the system summary panel.
     pub(crate) fn open_info(&mut self) {
-        self.state = AppState::Info(self.info.clone());
+        self.state = AppState::Info;
     }
 
     /// `K`/Delete: open the signal picker for the selection.

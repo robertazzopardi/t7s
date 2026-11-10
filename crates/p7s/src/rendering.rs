@@ -34,7 +34,7 @@ impl App {
         // Modals draw over the live list.
         self.render_list(frame);
         match &self.state {
-            AppState::Info(info) => Self::render_info(frame, info),
+            AppState::Info => Self::render_info(frame, &self.info),
             AppState::Signal {
                 pid, name, index, ..
             } => self.render_signal(frame, *pid, name, *index),
@@ -115,14 +115,17 @@ impl App {
         };
 
         let arrow = if self.sort_desc { "↓" } else { "↑" };
+        let follow = self
+            .following
+            .map_or_else(String::new, |(pid, _)| format!("  following: {pid}"));
         let title = if self.filter.is_empty() {
             format!(
-                " Processes [{n}]  sort: {} {arrow} ",
+                " Processes [{n}]  sort: {} {arrow}{follow} ",
                 self.sort_key.label()
             )
         } else {
             format!(
-                " Processes [{n} matches]  sort: {} {arrow} ",
+                " Processes [{n} matches]  sort: {} {arrow}{follow} ",
                 self.sort_key.label()
             )
         };
@@ -157,7 +160,7 @@ impl App {
     /// Hotkeys for the top bar: while a modal is open, only the modal's keys.
     fn bar_hotkeys(&self) -> (Vec<Hotkey>, Vec<Hotkey>) {
         match &self.state {
-            AppState::Info(_) => (info_hotkeys(), Vec::new()),
+            AppState::Info => (info_hotkeys(), Vec::new()),
             AppState::Signal { .. } => (signal_hotkeys(), Vec::new()),
             AppState::List | AppState::Describe { .. } => {
                 let mut global = global_hotkeys();
@@ -282,7 +285,14 @@ impl App {
                 }
             })
             .collect();
-        Paragraph::new(lines).render(inner, frame.buffer_mut());
+        // Keep the highlighted signal on screen when the box is short.
+        let visible = usize::from(inner.height);
+        let start = index
+            .saturating_sub(visible / 2)
+            .min(lines.len().saturating_sub(visible));
+        Paragraph::new(lines)
+            .scroll((u16::try_from(start).unwrap_or(u16::MAX), 0))
+            .render(inner, frame.buffer_mut());
 
         if let Some(dialog) = self.confirm_dialog.clone() {
             frame.render_widget(dialog, frame.area());
@@ -376,7 +386,7 @@ mod tests {
             start_time: 0,
             index: 0,
         };
-        for state in [AppState::Info(demo_snapshot().info), signal] {
+        for state in [AppState::Info, signal] {
             let mut app = app();
             app.state = state;
             let out = text(&render(&mut app, 120, 30));
@@ -385,6 +395,24 @@ mod tests {
                 assert!(out.contains(want), "missing {want:?} in\n{out}");
             }
         }
+    }
+
+    #[test]
+    fn signal_picker_scrolls_to_the_highlight() {
+        let menu = signals::menu();
+        let Some(last) = menu.last() else {
+            return; // no signals on this platform
+        };
+        let mut app = app();
+        app.state = AppState::Signal {
+            pid: 1,
+            name: "init".to_string(),
+            start_time: 0,
+            index: menu.len() - 1,
+        };
+        let out = text(&render(&mut app, 120, 10));
+        let want = format!("> {}", signals::label(*last));
+        assert!(out.contains(&want), "missing {want:?} in\n{out}");
     }
 
     #[test]
@@ -403,7 +431,7 @@ mod tests {
         for (w, h) in [(1, 1), (3, 3), (10, 4), (20, 5), (40, 12), (120, 30)] {
             for state in [
                 AppState::List,
-                AppState::Info(demo_snapshot().info),
+                AppState::Info,
                 describe.clone(),
                 signal.clone(),
             ] {

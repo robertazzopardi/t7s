@@ -31,6 +31,7 @@ p7s --demo   # canned data, no real processes are read
 | `d` / Enter | Describe the selected process |
 | `i` | System summary |
 | `u` | Switch top-bar stats between percentages and actual values |
+| `f` | Follow the selected process (`f` or moving the highlight stops) |
 | `K` / `Delete` | Signal the selected process (pick, then confirm) |
 | `q` / `Ctrl-C` | Quit |
 
