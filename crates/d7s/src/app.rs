@@ -227,6 +227,16 @@ impl App<'_> {
         e.sql_executor.table_state.view.column_width_mode = m;
     }
 
+    /// Push the `relative-row-numbers` setting onto the numbered tables.
+    pub(crate) const fn sync_relative_row_numbers(&mut self) {
+        let relative = self.config.relative_row_numbers;
+        let e = &mut self.database_explorer;
+        if let Some(t) = &mut e.table_data {
+            t.table.view.relative_row_numbers = relative;
+        }
+        e.sql_executor.table_state.view.relative_row_numbers = relative;
+    }
+
     /// Post initilisation for the App
     pub fn init(mut self) -> Result<Self> {
         init_db()?;

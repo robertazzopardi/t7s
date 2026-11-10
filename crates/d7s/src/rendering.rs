@@ -57,6 +57,7 @@ impl App<'_> {
     pub fn render(&mut self, frame: &mut Frame) {
         theme::paint_background(frame);
         self.sync_column_width_mode();
+        self.sync_relative_row_numbers();
         let idle_hint = default_idle_hint(
             self.state,
             &self.database_explorer.state,

@@ -14,6 +14,8 @@ pub struct RawTableRow {
     pub db_row_id: Option<DbRowId>,
     /// Pending row not yet `INSERT`ed; edited locally until commit (`s`).
     pub is_draft: bool,
+    /// 1-based position in the result set; `None` for drafts.
+    pub row_number: Option<u64>,
 }
 
 impl TableData for RawTableRow {
@@ -38,6 +40,10 @@ impl TableData for RawTableRow {
     fn is_draft_row(&self) -> bool {
         self.is_draft
     }
+
+    fn row_number(&self) -> Option<u64> {
+        self.row_number
+    }
 }
 
 /// `TableDataState<RawTableRow>` is a foreign type (`TableDataState` lives in `k9tui`), so these
@@ -50,6 +56,7 @@ pub trait RawTableStateExt {
         items: Vec<Vec<String>>,
         column_names: &[String],
         row_ids: Option<Vec<Option<DbRowId>>>,
+        first_row_number: u64,
     );
 
     fn recompute_column_widths(&mut self);
@@ -62,6 +69,7 @@ impl RawTableStateExt for TableDataState<RawTableRow> {
         items: Vec<Vec<String>>,
         column_names: &[String],
         row_ids: Option<Vec<Option<DbRowId>>>,
+        first_row_number: u64,
     ) {
         let column_names_arc = Arc::new(column_names.to_owned());
         let row_ids = row_ids.filter(|r| r.len() == items.len());
@@ -77,6 +85,7 @@ impl RawTableStateExt for TableDataState<RawTableRow> {
                     .cloned()
                     .flatten(),
                 is_draft: false,
+                row_number: Some(first_row_number + i as u64),
             })
             .collect();
         let longest_item_lens =
@@ -129,4 +138,27 @@ fn constraint_len_calculator_for_raw_data(
     }
 
     longest_lens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_numbers_rows_from_first_row_number() {
+        let mut state = TableDataState::<RawTableRow>::default();
+        state.reset(
+            vec![vec!["a".into()], vec!["b".into()]],
+            &["c".to_string()],
+            None,
+            401,
+        );
+        let numbers: Vec<_> = state
+            .model
+            .items
+            .iter()
+            .map(TableData::row_number)
+            .collect();
+        assert_eq!(numbers, vec![Some(401), Some(402)]);
+    }
 }

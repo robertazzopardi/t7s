@@ -122,6 +122,14 @@ hotkeys = [
 A row with `action` shows that action's current key. A row with `key` is display
 text. Editing a bar never changes which keys work.
 
+Row numbers can count from the cursor row, like Vim's `relativenumber`. The
+cursor row keeps its real number:
+
+```toml
+[d7s]
+relative-row-numbers = true
+```
+
 `d7s` won't start, and prints the error to stderr, if the file has a TOML
 syntax error or can't be read, a setting, action, screen, key name or colour is
 unknown or malformed, an action has no keys, or two actions share a key on one

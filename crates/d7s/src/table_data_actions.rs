@@ -351,6 +351,7 @@ impl App<'_> {
             column_names: names,
             db_row_id: None,
             is_draft: true,
+            row_number: None,
         };
         self.insert_draft_row_below_cursor(row);
         self.set_status(self.draft_created_hint("Draft row"));
@@ -423,6 +424,7 @@ impl App<'_> {
             column_names: names.into(),
             db_row_id: None,
             is_draft: true,
+            row_number: None,
         };
         self.insert_draft_row_below_cursor(row);
         Ok(Some(defaults_n))
@@ -496,6 +498,7 @@ impl App<'_> {
             column_names: base.column_names,
             db_row_id: None,
             is_draft: true,
+            row_number: None,
         };
         self.discard_table_draft();
         let insert_at: usize = {
