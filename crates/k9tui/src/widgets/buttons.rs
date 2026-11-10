@@ -1,6 +1,5 @@
 use ratatui::{
     prelude::{Buffer, Rect, Widget},
-    style::{Color, Style},
     text::{Line, Span},
 };
 
@@ -23,7 +22,7 @@ impl Widget for Buttons<'_> {
             } else {
                 button_spans.push(Span::styled(
                     format!(" {button} "),
-                    Style::default().fg(Color::White).bg(Color::DarkGray),
+                    theme::button_idle(),
                 ));
             }
             button_spans.push(Span::raw(" "));

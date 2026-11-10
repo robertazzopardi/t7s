@@ -55,6 +55,7 @@ pub fn database_bar(
 impl App<'_> {
     #[allow(clippy::too_many_lines)]
     pub fn render(&mut self, frame: &mut Frame) {
+        theme::paint_background(frame);
         self.sync_column_width_mode();
         let idle_hint = default_idle_hint(
             self.state,
@@ -551,5 +552,71 @@ fn render_filtered_data_table<T: TableData + Clone + fmt::Debug>(
             area,
             &mut filtered_data.table.clone(),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use k9tui::{theme, theme_source, widgets::table::TableDataState};
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        buffer::{Buffer, Cell},
+        style::Color,
+    };
+
+    use crate::{app::App, db::connection::Connection};
+
+    fn render(app: &mut App) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|f| app.render(f)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn assert_fully_painted(buf: &Buffer) {
+        for cell in &buf.content {
+            assert_ne!(cell.bg, Color::Reset, "unpainted {:?}", cell.symbol());
+            if cell.symbol() != " " {
+                assert_ne!(
+                    cell.fg,
+                    Color::Reset,
+                    "no fg on {:?}",
+                    cell.symbol()
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn background_paints_every_cell_when_set() {
+        let palette = theme_source::palette("rose-pine").unwrap();
+        theme::override_for_thread(Some(palette));
+        let mut app = App::default();
+        // Two rows, because only a selected row has its own colours.
+        app.database_explorer.connections.table = TableDataState::new(vec![
+            Connection {
+                name: "alpha".into(),
+                ..Connection::default()
+            },
+            Connection {
+                name: "beta".into(),
+                ..Connection::default()
+            },
+        ]);
+        let list = render(&mut app);
+        let text: String = list.content.iter().map(Cell::symbol).collect();
+        assert!(text.contains("beta"), "{text}");
+        app.modal_manager.open_new_connection_modal();
+        let modal = render(&mut app);
+        theme::override_for_thread(None);
+        assert_fully_painted(&list);
+        assert_fully_painted(&modal);
+    }
+
+    #[tokio::test]
+    async fn default_palette_paints_no_background() {
+        let mut app = App::default();
+        let buf = render(&mut app);
+        assert_eq!(buf.cell((0, 0)).map(|cell| cell.bg), Some(Color::Reset));
     }
 }

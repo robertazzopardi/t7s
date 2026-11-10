@@ -132,4 +132,28 @@ wins on that screen.
 These can't be remapped: `Ctrl-C` always quits, `Ctrl-S` exports SQL results, `Ctrl-E` opens the cell editor, and typing inside
 text inputs, modals and the search and command bars.
 
-`skin`, `theme` and `colours` are accepted but don't change anything yet.
+### Colours
+
+```toml
+[t7s]
+theme = "rose-pine"
+
+[d7s.colours]
+border = "#ff0000"
+```
+
+`theme` is a built-in theme name, such as `rose-pine`, `rose-pine-dawn`,
+`github` (same as `github-light`), `github-dark-dimmed`, `dracula`, `nord` or `tokyo-night`. With no
+theme, `d7s` keeps its default colours on your terminal's own background.
+
+A theme replaces all colours inherited from a less specific level, so
+`[d7s] theme = "nord"` drops anything set in `[t7s.colours]`. `[d7s.colours]`
+can still adjust it. Colours are ANSI names (`red`, `dark-gray`, `light-blue`) or
+`#rrggbb`.
+
+Colour names: `background`, `border`, `text`, `focus`, `on-focus`, `selection-fg`,
+`selection-bg`, `bg-alt`, `draft`, `multi-select`, `info`, `error`, `success`,
+`warning`, `link`.
+
+An unknown theme or a bad colour stops `d7s` from starting, like any other config
+error. `skin` is reserved: it is accepted but doesn't change the layout yet.

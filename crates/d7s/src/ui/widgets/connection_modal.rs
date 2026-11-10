@@ -17,7 +17,7 @@ use ratatui::{
     prelude::{
         Alignment, Buffer, Constraint, Direction, Layout, Line, Rect, Widget,
     },
-    style::{Color, Style},
+    style::Style,
     text::Span,
     widgets::{Block, Borders, Clear, Paragraph, StatefulWidget},
 };
@@ -240,7 +240,7 @@ impl Modal {
         let mut ta = TextArea::default();
         ta.set_cursor_line_style(Style::default());
         ta.set_cursor_style(Style::default());
-        ta.set_style(Style::default().fg(Color::White));
+        ta.set_style(theme::info_value());
         ta.set_max_histories(0);
         ta
     }
@@ -252,8 +252,7 @@ impl Modal {
             self.step1_import_url
                 .set_cursor_style(theme::focus_cursor());
         } else {
-            self.step1_import_url
-                .set_style(Style::default().fg(Color::White));
+            self.step1_import_url.set_style(theme::info_value());
             self.step1_import_url.set_cursor_style(Style::default());
         }
     }
@@ -960,7 +959,7 @@ impl Modal {
             .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
             .border_style(theme::modal_connection_border())
-            .style(Style::default().bg(Color::Black));
+            .style(theme::modal_background());
         Clear.render(modal_area, buf);
         block.render(modal_area, buf);
 
@@ -978,7 +977,7 @@ impl Modal {
         if self.step == ConnectionModalStep::ChooseType {
             self.render_step1(inner_layout[1], buf);
             Paragraph::new("Enter to continue")
-                .style(Style::default().fg(Color::DarkGray))
+                .style(theme::muted())
                 .alignment(Alignment::Center)
                 .render(inner_layout[2], buf);
         } else {
@@ -1006,7 +1005,7 @@ impl Modal {
         // Section 1: Select database type (list only — Enter advances with this type)
         let type_label_row = layout[0];
         Paragraph::new("Select database type:")
-            .style(Style::default().fg(Color::Cyan))
+            .style(theme::selection_col())
             .alignment(Alignment::Left)
             .render(type_label_row, buf);
 
@@ -1015,9 +1014,9 @@ impl Modal {
             let is_selected =
                 !self.step1_focus_on_url && self.step1_type_index == i;
             let style = if is_selected {
-                Style::default().fg(Color::Yellow).bg(Color::DarkGray)
+                theme::focus_field()
             } else {
-                Style::default().fg(Color::White)
+                theme::info_value()
             };
             let prefix = if is_selected { "> " } else { "  " };
             Paragraph::new(format!("{prefix}{db_type}"))
@@ -1029,14 +1028,14 @@ impl Modal {
         // Separator so list and URL box are clearly separate
         let sep_row = layout[1 + STEP1_DB_TYPES.len()];
         Paragraph::new("────────────────────────")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(theme::muted())
             .alignment(Alignment::Left)
             .render(sep_row, buf);
 
         // Section 2: Or import from URL (optional — paste URL to prefill next step)
         let url_label_row = layout[2 + STEP1_DB_TYPES.len()];
         Paragraph::new("Or import from URL:")
-            .style(Style::default().fg(Color::Cyan))
+            .style(theme::selection_col())
             .alignment(Alignment::Left)
             .render(url_label_row, buf);
 
@@ -1171,9 +1170,9 @@ impl Modal {
                 };
                 let text = format!("{label:<12} {value}");
                 let style = if field.is_focused {
-                    Style::default().fg(Color::Yellow).bg(Color::DarkGray)
+                    theme::focus_field()
                 } else {
-                    Style::default().fg(Color::White)
+                    theme::info_value()
                 };
                 Paragraph::new(text)
                     .style(style)
@@ -1191,9 +1190,9 @@ impl Modal {
                     ])
                     .split(row_area);
                 let label_style = if field.is_focused {
-                    Style::default().fg(Color::Yellow).bg(Color::DarkGray)
+                    theme::focus_field()
                 } else {
-                    Style::default().fg(Color::White)
+                    theme::info_value()
                 };
                 Paragraph::new(label)
                     .style(label_style)
@@ -1211,9 +1210,9 @@ impl Modal {
             };
             let storage_style =
                 if self.current_field == self.visible_fields_count() {
-                    Style::default().fg(Color::Yellow).bg(Color::DarkGray)
+                    theme::focus_field()
                 } else {
-                    Style::default().fg(Color::Cyan)
+                    theme::selection_col()
                 };
             Paragraph::new(checkbox_text)
                 .style(storage_style)
@@ -1239,9 +1238,9 @@ impl Modal {
         is_open: bool,
     ) {
         let trigger_style = if field.is_focused {
-            Style::default().fg(Color::Yellow).bg(Color::DarkGray)
+            theme::focus_field()
         } else {
-            Style::default().fg(Color::White)
+            theme::info_value()
         };
         let arrow = if is_open { " ▲" } else { " ▼" };
         let v = field.value();
@@ -1290,7 +1289,7 @@ impl Modal {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(theme::modal_default_border())
-            .style(Style::default().bg(Color::Black));
+            .style(theme::modal_background());
         let inner = block.inner(overlay_rect);
         block.render(overlay_rect, buf);
 
@@ -1303,9 +1302,9 @@ impl Modal {
             };
             let is_highlighted = i == highlighted_index;
             let style = if is_highlighted {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
+                theme::selection_plain()
             } else {
-                Style::default().fg(Color::White).bg(Color::Black)
+                theme::modal_text()
             };
             let line = Line::from(vec![Span::styled(format!(" {opt}"), style)]);
             Paragraph::new(line).render(row_area, buf);
@@ -1327,15 +1326,11 @@ impl Modal {
     fn render_test_result(&self, area: Rect, buf: &mut Buffer) {
         let (text, style) = match &self.test_result {
             TestResult::NotTested => ("", Style::default()),
-            TestResult::Testing => {
-                ("Testing connection...", Style::default().fg(Color::Yellow))
-            }
+            TestResult::Testing => ("Testing connection...", theme::warning()),
             TestResult::Success => {
                 ("✓ Connection successful", theme::success())
             }
-            TestResult::Failed(msg) => {
-                (msg.as_str(), Style::default().fg(Color::Red))
-            }
+            TestResult::Failed(msg) => (msg.as_str(), theme::error()),
         };
 
         Paragraph::new(text)
@@ -1422,7 +1417,7 @@ impl Widget for SqlQuerySelectionModal {
             .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
             .border_style(theme::modal_default_border())
-            .style(Style::default().bg(Color::Black));
+            .style(theme::modal_background());
         Clear.render(modal_area, buf);
         let inner = block.inner(modal_area);
         block.render(modal_area, buf);
@@ -1439,9 +1434,9 @@ impl Widget for SqlQuerySelectionModal {
         {
             let is_selected = idx == self.selected_index;
             let style = if is_selected {
-                Style::default().fg(Color::Yellow).bg(Color::DarkGray)
+                theme::focus_field()
             } else {
-                Style::default().fg(Color::White)
+                theme::info_value()
             };
             let preview = stmt
                 .lines()
@@ -1473,7 +1468,7 @@ impl CellValueModal {
         let mut input = TextArea::new(lines);
         input.set_cursor_line_style(Style::default());
         input.set_cursor_style(Style::default());
-        input.set_style(Style::default().fg(Color::White));
+        input.set_style(theme::info_value());
         input.set_max_histories(0);
         input
     }
@@ -1521,10 +1516,10 @@ impl CellValueModal {
     fn set_editor_focused(&mut self, focused: bool) {
         self.focus_editor = focused;
         if focused {
-            self.input.set_style(Style::default().fg(Color::White));
+            self.input.set_style(theme::info_value());
             self.input.set_cursor_style(theme::focus_cursor());
         } else {
-            self.input.set_style(Style::default().fg(Color::DarkGray));
+            self.input.set_style(theme::muted());
             self.input.set_cursor_style(Style::default());
         }
     }
@@ -1646,7 +1641,7 @@ impl Widget for CellValueModal {
             .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
             .border_style(theme::modal_default_border())
-            .style(Style::default().bg(Color::Black));
+            .style(theme::modal_background());
         Clear.render(modal_area, buf);
         block.render(modal_area, buf);
 
@@ -2202,6 +2197,37 @@ impl ModalManager {
                 true
             }
             _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod palette_tests {
+    use k9tui::{theme, theme_source};
+    use ratatui::{buffer::Buffer, layout::Rect, style::Color};
+
+    use super::Modal;
+    use crate::db::connection::Connection;
+
+    #[test]
+    fn connection_modal_uses_palette() {
+        let palette = theme_source::palette("rose-pine").unwrap();
+        theme::override_for_thread(Some(palette));
+        let mut modal = Modal::default();
+        modal.open_for_edit(&Connection::default());
+        let area = Rect::new(0, 0, 120, 40);
+        let mut buf = Buffer::empty(area);
+        modal.render_into(area, &mut buf);
+        theme::override_for_thread(None);
+        assert!(buf.content.iter().any(|c| c.bg == palette.background));
+        for cell in &buf.content {
+            for colour in [cell.fg, cell.bg] {
+                assert!(
+                    matches!(colour, Color::Rgb(..) | Color::Reset),
+                    "named colour {colour:?} on {:?}",
+                    cell.symbol()
+                );
+            }
         }
     }
 }
