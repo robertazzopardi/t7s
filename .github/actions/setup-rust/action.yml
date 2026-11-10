@@ -27,3 +27,6 @@ runs:
     - name: Cache Cargo dependencies
       if: inputs.cache == 'true'
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      with:
+        # PR caches are branch-scoped and evicted each other past the 10 GB limit; only main saves.
+        save-if: ${{ github.ref == 'refs/heads/main' }}
