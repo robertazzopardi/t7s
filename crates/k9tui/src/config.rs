@@ -123,6 +123,8 @@ pub struct Config {
     pub colours: BTreeMap<String, Color>,
     /// A user file set `text`, which then reaches unstyled text too.
     pub user_text: bool,
+    /// Row-number gutters count from the cursor row.
+    pub relative_row_numbers: bool,
     pub keymap: Keymap,
     pub screens: BTreeMap<String, Screen>,
     /// Help sections, by name.
@@ -232,6 +234,8 @@ struct HelpLayer {
 struct Layer {
     theme: Option<String>,
     skin: Option<String>,
+    #[serde(rename = "relative-row-numbers")]
+    relative_row_numbers: Option<bool>,
     colours: BTreeMap<String, Colour>,
     keys: BTreeMap<String, Keys>,
     screens: BTreeMap<String, ScreenLayer>,
@@ -303,6 +307,9 @@ impl Merge<'_> {
         }
         if layer.skin.is_some() {
             self.config.skin = layer.skin;
+        }
+        if let Some(relative) = layer.relative_row_numbers {
+            self.config.relative_row_numbers = relative;
         }
         for (key, Colour(colour)) in layer.colours {
             if self.colour_names.contains(&key) {
@@ -443,6 +450,7 @@ pub fn resolve(
             theme: None,
             colours: BTreeMap::new(),
             user_text: false,
+            relative_row_numbers: false,
             keymap,
             screens: BTreeMap::new(),
             help: BTreeMap::new(),
@@ -810,6 +818,25 @@ hotkeys = [
         assert_eq!(ok("[t7s]\nskin = \"a\"\n").skin.as_deref(), Some("a"));
         let config = ok("[t7s]\nskin = \"a\"\n[app]\nskin = \"b\"\n");
         assert_eq!(config.skin.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn relative_row_numbers_default_off_and_most_specific_wins() {
+        assert!(!ok("").relative_row_numbers);
+        assert!(
+            ok("[t7s]\nrelative-row-numbers = true\n").relative_row_numbers
+        );
+        let config = ok("[t7s]\nrelative-row-numbers = true\n\
+                         [app]\nrelative-row-numbers = false\n");
+        assert!(!config.relative_row_numbers);
+    }
+
+    #[test]
+    fn non_bool_relative_row_numbers_is_fatal() {
+        assert!(
+            fatal("[t7s]\nrelative-row-numbers = 1\n")
+                .contains("relative-row-numbers")
+        );
     }
 
     #[test]

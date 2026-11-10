@@ -113,6 +113,8 @@ pub struct TableViewState {
     pub state: TableState,
     pub column_offset: usize,
     pub column_width_mode: ColumnWidthMode,
+    /// Gutter shows distance from the cursor row; the cursor row keeps its number.
+    pub relative_row_numbers: bool,
 }
 
 /// Combined state that holds both model and view state
@@ -149,6 +151,7 @@ impl<T: TableData + Clone> TableDataState<T> {
                 state: TableState::default().with_selected(0),
                 column_offset: 0,
                 column_width_mode: ColumnWidthMode::Fit,
+                relative_row_numbers: false,
             },
             multi_row_selection: BTreeSet::new(),
         }
@@ -353,10 +356,33 @@ fn calculate_visible_columns_for_table(
     (vis_cols, rel, start)
 }
 
-/// Digits needed for the largest row number, or `None` when no row has one.
-fn row_number_digits<T: TableData>(items: &[T]) -> Option<usize> {
+/// Digits needed for the widest gutter label, or `None` when no row has a number.
+fn row_number_digits<T: TableData>(
+    items: &[T],
+    relative: bool,
+) -> Option<usize> {
     let largest = items.iter().filter_map(TableData::row_number).max()?;
-    Some(largest.to_string().len())
+    // Draft rows have no number but still count towards distances.
+    let widest = if relative {
+        largest.max(items.len() as u64)
+    } else {
+        largest
+    };
+    Some(widest.to_string().len())
+}
+
+/// Text for one gutter cell. Under relative numbering every row but the cursor
+/// shows its distance from the cursor.
+fn row_number_label(
+    number: Option<u64>,
+    row: usize,
+    cursor: Option<usize>,
+    relative: bool,
+) -> String {
+    match cursor.filter(|&c| relative && c != row) {
+        Some(c) => row.abs_diff(c).to_string(),
+        None => number.map_or_else(String::new, |n| n.to_string()),
+    }
 }
 
 /// Columns to draw plus how to size and truncate each one.
@@ -555,7 +581,9 @@ impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
         let selected_col_opt = state.view.state.selected_column();
         // Gutter is an extra leading table column (digits + 1 spacing cell), so
         // data column indices stay unchanged. Dropped when it would fill the area.
-        let gutter = row_number_digits(&state.model.items)
+        let relative_numbers = state.view.relative_row_numbers;
+        let cursor_row = state.view.state.selected();
+        let gutter = row_number_digits(&state.model.items, relative_numbers)
             .filter(|&d| d + 1 < usize::from(area.width));
         let data_width = area.width
             - gutter.map_or(0, |d| u16::try_from(d + 1).unwrap_or(0));
@@ -672,9 +700,12 @@ impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
                     row_style = row_style.bg(theme::multi_select_bg());
                 }
                 let number_cell = gutter.map(|d| {
-                    let n = data
-                        .row_number()
-                        .map_or_else(String::new, |n| n.to_string());
+                    let n = row_number_label(
+                        data.row_number(),
+                        row_idx,
+                        cursor_row,
+                        relative_numbers,
+                    );
                     Cell::from(format!("{n:>d$}")).style(theme::muted())
                 });
                 number_cell
@@ -891,6 +922,50 @@ mod tests {
         );
         let trimmed: Vec<&str> = lines.iter().map(|l| l.trim_end()).collect();
         assert_eq!(trimmed, ["#   Name", " 99 a", "    draft", "100 b"]);
+    }
+
+    #[test]
+    fn relative_row_numbers_count_from_cursor_row() {
+        let mut state = TableDataState::new(vec![
+            Numbered(Some(5), "a"),
+            Numbered(Some(6), "b"),
+            Numbered(Some(7), "c"),
+        ]);
+        state.view.state.select(Some(1));
+        state.view.relative_row_numbers = true;
+        let mut terminal = Terminal::new(TestBackend::new(6, 4)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_stateful_widget(
+                    DataTable::<Numbered>::default(),
+                    frame.area(),
+                    &mut state,
+                );
+            })
+            .unwrap();
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(buffer::Cell::symbol)
+            .collect();
+        assert_eq!(content, "# Name1 a   6 b   1 c   ");
+    }
+
+    #[test]
+    fn relative_gutter_fits_distances_past_drafts() {
+        let mut rows = vec![Numbered(Some(9), "a")];
+        rows.extend(vec![Numbered(None, "draft"); 10]);
+        assert_eq!(row_number_digits(&rows, false), Some(1));
+        assert_eq!(row_number_digits(&rows, true), Some(2));
+    }
+
+    #[test]
+    fn relative_label_blank_on_draft_cursor_only() {
+        assert_eq!(row_number_label(None, 2, Some(2), true), "");
+        assert_eq!(row_number_label(None, 2, Some(0), true), "2");
+        assert_eq!(row_number_label(None, 2, Some(0), false), "");
     }
 
     #[test]
