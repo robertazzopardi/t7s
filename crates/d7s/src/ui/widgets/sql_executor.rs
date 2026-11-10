@@ -105,18 +105,21 @@ impl SqlExecutorState {
     }
 }
 
-fn idle_hint_lines() -> Line<'static> {
+fn idle_hint_lines(open_key: String, run_key: String) -> Line<'static> {
     Line::from(vec![
         Span::raw("Press "),
-        Span::styled("e", theme::accent()),
+        Span::styled(open_key, theme::accent()),
         Span::raw(" to open SQL editor  ·  Press "),
-        Span::styled("E", theme::accent()),
+        Span::styled(run_key, theme::accent()),
         Span::raw(" to run"),
     ])
 }
 
 /// SQL executor widget, which is stateless, only handles rendering
-pub struct SqlExecutor;
+pub struct SqlExecutor {
+    pub open_key: String,
+    pub run_key: String,
+}
 
 impl StatefulWidget for SqlExecutor {
     type State = SqlExecutorState;
@@ -140,7 +143,9 @@ impl StatefulWidget for SqlExecutor {
                 );
             }
         } else {
-            idle_hint_lines().centered().render(area, buf);
+            idle_hint_lines(self.open_key, self.run_key)
+                .centered()
+                .render(area, buf);
         }
     }
 }

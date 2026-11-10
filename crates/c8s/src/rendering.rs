@@ -1,8 +1,7 @@
-use crossterm::event::KeyCode;
 use k9tui::{
     theme,
     widgets::{
-        hotkey::Hotkey,
+        hotkey::HotkeyDescription,
         status_line::FOOTER_HEIGHT,
         table::DataTable,
         text_search::filter_and_highlight,
@@ -22,10 +21,6 @@ use crate::{
     command::suggest,
     docker::{client::DaemonHealth, short_id},
     log_dedup::fold,
-    ui::widgets::hotkeys::{
-        GLOBAL_HOTKEYS, VIEW_SWITCH_HOTKEYS, describe_hotkeys, log_hotkeys,
-        process_hotkeys,
-    },
 };
 
 const SEARCH_BAR_HEIGHT: u16 = 3;
@@ -36,7 +31,7 @@ impl App {
         match &self.state {
             AppState::Connecting => Self::render_connecting(frame),
             AppState::ConnectError(message) => {
-                Self::render_connect_error(frame, message);
+                self.render_connect_error(frame, message);
             }
             AppState::List => self.render_list(frame),
             AppState::Logs { name, .. } => {
@@ -45,7 +40,7 @@ impl App {
             }
             AppState::Info(health) => {
                 let health = health.clone();
-                Self::render_daemon_health(frame, &health);
+                self.render_daemon_health(frame, &health);
             }
             AppState::Describe { name, text } => {
                 let name = name.clone();
@@ -71,7 +66,7 @@ impl App {
         let content_area = layout.get(1).copied().unwrap_or_default();
         let footer_area = layout.get(2).copied().unwrap_or_default();
 
-        let hotkeys = process_hotkeys();
+        let hotkeys = self.config.bar("processes");
         frame.render_widget(
             TopBarView {
                 summary: &self.container_summary("Processes", name),
@@ -139,9 +134,12 @@ impl App {
             .render(centered(area), frame.buffer_mut());
     }
 
-    fn render_connect_error(frame: &mut Frame, message: &str) {
+    fn render_connect_error(&self, frame: &mut Frame, message: &str) {
         let area = frame.area();
-        let text = format!("{message}\n\nPress r to retry, q to quit.");
+        let retry = self.config.keymap.label("retry");
+        let quit = self.config.keymap.label("quit");
+        let text =
+            format!("{message}\n\nPress {retry} to retry, {quit} to quit.");
         Paragraph::new(text)
             .style(Style::default().fg(Color::Red))
             .alignment(Alignment::Center)
@@ -151,10 +149,16 @@ impl App {
 
     /// c8s's single-daemon analog of a fleet health dashboard: this daemon's
     /// version/info, since there's only ever one daemon connected to summarize.
-    fn render_daemon_health(frame: &mut Frame, health: &DaemonHealth) {
+    fn render_daemon_health(&self, frame: &mut Frame, health: &DaemonHealth) {
         let area = frame.area();
-        let mut text = health.lines().join("\n");
-        text.push_str("\n\nPress i, q, or Esc to close.");
+        let keymap = &self.config.keymap;
+        let text = format!(
+            "{}\n\nPress {}, {}, or {} to close.",
+            health.lines().join("\n"),
+            keymap.label("health"),
+            keymap.label("quit"),
+            keymap.label("back")
+        );
         let block = Block::new()
             .borders(Borders::ALL)
             .border_style(theme::border())
@@ -182,15 +186,17 @@ impl App {
         let content_area = layout.get(1).copied().unwrap_or_default();
         let footer_area = layout.get(2).copied().unwrap_or_default();
 
-        let mut global: Vec<Hotkey> = VIEW_SWITCH_HOTKEYS.to_vec();
-        global.extend(GLOBAL_HOTKEYS);
+        let mut global = self.config.bar("views");
+        global.extend(self.config.bar("global"));
         if !self.list_filter.is_empty() {
             // `q` clears the active filter instead of quitting while one is
             // set (see event_handlers.rs); keep the hint truthful.
-            if let Some(q) =
-                global.iter_mut().find(|h| h.keycode == KeyCode::Char('q'))
+            if let Some(q) = global
+                .iter_mut()
+                .find(|h| h.action.as_deref() == Some("quit"))
             {
-                *q = Hotkey::new('q', "clear filter");
+                q.description =
+                    HotkeyDescription::Static("clear filter".to_owned());
             }
         }
         let label = self.view.to_string();
@@ -201,12 +207,18 @@ impl App {
             ResourceKind::Networks => self.networks.model.items.len(),
         };
         let summary = format!("{label}: {n}");
+        let hotkeys = self.config.bar(match self.view {
+            ResourceKind::Containers => "list",
+            ResourceKind::Images
+            | ResourceKind::Volumes
+            | ResourceKind::Networks => "resources",
+        });
 
         frame.render_widget(
             TopBarView {
                 summary: &summary,
                 recent_hotkeys: &[],
-                hotkeys: &self.hotkeys,
+                hotkeys: &hotkeys,
                 global_hotkeys: &global,
                 app_name: APP_NAME,
                 build_info: Some(self.build_info.clone()),
@@ -325,7 +337,7 @@ impl App {
         let content_area = layout.get(1).copied().unwrap_or_default();
         let footer_area = layout.get(2).copied().unwrap_or_default();
 
-        let hotkeys = log_hotkeys();
+        let hotkeys = self.config.bar("logs");
         frame.render_widget(
             TopBarView {
                 summary: &self.container_summary("Logs", name),
@@ -417,7 +429,7 @@ impl App {
         let content_area = layout.get(1).copied().unwrap_or_default();
         let footer_area = layout.get(2).copied().unwrap_or_default();
 
-        let hotkeys = describe_hotkeys();
+        let hotkeys = self.config.bar("describe");
         frame.render_widget(
             TopBarView {
                 summary: &self.container_summary("Describe", name),

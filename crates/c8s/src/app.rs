@@ -8,14 +8,15 @@ use std::{
 use ansi_to_tui::IntoText;
 use crossterm::event::{Event, KeyEventKind, read};
 use k9tui::{
+    TuiApp,
     bg::{KeyedFailure, spawn_keyed},
+    config::{AppSpec, Config, defaults},
     error::Result,
     event::poll_input,
     in_flight::InFlight,
     terminal::suspend,
     widgets::{
         constraint_len_calculator,
-        hotkey::Hotkey,
         modal::ConfirmDialog,
         status_line::StatusLine,
         table::{ColumnWidthMode, TableData, TableDataState, filter_rows},
@@ -39,8 +40,8 @@ use crate::{
         client::{DaemonHealth, DockerClient},
     },
     in_flight::DAEMON_KEY,
+    keymap::SPEC,
     log_dedup::DedupMode,
-    ui::widgets::hotkeys::LIST_HOTKEYS,
 };
 
 pub const APP_NAME: &str = r"         ______
@@ -123,7 +124,7 @@ pub struct App {
     /// Which resource table the list view currently shows.
     pub(crate) view: ResourceKind,
     pub(crate) docker: Option<DockerClient>,
-    pub(crate) hotkeys: Vec<Hotkey>,
+    pub(crate) config: Config,
     pub(crate) containers: TableDataState<ContainerRow>,
     pub(crate) images: TableDataState<ImageRow>,
     pub(crate) volumes: TableDataState<VolumeRow>,
@@ -208,7 +209,7 @@ impl App {
             state: AppState::default(),
             view: ResourceKind::default(),
             docker: None,
-            hotkeys: LIST_HOTKEYS.to_vec(),
+            config: defaults(&SPEC),
             containers: TableDataState::new(Vec::new()),
             images: TableDataState::new(Vec::new()),
             volumes: TableDataState::new(Vec::new()),
@@ -495,7 +496,10 @@ impl App {
                     self.docker = Some(client);
                     self.state = AppState::List;
                     self.start_polling();
-                    self.set_status("Connected to Docker");
+                    // Keep a config warning set at startup visible.
+                    if self.status_line.message().is_empty() {
+                        self.set_status("Connected to Docker");
+                    }
                 }
                 BackgroundEvent::ConnectFailed(msg) => {
                     self.in_flight.end(DAEMON_KEY);
@@ -894,6 +898,21 @@ impl App {
     /// Leave the describe view.
     pub(crate) fn close_describe(&mut self) {
         self.state = AppState::List;
+    }
+}
+
+impl TuiApp for App {
+    const SPEC: AppSpec = SPEC;
+    type Args = ();
+
+    fn build(config: Config, (): ()) -> Result<Self> {
+        let mut app = Self::new();
+        app.config = config;
+        Ok(app)
+    }
+
+    fn start(&mut self, terminal: DefaultTerminal) -> Result<()> {
+        self.run(terminal)
     }
 }
 

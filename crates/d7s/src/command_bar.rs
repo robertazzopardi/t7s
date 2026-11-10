@@ -18,8 +18,6 @@ use crate::{
     ui::widgets::help_content::help_rows,
 };
 
-const DRAFT_PENDING: &str = "Draft row pending - Esc to discard, s to commit";
-
 fn bar(text: &str) -> TextArea<'static> {
     let mut bar = TextArea::default();
     bar.set_cursor_line_style(Style::default());
@@ -154,10 +152,19 @@ impl App<'_> {
         }
     }
 
+    pub(crate) fn draft_pending_hint(&self) -> String {
+        format!(
+            "Draft row pending - {} to discard, {} to commit",
+            self.config.keymap.label("back"),
+            self.config.keymap.label("commit")
+        )
+    }
+
     pub(crate) fn open_help(&mut self) {
         self.help_table = TableDataState::new(help_rows(
             self.state,
             &self.database_explorer.state,
+            &self.config,
         ));
         self.show_help = true;
     }
@@ -179,7 +186,7 @@ impl App<'_> {
         if let Command::TablePath(path) = cmd {
             // Paths may start from the connection list: skip the connected check.
             if self.has_table_draft_rows() {
-                self.set_status(DRAFT_PENDING);
+                self.set_status(self.draft_pending_hint());
             } else {
                 self.pending_nav = Some(PendingNav {
                     path,
@@ -207,14 +214,17 @@ impl App<'_> {
         );
         if changes_view && self.state != AppState::DatabaseConnected {
             self.set_status(if cmd == Command::Verb(Verb::Connections) {
-                "Already on the connections list."
+                "Already on the connections list.".to_owned()
             } else {
-                "Not connected - open a connection first (Enter on a connection)."
+                format!(
+                    "Not connected - open a connection first ({} on a connection).",
+                    self.config.keymap.label("drill")
+                )
             });
             return;
         }
         if changes_view && self.has_table_draft_rows() {
-            self.set_status(DRAFT_PENDING);
+            self.set_status(self.draft_pending_hint());
             return;
         }
         let sqlite =

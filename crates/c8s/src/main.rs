@@ -3,17 +3,19 @@ extern crate alloc;
 mod app;
 mod app_state;
 mod command;
+#[cfg(test)]
+mod default_bars_test;
 mod docker;
 mod event_handlers;
 mod in_flight;
+mod keymap;
 mod log_dedup;
 mod rendering;
-mod ui;
 
 use app::App;
-use k9tui::{error::Result, terminal::run};
+use k9tui::error::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    run(|terminal| App::new().run(terminal))
+    k9tui::launch::<App>(())
 }

@@ -1,6 +1,7 @@
 use core::fmt;
 
 use k9tui::{
+    config::Config,
     theme,
     widgets::{
         help_view::HelpRow,
@@ -20,17 +21,17 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{APP_NAME, App},
-    app_state::DatabaseExplorerState,
-    db::{connection::Connection, query_log::QueryLogEntry},
+    app_state::{AppState, DatabaseExplorerState},
+    db::{
+        connection::{Connection, ConnectionType},
+        query_log::QueryLogEntry,
+    },
     filtered_data::FilteredData,
     ui::{
         theme as d7s_theme,
         widgets::{
             connection_modal::ConnectionModalWidget,
-            describe_content::DescribeRow,
-            global_hotkeys::global_hotkeys,
-            hotkeys::{CELL_EDIT_HOTKEYS, TABLE_DATA_VIEW_HOTKEYS},
-            idle_hint::default_idle_hint,
+            describe_content::DescribeRow, idle_hint::default_idle_hint,
             sql_executor::SqlExecutor,
         },
     },
@@ -38,12 +39,28 @@ use crate::{
 
 const FILTER_BAR_HEIGHT: u16 = 3;
 
+/// The database bar for a backend: the activity view is Postgres-only.
+#[must_use]
+pub fn database_bar(
+    config: &Config,
+    connection_type: ConnectionType,
+) -> Vec<Hotkey> {
+    let mut bar = config.bar("database");
+    if !connection_type.has_activity_view() {
+        bar.retain(|hotkey| hotkey.action.as_deref() != Some("activity"));
+    }
+    bar
+}
+
 impl App<'_> {
     #[allow(clippy::too_many_lines)]
     pub fn render(&mut self, frame: &mut Frame) {
         self.sync_column_width_mode();
-        let idle_hint =
-            default_idle_hint(self.state, &self.database_explorer.state);
+        let idle_hint = default_idle_hint(
+            self.state,
+            &self.database_explorer.state,
+            &self.config.keymap,
+        );
         self.status_line.set_idle_hint(if self.watch_active {
             format!("● WATCHING · {idle_hint}")
         } else {
@@ -67,7 +84,11 @@ impl App<'_> {
             self.database_explorer.state,
             DatabaseExplorerState::Connections
         );
-        let global = global_hotkeys(on_connection_list);
+        let global = self.config.bar(if on_connection_list {
+            "global-connections"
+        } else {
+            "global-explorer"
+        });
 
         let (connection, build_info, recent_hotkeys) = if on_connection_list {
             (
@@ -79,36 +100,34 @@ impl App<'_> {
             (
                 &self.database_explorer.connection,
                 None,
-                self.database_explorer.recent_table_hotkeys(),
+                self.database_explorer
+                    .recent_table_hotkeys(&self.config.keymap),
             )
         };
 
         let summary = connection.summary_stack();
 
-        let table_data_ext: Vec<Hotkey> = if matches!(
+        let mut hotkey_bar = if self.state == AppState::DatabaseConnected {
+            database_bar(&self.config, self.database_explorer.connection.r#type)
+        } else {
+            self.config.bar("connections")
+        };
+        if matches!(
             self.database_explorer.state,
             DatabaseExplorerState::TableData(_, _)
         ) {
-            let table_hotkeys: &[Hotkey] = if self.is_cell_editing() {
-                &CELL_EDIT_HOTKEYS
+            hotkey_bar.extend(self.config.bar(if self.is_cell_editing() {
+                "cell-edit"
             } else {
-                &TABLE_DATA_VIEW_HOTKEYS
-            };
-            self.hotkeys.iter().chain(table_hotkeys).cloned().collect()
-        } else {
-            Vec::new()
-        };
-        let hotkey_bar: &[Hotkey] = if table_data_ext.is_empty() {
-            &self.hotkeys
-        } else {
-            &table_data_ext
-        };
+                "table-data"
+            }));
+        }
 
         frame.render_widget(
             TopBarView {
                 summary: &summary,
                 recent_hotkeys: recent_hotkeys.as_slice(),
-                hotkeys: hotkey_bar,
+                hotkeys: &hotkey_bar,
                 global_hotkeys: global.as_slice(),
                 app_name: APP_NAME,
                 build_info,
@@ -284,7 +303,14 @@ impl App<'_> {
         ])
     }
 
-    fn empty_state_hint(&self) -> Option<&'static str> {
+    fn no_matches_hint(&self) -> String {
+        format!(
+            "No matches — {} to clear filter",
+            self.config.keymap.label("back")
+        )
+    }
+
+    fn empty_state_hint(&self) -> Option<String> {
         if self.show_help || self.show_query_log {
             return None;
         }
@@ -296,11 +322,11 @@ impl App<'_> {
                 .model
                 .items
                 .is_empty()
-                .then_some("No matches — Esc to clear filter");
+                .then(|| self.no_matches_hint());
         }
 
         if self.has_active_filter() && self.active_table_is_empty() {
-            return Some("No matches — Esc to clear filter");
+            return Some(self.no_matches_hint());
         }
 
         match &self.database_explorer.state {
@@ -313,7 +339,10 @@ impl App<'_> {
                     .items
                     .is_empty() =>
             {
-                Some("Press n to add your first connection")
+                Some(format!(
+                    "Press {} to add your first connection",
+                    self.config.keymap.label("new-connection")
+                ))
             }
             DatabaseExplorerState::Connections
             | DatabaseExplorerState::Databases
@@ -499,7 +528,10 @@ impl App<'_> {
             }
             DatabaseExplorerState::SqlResults(_) => {
                 frame.render_stateful_widget(
-                    SqlExecutor,
+                    SqlExecutor {
+                        open_key: self.config.keymap.label("sql-editor"),
+                        run_key: self.config.keymap.label("run-sql"),
+                    },
                     area,
                     &mut self.database_explorer.sql_executor,
                 );

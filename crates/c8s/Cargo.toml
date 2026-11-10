@@ -53,3 +53,6 @@ ansi-to-tui = "8.0.1"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+insta = "1.49.0"

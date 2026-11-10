@@ -13,10 +13,13 @@ mod connection_manager;
 mod database_explorer;
 mod database_explorer_state;
 mod db;
+#[cfg(test)]
+mod default_bars_test;
 mod event_handlers;
 mod filtered_data;
 mod filtering;
 mod in_flight;
+mod keymap;
 mod rendering;
 mod services;
 mod sql;
@@ -25,10 +28,7 @@ mod ui;
 mod virtual_table;
 
 use app::{App, PKG_NAME, PKG_VERSION};
-use k9tui::{
-    error::{Result, err},
-    terminal::run,
-};
+use k9tui::error::{Result, err};
 
 fn print_usage() {
     eprintln!(
@@ -78,12 +78,5 @@ fn parse_launch_args() -> Result<Option<String>> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let launch_connection = parse_launch_args()?;
-    run(|terminal| {
-        let mut app = App::default().init()?;
-        if let Some(name) = launch_connection {
-            app.connect_to_named_connection(&name);
-        }
-        app.run(terminal)
-    })
+    k9tui::launch::<App>(parse_launch_args()?)
 }

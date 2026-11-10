@@ -11,13 +11,14 @@ use std::{
 
 use crossterm::{clipboard, execute};
 use k9tui::{
+    TuiApp,
     bg::spawn_keyed,
+    config::{AppSpec, Config, defaults},
     error::Result,
     in_flight::InFlight,
     terminal::suspend,
     widgets::{
         help_view::HelpRow,
-        hotkey::Hotkey,
         status_line::StatusLine,
         table::{ColumnWidthMode, TableData, TableDataState},
     },
@@ -44,6 +45,7 @@ use crate::{
     },
     filtered_data::FilteredData,
     in_flight::{describe_key, key_connection, sql_key},
+    keymap::SPEC,
     services::{
         connection_service::ConnectionService,
         password_service::PasswordService,
@@ -52,7 +54,6 @@ use crate::{
     sql::safety::{StatementSafety, classify_statement, split_statements},
     ui::widgets::{
         connection_modal::ModalManager, describe_content::DescribeRow,
-        hotkeys::CONNECTION_HOTKEYS,
     },
     virtual_table::VIRTUAL_TABLE_PAGE_SIZE,
 };
@@ -79,7 +80,7 @@ pub struct App<'a> {
     /// Is the application running?
     pub(crate) running: bool,
     pub(crate) modal_manager: ModalManager,
-    pub(crate) hotkeys: Vec<Hotkey>,
+    pub(crate) config: Config,
     /// Current application state
     pub(crate) state: AppState,
     /// Database explorer state (when connected to a database)
@@ -139,7 +140,7 @@ impl Default for App<'_> {
         Self {
             running: false,
             modal_manager: ModalManager::new(),
-            hotkeys: CONNECTION_HOTKEYS.to_vec(),
+            config: defaults(&SPEC),
             state: AppState::ConnectionList,
             database_explorer: DatabaseExplorer::default(),
             search_filter: None,
@@ -170,6 +171,25 @@ impl Default for App<'_> {
             pending_nav: None,
             column_width_mode: ColumnWidthMode::Fit,
         }
+    }
+}
+
+impl TuiApp for App<'_> {
+    const SPEC: AppSpec = SPEC;
+    type Args = Option<String>;
+
+    /// `args` names a connection to open on launch.
+    fn build(config: Config, args: Option<String>) -> Result<Self> {
+        let mut app = Self::default().init()?;
+        app.config = config;
+        if let Some(name) = args {
+            app.connect_to_named_connection(&name);
+        }
+        Ok(app)
+    }
+
+    fn start(&mut self, terminal: DefaultTerminal) -> Result<()> {
+        self.run(terminal)
     }
 }
 
@@ -526,8 +546,9 @@ impl App<'_> {
         if self.watch_active {
             self.watch_last_tick = Instant::now();
             self.set_status(format!(
-                "Watching (every {}s) — press w to stop",
-                WATCH_INTERVAL.as_secs()
+                "Watching (every {}s) — press {} to stop",
+                WATCH_INTERVAL.as_secs(),
+                self.config.keymap.label("watch")
             ));
         } else {
             self.set_status("Watch stopped");
@@ -972,7 +993,10 @@ impl App<'_> {
             format!("Connected to {name} ({env})")
         } else {
             self.showed_help_hint = true;
-            format!("Connected to {name} ({env}) — press ? for help")
+            format!(
+                "Connected to {name} ({env}) — press {} for help",
+                self.config.keymap.label("help")
+            )
         }
     }
 
@@ -1245,7 +1269,6 @@ mod tests {
             tls::TlsConfig,
         },
         in_flight::table_key,
-        ui::widgets::hotkeys::DATABASE_HOTKEYS,
     };
 
     fn key(c: char) -> KeyEvent {
@@ -1360,10 +1383,7 @@ mod tests {
 
     #[tokio::test]
     async fn activity_key_is_ignored_on_sqlite() {
-        use crate::{
-            db::connection::ConnectionType,
-            ui::widgets::hotkeys::database_hotkeys,
-        };
+        use crate::{db::connection::ConnectionType, rendering::database_bar};
         let mut app = sqlite_app("noact");
         app.on_key_event(key('A')).unwrap();
         assert!(app.query_log.snapshot().is_empty(), "nothing may run");
@@ -1374,7 +1394,7 @@ mod tests {
         assert!(!render_text(&mut app).contains("Postgres-only"));
 
         let has_activity = |t| {
-            database_hotkeys(t)
+            database_bar(&defaults(&SPEC), t)
                 .iter()
                 .any(|h| h.keycode == KeyCode::Char('A'))
         };
@@ -2364,7 +2384,8 @@ mod tests {
     async fn table_data_discoverability_in_bar_status_and_cell_edit() {
         let mut app = tables_app("discover").await;
         run_cmd(&mut app, "table users").await;
-        let idle = render_text(&mut app);
+        // The connected bar has 15 entries, which needs a wide terminal.
+        let idle = render_sized(&mut app, 200, 40);
         assert!(idle.contains("n new row · Enter edit cell · ? help"));
         assert!(idle.contains("New row"));
         assert!(idle.contains("> Edit"));
@@ -2375,6 +2396,21 @@ mod tests {
         assert!(editing.contains("Ctrl+e"));
         assert!(editing.contains("> Done") || editing.contains("> Modal"));
         assert!(!editing.contains("> Duplicate"));
+    }
+
+    #[tokio::test]
+    async fn cell_edit_keys_follow_remap() {
+        let mut app = tables_app("cell_remap").await;
+        run_cmd(&mut app, "table users").await;
+        assert!(app.config.keymap.set("cell-cancel", KeyCode::F(5)));
+        app.on_key_event(key('i')).unwrap();
+        assert!(app.is_cell_editing());
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        app.on_key_event(esc).unwrap();
+        assert!(app.is_cell_editing(), "old key is released");
+        let f5 = KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE);
+        app.on_key_event(f5).unwrap();
+        assert!(!app.is_cell_editing(), "new key fires");
     }
 
     #[tokio::test]
@@ -3097,7 +3133,6 @@ mod tests {
     #[tokio::test]
     async fn hotkey_bar_shows_command_hint_at_120_cols() {
         let mut app = tables_app("cmd_hotkeys").await;
-        app.hotkeys = DATABASE_HOTKEYS.to_vec();
         let text = render_sized(&mut app, 120, 30);
         assert!(text.contains("<:> Command"), "{text}");
         assert!(text.contains("Query log"), "{text}");

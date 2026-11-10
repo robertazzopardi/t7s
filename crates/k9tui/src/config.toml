@@ -1,0 +1,17 @@
+# Built-in globals for every t7s app. Each app's own config.toml merges over
+# this, and the user's ~/.config/t7s/config.toml merges over both.
+[t7s.keys]
+quit = "q"
+search = "/"
+command = ":"
+back = "esc"
+down = ["j", "down"]
+up = ["k", "up"]
+left = ["h", "b", "left"]
+right = ["l", "w", "right"]
+top = "g"
+bottom = "G"
+first-column = "0"
+last-column = "$"
+page-up = "page-up"
+page-down = "page-down"

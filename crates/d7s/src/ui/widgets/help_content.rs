@@ -1,306 +1,39 @@
-use k9tui::widgets::help_view::HelpRow;
+use k9tui::{
+    config::{Config, Row},
+    keymap::Keymap,
+    widgets::help_view::HelpRow,
+};
 
 use crate::app_state::{AppState, DatabaseExplorerState};
 
-struct HelpEntry {
-    key: &'static str,
-    desc: &'static str,
-}
-
-const GLOBAL_HELP: &[HelpEntry] = &[
-    HelpEntry {
-        key: "?",
-        desc: "Toggle help",
-    },
-    HelpEntry {
-        key: "q",
-        desc: "Quit",
-    },
-    HelpEntry {
-        key: "Ctrl+c",
-        desc: "Quit",
-    },
-    HelpEntry {
-        key: "y",
-        desc: "Copy cell value",
-    },
-    HelpEntry {
-        key: "d",
-        desc: "Describe selected object",
-    },
-    HelpEntry {
-        key: "Esc",
-        desc: "Back / clear filter / close help",
-    },
-];
-
-const VIM_NAV_HELP: &[HelpEntry] = &[
-    HelpEntry {
-        key: "j / ↓",
-        desc: "Move down",
-    },
-    HelpEntry {
-        key: "k / ↑",
-        desc: "Move up",
-    },
-    HelpEntry {
-        key: "h / ←",
-        desc: "Move left (columns)",
-    },
-    HelpEntry {
-        key: "l / →",
-        desc: "Move right (columns)",
-    },
-    HelpEntry {
-        key: "g",
-        desc: "Jump to top",
-    },
-    HelpEntry {
-        key: "G",
-        desc: "Jump to bottom",
-    },
-    HelpEntry {
-        key: "0",
-        desc: "First column",
-    },
-    HelpEntry {
-        key: "$",
-        desc: "Last column",
-    },
-    HelpEntry {
-        key: "/",
-        desc: "Search filter",
-    },
-    HelpEntry {
-        key: "W",
-        desc: "Toggle column width (Fit / Content)",
-    },
-];
-
-const CONNECTION_HELP: &[HelpEntry] = &[
-    HelpEntry {
-        key: "n",
-        desc: "New connection",
-    },
-    HelpEntry {
-        key: "e",
-        desc: "Edit connection",
-    },
-    HelpEntry {
-        key: "D",
-        desc: "Delete connection",
-    },
-    HelpEntry {
-        key: "o",
-        desc: "Open connection",
-    },
-    HelpEntry {
-        key: "O",
-        desc: "Reconnect last connection",
-    },
-    HelpEntry {
-        key: "p",
-        desc: "Ping all connections (reachability)",
-    },
-    HelpEntry {
-        key: "Enter",
-        desc: "Connect",
-    },
-    HelpEntry {
-        key: ":",
-        desc: "Command bar (:q, :help, :log; Tab completes)",
-    },
-];
-
-const DATABASE_HELP: &[HelpEntry] = &[
-    HelpEntry {
-        key: "e",
-        desc: "SQL editor (external)",
-    },
-    HelpEntry {
-        key: "t",
-        desc: "Table structure",
-    },
-    HelpEntry {
-        key: "d",
-        desc: "Describe selected table/column/row",
-    },
-    HelpEntry {
-        key: "E",
-        desc: "Run SQL",
-    },
-    HelpEntry {
-        key: "Enter",
-        desc: "Drill into selection",
-    },
-    HelpEntry {
-        key: "1–5",
-        desc: "Open recent table",
-    },
-    HelpEntry {
-        key: ":",
-        desc: "Command bar (:tables, :sql, :log, :table/:schema <name>, :table conn.db.schema.table, :123 ... Tab completes)",
-    },
-    HelpEntry {
-        key: "L",
-        desc: "Query log (everything d7s ran this session)",
-    },
-];
-
-const TABLE_DATA_HELP: &[HelpEntry] = &[
-    HelpEntry {
-        key: "n",
-        desc: "New row (blank draft)",
-    },
-    HelpEntry {
-        key: "a",
-        desc: "Alias for n (blank draft)",
-    },
-    HelpEntry {
-        key: "N",
-        desc: "New row (column defaults)",
-    },
-    HelpEntry {
-        key: "c",
-        desc: "Duplicate row as draft",
-    },
-    HelpEntry {
-        key: "s",
-        desc: "Commit draft row",
-    },
-    HelpEntry {
-        key: "D",
-        desc: "Delete row(s)",
-    },
-    HelpEntry {
-        key: "i",
-        desc: "Edit selected cell",
-    },
-    HelpEntry {
-        key: "r",
-        desc: "Refresh",
-    },
-];
-
-const TABLE_DATA_CELL_EDIT_HELP: &[HelpEntry] = &[
-    HelpEntry {
-        key: "Esc",
-        desc: "Cancel edit (revert cell)",
-    },
-    HelpEntry {
-        key: "Enter",
-        desc: "Commit cell",
-    },
-    HelpEntry {
-        key: "Tab / Shift+Tab",
-        desc: "Next / previous editable column",
-    },
-    HelpEntry {
-        key: "Ctrl+e",
-        desc: "Multiline editor (modal)",
-    },
-    HelpEntry {
-        key: "Backspace",
-        desc: "Delete character in buffer",
-    },
-];
-
-/// Keys for table data not shown in the top hotkey bar.
-const TABLE_DATA_HIDDEN_BAR: &[HelpEntry] = &[
-    HelpEntry {
-        key: "Space",
-        desc: "Toggle multi-select",
-    },
-    HelpEntry {
-        key: "Enter",
-        desc: "Edit cell",
-    },
-    HelpEntry {
-        key: "Y",
-        desc: "Copy row (TSV)",
-    },
-    HelpEntry {
-        key: ": / #",
-        desc: "Jump to row number",
-    },
-    HelpEntry {
-        key: "g / G",
-        desc: "Jump to top / bottom",
-    },
-    HelpEntry {
-        key: "0 / $",
-        desc: "First / last column",
-    },
-];
-
-const SQL_RESULTS_HELP: &[HelpEntry] = &[
-    HelpEntry {
-        key: "E",
-        desc: "Run SQL from editor",
-    },
-    HelpEntry {
-        key: "Esc",
-        desc: "Return to SQL editor",
-    },
-    HelpEntry {
-        key: "Y",
-        desc: "Copy row (TSV)",
-    },
-    HelpEntry {
-        key: "Ctrl+s / x",
-        desc: "Export results to temp TSV",
-    },
-];
-
-const SQL_RESULTS_HIDDEN_BAR: &[HelpEntry] = &[
-    HelpEntry {
-        key: "Y",
-        desc: "Copy row (TSV)",
-    },
-    HelpEntry {
-        key: "Ctrl+s / x",
-        desc: "Export results to temp TSV",
-    },
-    HelpEntry {
-        key: "Esc",
-        desc: "Return to explorer",
-    },
-];
-
-const FILTER_NOTE: &[HelpEntry] = &[HelpEntry {
-    key: "",
-    desc: "Filter matches loaded page only (client-side)",
-}];
-
-/// ponytail: static slices per context; no runtime catalog builder.
+/// Names of the `[d7s.help]` sections shown in this state, in order.
 fn help_sections(
     app_state: AppState,
     explorer_state: &DatabaseExplorerState,
-) -> Vec<(&'static str, &[HelpEntry])> {
-    let mut sections =
-        vec![("Global", GLOBAL_HELP), ("Navigation", VIM_NAV_HELP)];
+) -> Vec<&'static str> {
+    let mut sections = vec!["global", "navigation"];
 
     match (app_state, explorer_state) {
         (AppState::ConnectionList, DatabaseExplorerState::Connections) => {
-            sections.push(("Connections", CONNECTION_HELP));
+            sections.push("connections");
         }
         (
             AppState::DatabaseConnected,
             DatabaseExplorerState::TableData(_, _),
         ) => {
-            sections.push(("Database", DATABASE_HELP));
-            sections.push(("Table data", TABLE_DATA_HELP));
-            sections.push(("Cell edit", TABLE_DATA_CELL_EDIT_HELP));
-            sections.push(("Not in top bar", TABLE_DATA_HIDDEN_BAR));
-            sections.push(("Filter", FILTER_NOTE));
+            sections.extend([
+                "database",
+                "table-data",
+                "cell-edit",
+                "table-data-hidden",
+                "filter",
+            ]);
         }
         (AppState::DatabaseConnected, DatabaseExplorerState::SqlResults(_)) => {
-            sections.push(("Database", DATABASE_HELP));
-            sections.push(("SQL results", SQL_RESULTS_HELP));
-            sections.push(("Not in top bar", SQL_RESULTS_HIDDEN_BAR));
+            sections.extend(["database", "sql-results", "sql-results-hidden"]);
         }
         (AppState::DatabaseConnected, _) => {
-            sections.push(("Database", DATABASE_HELP));
+            sections.push("database");
         }
         _ => {}
     }
@@ -308,26 +41,57 @@ fn help_sections(
     sections
 }
 
+fn row_text(row: &Row, keymap: &Keymap) -> (String, String) {
+    match row {
+        Row::Key { key, label } => (key.clone(), label.clone()),
+        Row::Action {
+            actions,
+            key,
+            label,
+        } => {
+            let keys: Vec<_> = key
+                .iter()
+                .cloned()
+                .chain(actions.iter().map(|action| keymap.labels(action)))
+                .collect();
+            (keys.join(" / "), label.clone())
+        }
+    }
+}
+
+/// # Panics
+///
+/// If a section name in [`help_sections`] is missing from `config.toml`, which
+/// is a programmer error.
 #[must_use]
 pub fn help_rows(
     app_state: AppState,
     explorer_state: &DatabaseExplorerState,
+    config: &Config,
 ) -> Vec<HelpRow> {
     let mut rows = Vec::new();
-    for (title, entries) in help_sections(app_state, explorer_state) {
-        let (group_desc, entries) = match entries {
-            [HelpEntry { key: "", desc }, rest @ ..] => (*desc, rest),
-            _ => ("", entries),
+    for name in help_sections(app_state, explorer_state) {
+        let section = config
+            .help
+            .get(name)
+            .unwrap_or_else(|| panic!("unknown help section: {name}"));
+        // A leading row with no key describes the whole section.
+        let (group_desc, entries) = match section.rows.as_slice() {
+            [Row::Key { key, label }, rest @ ..] if key.is_empty() => {
+                (label.clone(), rest)
+            }
+            entries => (String::new(), entries),
         };
         rows.push(HelpRow {
-            key: title,
-            desc: group_desc,
+            key: section.title.clone().into(),
+            desc: group_desc.into(),
             section_header: true,
         });
-        for entry in entries {
+        for row in entries {
+            let (key, desc) = row_text(row, &config.keymap);
             rows.push(HelpRow {
-                key: entry.key,
-                desc: entry.desc,
+                key: key.into(),
+                desc: desc.into(),
                 section_header: false,
             });
         }
@@ -337,24 +101,59 @@ pub fn help_rows(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crossterm::event::KeyCode;
+    use k9tui::config::{Config, defaults};
 
-    #[test]
-    fn table_data_help_lists_inline_edit_keys() {
-        let rows = help_rows(
-            AppState::DatabaseConnected,
-            &DatabaseExplorerState::TableData("public".into(), "users".into()),
-        );
-        let body = rows
+    use super::*;
+    use crate::keymap::SPEC;
+
+    fn table_data() -> DatabaseExplorerState {
+        DatabaseExplorerState::TableData("public".into(), "users".into())
+    }
+
+    fn body(state: &DatabaseExplorerState, config: &Config) -> String {
+        help_rows(AppState::DatabaseConnected, state, config)
             .iter()
             .filter(|r| !r.section_header)
             .map(|r| format!("{} {}", r.key, r.desc))
             .collect::<Vec<_>>()
-            .join("\n");
-        assert!(body.contains("n New row (blank draft)"));
+            .join("\n")
+    }
+
+    #[test]
+    fn table_data_help_lists_inline_edit_keys() {
+        let body = body(&table_data(), &defaults(&SPEC));
+        assert!(body.contains("n / a New row (blank draft)"));
         assert!(body.contains("N New row (column defaults)"));
         assert!(body.contains("i Edit selected cell"));
-        assert!(body.contains("Tab / Shift+Tab"));
+        assert!(body.contains("Tab / BackTab"));
         assert!(body.contains("Ctrl+e Multiline editor (modal)"));
+        assert!(body.contains(": / # Jump to row number"));
+    }
+
+    #[test]
+    fn sql_help_shows_default_export_key() {
+        let state = DatabaseExplorerState::SqlResults(String::new());
+        let body = body(&state, &defaults(&SPEC));
+        assert!(body.contains("Ctrl+s / x Export results"), "{body}");
+    }
+
+    #[test]
+    fn help_shows_remapped_key() {
+        let mut config = defaults(&SPEC);
+        assert!(config.keymap.set("delete-row", KeyCode::Char('z')));
+        let body = body(&table_data(), &config);
+        assert!(body.contains("z Delete row(s)"), "{body}");
+        assert!(!body.contains("D Delete row(s)"), "{body}");
+    }
+
+    #[test]
+    fn help_shows_remapped_key_inside_a_combined_label() {
+        let mut config = defaults(&SPEC);
+        assert!(config.keymap.set("export", KeyCode::F(5)));
+        assert!(config.keymap.set("command", KeyCode::Char('z')));
+        let state = DatabaseExplorerState::SqlResults(String::new());
+        assert!(body(&state, &config).contains("Ctrl+s / F5 Export results"));
+        assert!(body(&table_data(), &config).contains("z / # Jump to row"));
     }
 }

@@ -22,7 +22,6 @@ use crate::{
         password_service::PasswordService,
         preferences_service::PreferencesService,
     },
-    ui::widgets::hotkeys::{CONNECTION_HOTKEYS, database_hotkeys},
 };
 
 impl App<'_> {
@@ -149,7 +148,6 @@ impl App<'_> {
         let connection_name = connection.name.clone();
         let connection_env = connection.environment;
         let conn_type = connection.r#type;
-        self.hotkeys = database_hotkeys(conn_type);
         // Keep the saved list: `:table conn.db.schema.table` resolves against it.
         let connections = take(&mut self.database_explorer.connections);
         self.database_explorer =
@@ -254,8 +252,6 @@ impl App<'_> {
     pub fn disconnect_from_database(&mut self) {
         self.database_explorer.state = DatabaseExplorerState::Connections;
         self.state = AppState::ConnectionList;
-
-        self.hotkeys = CONNECTION_HOTKEYS.to_vec();
     }
 }
 

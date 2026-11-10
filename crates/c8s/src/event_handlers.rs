@@ -4,6 +4,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use k9tui::{
     bg::spawn_keyed,
     error::Result,
+    event::is_ctrl_c,
+    keymap::{Nav, plain},
     theme,
     widgets::{
         modal::{ConfirmDialog, DialogAction},
@@ -16,7 +18,6 @@ use crate::{
     app::App,
     app_state::{AppState, ResourceKind},
     command::{Command, resolve, suggest},
-    ui::widgets::hotkeys::{LIST_HOTKEYS, RESOURCE_HOTKEYS},
 };
 
 impl App {
@@ -25,6 +26,11 @@ impl App {
         key: KeyEvent,
         terminal: &mut Terminal<B>,
     ) -> Result<()> {
+        // The remove dialog reads its own keys.
+        if is_ctrl_c(key) && self.confirm_dialog.is_none() {
+            self.quit();
+            return Ok(());
+        }
         match &self.state {
             AppState::ConnectError(_) => {
                 self.on_key_connect_error(key);
@@ -52,39 +58,34 @@ impl App {
     }
 
     fn on_key_info(&mut self, key: KeyEvent) {
-        match (key.modifiers, key.code) {
-            (_, KeyCode::Char('q' | 'i') | KeyCode::Esc) => {
-                self.state = AppState::List;
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
-            _ => {}
+        if matches!(
+            self.config.keymap.action("info", plain(key)),
+            "health" | "quit" | "back"
+        ) {
+            self.state = AppState::List;
         }
     }
 
-    #[allow(clippy::wildcard_enum_match_arm)]
     fn on_key_processes(&mut self, key: KeyEvent) {
-        match (key.modifiers, key.code) {
-            (_, KeyCode::Char('q') | KeyCode::Esc) => self.close_processes(),
-            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
-            (_, KeyCode::Char('l')) => self.open_process_output(),
-            (_, KeyCode::Char('W')) => self.toggle_column_width_mode(),
-            (_, KeyCode::Char('j')) => self.navigate_processes(KeyCode::Down),
-            (_, KeyCode::Char('k')) => self.navigate_processes(KeyCode::Up),
-            (
-                _,
-                code @ (KeyCode::Down | KeyCode::Up | KeyCode::Char('g' | 'G')),
-            ) => {
-                self.navigate_processes(code);
+        match self.config.keymap.action("processes", plain(key)) {
+            "quit" | "back" => self.close_processes(),
+            "output" => self.open_process_output(),
+            "width" => self.toggle_column_width_mode(),
+            _ => {
+                if let Some(nav) =
+                    self.config.keymap.nav("processes", plain(key))
+                {
+                    self.navigate_processes(nav);
+                }
             }
-            _ => {}
         }
     }
 
-    fn navigate_processes(&mut self, key: KeyCode) {
+    fn navigate_processes(&mut self, nav: Nav) {
         TableNavigationHandler::navigate_table(
             &self.processes.model,
             &mut self.processes.view,
-            key,
+            nav,
         );
     }
 
@@ -99,8 +100,9 @@ impl App {
             (_, KeyCode::Backspace) => {
                 self.describe_filter.pop();
             }
-            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
-            (_, KeyCode::Char(c)) => self.describe_filter.push(c),
+            (_, KeyCode::Char(c)) => {
+                self.describe_filter.push(c);
+            }
             _ => {}
         }
         self.describe_scroll = 0;
@@ -114,47 +116,44 @@ impl App {
         let max_start = self
             .describe_view_len
             .saturating_sub(self.describe_viewport_height);
-        match (key.modifiers, key.code) {
-            (_, KeyCode::Char('q') | KeyCode::Esc)
-                if !self.describe_filter.is_empty() =>
-            {
+        match self.config.keymap.action("describe", plain(key)) {
+            "quit" | "back" if !self.describe_filter.is_empty() => {
                 self.describe_filter.clear();
                 self.describe_scroll = 0;
             }
-            (_, KeyCode::Char('q') | KeyCode::Esc) => self.close_describe(),
-            (_, KeyCode::Char('/')) => self.describe_search_open = true,
-            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
-            (_, KeyCode::Char('k') | KeyCode::Up) => {
-                self.describe_scroll = self.describe_scroll.saturating_sub(1);
-            }
-            (_, KeyCode::Char('j') | KeyCode::Down) => {
-                self.describe_scroll =
-                    (self.describe_scroll + 1).min(max_start);
-            }
-            (_, KeyCode::PageUp) => {
-                self.describe_scroll = self.describe_scroll.saturating_sub(10);
-            }
-            (_, KeyCode::PageDown) => {
-                self.describe_scroll =
-                    (self.describe_scroll + 10).min(max_start);
-            }
-            (_, KeyCode::Char('g') | KeyCode::Home) => self.describe_scroll = 0,
-            (_, KeyCode::Char('G') | KeyCode::End) => {
-                self.describe_scroll = max_start;
-            }
-            _ => {}
+            "quit" | "back" => self.close_describe(),
+            "search" => self.describe_search_open = true,
+            _ => match self.config.keymap.nav("describe", plain(key)) {
+                Some(Nav::Up) => {
+                    self.describe_scroll =
+                        self.describe_scroll.saturating_sub(1);
+                }
+                Some(Nav::Down) => {
+                    self.describe_scroll =
+                        (self.describe_scroll + 1).min(max_start);
+                }
+                Some(Nav::PageUp) => {
+                    self.describe_scroll =
+                        self.describe_scroll.saturating_sub(10);
+                }
+                Some(Nav::PageDown) => {
+                    self.describe_scroll =
+                        (self.describe_scroll + 10).min(max_start);
+                }
+                Some(Nav::Top) => self.describe_scroll = 0,
+                Some(Nav::Bottom) => self.describe_scroll = max_start,
+                Some(
+                    Nav::Left | Nav::Right | Nav::FirstColumn | Nav::LastColumn,
+                )
+                | None => {}
+            },
         }
     }
 
     fn on_key_connect_error(&mut self, key: KeyEvent) {
-        match (key.modifiers, key.code) {
-            (_, KeyCode::Char('r') | KeyCode::Enter) => {
-                self.connect();
-            }
-            (_, KeyCode::Char('q'))
-            | (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
-                self.quit();
-            }
+        match self.config.keymap.action("connect-error", plain(key)) {
+            "retry" => self.connect(),
+            "quit" => self.quit(),
             _ => {}
         }
     }
@@ -181,45 +180,46 @@ impl App {
 
         let max_start =
             self.log_view_len.saturating_sub(self.log_viewport_height);
-        match (key.modifiers, key.code) {
-            (_, KeyCode::Char('q') | KeyCode::Esc)
-                if self.log_filter.is_empty() =>
-            {
-                self.close_logs();
-            }
-            (_, KeyCode::Char('q') | KeyCode::Esc) => self.log_filter.clear(),
-            (_, KeyCode::Char('/')) => self.log_search_open = true,
-            (KeyModifiers::NONE, KeyCode::Char('d')) => {
-                self.log_dedup = self.log_dedup.next();
-            }
-            (_, KeyCode::Char('H')) => self.load_full_logs(),
-            (_, KeyCode::Char('p')) => self.toggle_previous_logs(),
-            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
-            (_, KeyCode::Char('k') | KeyCode::Up) => {
-                self.log_follow = false;
-                self.log_scroll = self.log_scroll.saturating_sub(1);
-            }
-            (_, KeyCode::Char('j') | KeyCode::Down) => {
-                self.log_scroll = (self.log_scroll + 1).min(max_start);
-                self.log_follow = self.log_scroll >= max_start;
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('u'))
-            | (_, KeyCode::PageUp) => {
+        let keymap = &self.config.keymap;
+        let action = keymap.action("logs", plain(key));
+        let nav = keymap.nav("logs", plain(key));
+        match (key.modifiers, key.code, nav) {
+            (KeyModifiers::CONTROL, KeyCode::Char('u'), _)
+            | (_, _, Some(Nav::PageUp)) => {
                 self.log_follow = false;
                 self.log_scroll = self.log_scroll.saturating_sub(10);
             }
-            (KeyModifiers::CONTROL, KeyCode::Char('d'))
-            | (_, KeyCode::PageDown) => {
+            (KeyModifiers::CONTROL, KeyCode::Char('d'), _)
+            | (_, _, Some(Nav::PageDown)) => {
                 self.log_scroll = (self.log_scroll + 10).min(max_start);
                 self.log_follow = self.log_scroll >= max_start;
             }
-            (_, KeyCode::Char('g') | KeyCode::Home) => {
+            _ if matches!(action, "quit" | "back") => {
+                if self.log_filter.is_empty() {
+                    self.close_logs();
+                } else {
+                    self.log_filter.clear();
+                }
+            }
+            _ if action == "search" => self.log_search_open = true,
+            _ if action == "dedup" => {
+                self.log_dedup = self.log_dedup.next();
+            }
+            _ if action == "history" => self.load_full_logs(),
+            _ if action == "previous" => self.toggle_previous_logs(),
+            (_, _, Some(Nav::Up)) => {
+                self.log_follow = false;
+                self.log_scroll = self.log_scroll.saturating_sub(1);
+            }
+            (_, _, Some(Nav::Down)) => {
+                self.log_scroll = (self.log_scroll + 1).min(max_start);
+                self.log_follow = self.log_scroll >= max_start;
+            }
+            (_, _, Some(Nav::Top)) => {
                 self.log_follow = false;
                 self.log_scroll = 0;
             }
-            (_, KeyCode::Char('G') | KeyCode::End) => {
-                self.log_follow = true;
-            }
+            (_, _, Some(Nav::Bottom)) => self.log_follow = true,
             _ => {}
         }
     }
@@ -241,7 +241,6 @@ impl App {
                 self.list_filter.pop();
                 self.reapply_list_filter();
             }
-            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
             (_, KeyCode::Char(c)) => {
                 self.list_filter.push(c);
                 self.reapply_list_filter();
@@ -254,7 +253,6 @@ impl App {
     #[allow(clippy::wildcard_enum_match_arm)]
     fn on_key_command(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
-            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
             (_, KeyCode::Esc) => self.close_command_bar(),
             (_, KeyCode::Enter) => {
                 let text = take(&mut self.command_text);
@@ -302,19 +300,14 @@ impl App {
             self.on_key_list_search(key);
             return true;
         }
-        match (key.modifiers, key.code) {
-            (_, KeyCode::Char('q')) if self.list_filter.is_empty() => {
-                self.quit();
-            }
-            (_, KeyCode::Char('q')) => {
+        match self.config.keymap.action(self.list_screen(), plain(key)) {
+            "quit" if self.list_filter.is_empty() => self.quit(),
+            "quit" => {
                 self.list_filter.clear();
                 self.reapply_list_filter();
             }
-            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
-                self.quit();
-            }
-            (_, KeyCode::Char('/')) => self.list_search_open = true,
-            (_, KeyCode::Char(':')) => {
+            "search" => self.list_search_open = true,
+            "command" => {
                 self.list_search_open = true;
                 self.command_mode = true;
                 self.command_text.clear();
@@ -324,8 +317,16 @@ impl App {
         true
     }
 
-    #[allow(clippy::wildcard_enum_match_arm)]
-    #[allow(clippy::too_many_lines)] // flat key-dispatch match
+    /// The `config.toml` screen for the current list view.
+    const fn list_screen(&self) -> &'static str {
+        match self.view {
+            ResourceKind::Containers => "list",
+            ResourceKind::Images
+            | ResourceKind::Volumes
+            | ResourceKind::Networks => "resources",
+        }
+    }
+
     fn on_key_list<B: Backend>(
         &mut self,
         key: KeyEvent,
@@ -352,29 +353,19 @@ impl App {
             return Ok(());
         }
 
-        match (key.modifiers, key.code) {
-            (_, KeyCode::Char('W')) => self.toggle_column_width_mode(),
-            (_, KeyCode::Char('1')) => {
-                self.switch_view(ResourceKind::Containers);
-            }
-            (_, KeyCode::Char('2')) => self.switch_view(ResourceKind::Images),
-            (_, KeyCode::Char('3')) => self.switch_view(ResourceKind::Volumes),
-            (_, KeyCode::Char('4')) => self.switch_view(ResourceKind::Networks),
-            (_, KeyCode::Char('j') | KeyCode::Down) => {
-                self.navigate(KeyCode::Down);
-            }
-            (_, KeyCode::Char('k') | KeyCode::Up) => self.navigate(KeyCode::Up),
-            (_, KeyCode::Char('g')) => self.navigate(KeyCode::Char('g')),
-            (_, KeyCode::Char('G')) => self.navigate(KeyCode::Char('G')),
-            (_, KeyCode::Char('a'))
-                if self.view == ResourceKind::Containers =>
-            {
+        let screen = self.list_screen();
+        let on_containers = self.view == ResourceKind::Containers;
+        match self.config.keymap.action(screen, plain(key)) {
+            "width" => self.toggle_column_width_mode(),
+            "containers" => self.switch_view(ResourceKind::Containers),
+            "images" => self.switch_view(ResourceKind::Images),
+            "volumes" => self.switch_view(ResourceKind::Volumes),
+            "networks" => self.switch_view(ResourceKind::Networks),
+            "running" if on_containers => {
                 self.running_only = !self.running_only;
                 self.reapply_list_filter();
             }
-            (_, KeyCode::Char('s' | 'S'))
-                if self.view == ResourceKind::Containers =>
-            {
+            "start-stop" if on_containers => {
                 if let Some(row) = self.selected_container().cloned() {
                     if row.is_running() {
                         self.stop_container(&row.id);
@@ -383,81 +374,65 @@ impl App {
                     }
                 }
             }
-            (_, KeyCode::Char('r'))
-                if self.view == ResourceKind::Containers =>
-            {
+            "restart" if on_containers => {
                 if let Some(row) = self.selected_container().cloned() {
                     self.restart_container(&row.id);
                 }
             }
-            (_, KeyCode::Char('p'))
-                if self.view == ResourceKind::Containers =>
-            {
+            "processes" if on_containers => {
                 if let Some(row) = self.selected_container().cloned() {
                     self.open_processes(&row.id, &row.name);
                 }
             }
-            (_, KeyCode::Char('l'))
-                if self.view == ResourceKind::Containers =>
-            {
+            "logs" if on_containers => {
                 if let Some(row) = self.selected_container().cloned() {
                     self.open_logs(&row.id, &row.name);
                 }
             }
-            (_, KeyCode::Char('d') | KeyCode::Enter) => {
-                self.describe_selected();
-            }
-            (_, KeyCode::Char('e'))
-                if self.view == ResourceKind::Containers =>
-            {
+            "describe" => self.describe_selected(),
+            "exec" if on_containers => {
                 if let Some(row) = self.selected_container().cloned() {
                     self.exec_shell(terminal, &row.id)?;
                 }
             }
-            (_, KeyCode::Char('i')) => {
-                self.open_daemon_health();
+            "health" => self.open_daemon_health(),
+            "remove" => self.prompt_remove_selected(),
+            _ => {
+                if let Some(nav) = self.config.keymap.nav(screen, plain(key)) {
+                    self.navigate(nav);
+                }
             }
-            (_, KeyCode::Char('D') | KeyCode::Delete) => {
-                self.prompt_remove_selected();
-            }
-            _ => {}
         }
         Ok(())
     }
 
     /// Switch the active list view. Selection state per resource kind is
     /// preserved on its own `TableDataState`, so no reset is needed here.
-    fn switch_view(&mut self, kind: ResourceKind) {
+    const fn switch_view(&mut self, kind: ResourceKind) {
         self.view = kind;
-        self.hotkeys = match kind {
-            ResourceKind::Containers => LIST_HOTKEYS.to_vec(),
-            ResourceKind::Images
-            | ResourceKind::Volumes
-            | ResourceKind::Networks => RESOURCE_HOTKEYS.to_vec(),
-        };
     }
 
-    fn navigate(&mut self, key: KeyCode) {
+    fn navigate(&mut self, nav: Nav) {
         match self.view {
             ResourceKind::Containers => TableNavigationHandler::navigate_table(
                 &self.containers.model,
                 &mut self.containers.view,
-                key,
+                nav,
             ),
             ResourceKind::Images => TableNavigationHandler::navigate_table(
                 &self.images.model,
                 &mut self.images.view,
-                key,
+                nav,
             ),
             ResourceKind::Volumes => TableNavigationHandler::navigate_table(
                 &self.volumes.model,
                 &mut self.volumes.view,
-                key,
+                nav,
             ),
             ResourceKind::Networks => TableNavigationHandler::navigate_table(
                 &self.networks.model,
                 &mut self.networks.view,
-                key,
+                nav,
             ),
         }
     }
@@ -668,7 +643,6 @@ mod tests {
             client::{DaemonHealth, DockerClient},
         },
         in_flight::container_key,
-        ui::widgets::hotkeys::RESOURCE_HOTKEYS,
     };
 
     type Term = Terminal<TestBackend>;
@@ -747,6 +721,280 @@ mod tests {
         ResourceKind::Volumes,
         ResourceKind::Networks,
     ];
+
+    fn char_key(c: char) -> KeyEvent {
+        key(KeyCode::Char(c))
+    }
+
+    /// No config: the existing key set behaves exactly as before.
+    #[tokio::test]
+    async fn default_keys_match_the_hardcoded_set() {
+        let mut t = term();
+        for k in [shift_d(), key(KeyCode::Delete)] {
+            let mut app = app();
+            app.on_key_event(k, &mut t).unwrap();
+            assert!(app.confirm_dialog.is_some(), "{k:?}");
+        }
+        for k in [char_key('d'), key(KeyCode::Enter)] {
+            let mut app = app();
+            app.on_key_event(k, &mut t).unwrap();
+            assert!(app.confirm_dialog.is_none(), "{k:?}");
+            flush_background(&mut app).await;
+            let out = screen(&mut app, &mut t);
+            assert!(out.contains("Inspect failed"), "{k:?}: {out}");
+        }
+    }
+
+    #[tokio::test]
+    async fn info_closes_on_remapped_keys() {
+        let mut app = app();
+        assert!(app.config.keymap.set("health", KeyCode::Char('z')));
+        app.state = AppState::Connecting;
+        app.on_key_info(char_key('i'));
+        assert!(
+            matches!(app.state, AppState::Connecting),
+            "old key released"
+        );
+        app.on_key_info(char_key('z'));
+        assert!(matches!(app.state, AppState::List));
+    }
+
+    #[tokio::test]
+    async fn processes_close_on_remapped_back() {
+        let mut app = app();
+        assert!(app.config.keymap.set("back", KeyCode::Char('z')));
+        app.state = AppState::Connecting;
+        app.on_key_processes(key(KeyCode::Esc));
+        assert!(
+            matches!(app.state, AppState::Connecting),
+            "old key released"
+        );
+        app.on_key_processes(char_key('z'));
+        assert!(matches!(app.state, AppState::List));
+    }
+
+    #[tokio::test]
+    async fn describe_scrolls_on_remapped_down() {
+        let mut app = app();
+        assert!(app.config.keymap.set("down", KeyCode::Char('z')));
+        app.describe_view_len = 100;
+        app.describe_viewport_height = 10;
+        app.on_key_describe(char_key('j'));
+        assert_eq!(app.describe_scroll, 0, "old key released");
+        app.on_key_describe(char_key('z'));
+        assert_eq!(app.describe_scroll, 1);
+    }
+
+    #[tokio::test]
+    async fn logs_follow_remapped_keys() {
+        let mut app = app();
+        assert!(app.config.keymap.set("dedup", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("page-down", KeyCode::Char('y')));
+        app.log_view_len = 100;
+        app.log_viewport_height = 10;
+        let before = app.log_dedup;
+        app.on_key_logs(char_key('z'));
+        assert_ne!(app.log_dedup, before);
+        app.on_key_logs(char_key('y'));
+        assert_eq!(app.log_scroll, 10);
+    }
+
+    #[tokio::test]
+    async fn ctrl_u_pages_when_top_is_u() {
+        let mut app = app();
+        assert!(app.config.keymap.set("top", KeyCode::Char('u')));
+        app.log_view_len = 100;
+        app.log_viewport_height = 10;
+        app.log_scroll = 30;
+        app.on_key_logs(KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL,
+        ));
+        assert_eq!(app.log_scroll, 20, "Ctrl+u pages, it must not fire top");
+    }
+
+    #[tokio::test]
+    async fn list_view_keys_and_nav_follow_remap() {
+        let mut app = app();
+        let mut t = term();
+        assert!(app.config.keymap.set("images", KeyCode::Char('z')));
+        app.on_key_event(char_key('2'), &mut t).unwrap();
+        assert_eq!(app.view, ResourceKind::Containers, "old key released");
+        app.on_key_event(char_key('z'), &mut t).unwrap();
+        assert_eq!(app.view, ResourceKind::Images);
+    }
+
+    #[tokio::test]
+    async fn search_typing_ignores_remapped_nav() {
+        let mut app = app();
+        let mut t = term();
+        assert!(app.config.keymap.set("down", KeyCode::Char('x')));
+        app.on_key_event(char_key('/'), &mut t).unwrap();
+        app.on_key_event(char_key('x'), &mut t).unwrap();
+        assert_eq!(app.list_filter, "x");
+    }
+
+    #[tokio::test]
+    async fn connect_error_retry_follows_remap() {
+        let mut app = app();
+        app.running = true;
+        assert!(app.config.keymap.set("quit", KeyCode::Char('z')));
+        app.on_key_connect_error(char_key('q'));
+        assert!(app.running, "old key released");
+        app.on_key_connect_error(char_key('z'));
+        assert!(!app.running);
+    }
+
+    #[tokio::test]
+    async fn left_and_right_stay_off_the_list() {
+        let mut app = app();
+        let mut t = term();
+        app.on_key_event(char_key('h'), &mut t).unwrap();
+        assert_eq!(app.containers.view.state.selected_column(), None);
+    }
+
+    #[tokio::test]
+    async fn off_screen_left_does_not_beat_top_in_logs() {
+        let mut app = app();
+        assert!(app.config.keymap.set("top", KeyCode::Char('h')));
+        app.log_view_len = 100;
+        app.log_viewport_height = 10;
+        app.log_scroll = 30;
+        app.on_key_logs(char_key('h'));
+        assert_eq!(app.log_scroll, 0);
+    }
+
+    #[tokio::test]
+    async fn uppercase_remap_fires_with_shift() {
+        let mut app = app();
+        assert!(app.config.keymap.set("dedup", KeyCode::Char('D')));
+        let before = app.log_dedup;
+        app.on_key_logs(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
+        assert_ne!(app.log_dedup, before);
+    }
+
+    #[tokio::test]
+    async fn ctrl_c_quits_during_log_search() {
+        let mut app = app();
+        app.running = true;
+        app.log_search_open = true;
+        let mut t = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        app.on_key_event(
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            &mut t,
+        )
+        .unwrap();
+        assert!(!app.running);
+        assert_eq!(app.log_filter, "");
+    }
+
+    #[tokio::test]
+    async fn ctrl_c_quits_while_connecting() {
+        let mut app = app();
+        let mut t = term();
+        app.running = true;
+        app.state = AppState::Connecting;
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        app.on_key_event(ctrl_c, &mut t).unwrap();
+        assert!(!app.running);
+    }
+
+    #[tokio::test]
+    async fn remapped_keys_follow_config() {
+        let mut app = app();
+        let mut t = term();
+        assert!(app.config.keymap.set("remove", KeyCode::Char('x')));
+        app.on_key_event(shift_d(), &mut t).unwrap();
+        assert!(app.confirm_dialog.is_none(), "old key is released");
+        app.on_key_event(char_key('x'), &mut t).unwrap();
+        assert!(app.confirm_dialog.is_some(), "new key fires");
+        app.confirm_dialog = None;
+        app.pending_remove = None;
+        app.on_key_event(key(KeyCode::Delete), &mut t).unwrap();
+        assert!(app.confirm_dialog.is_none(), "a remap replaces the list");
+    }
+
+    #[tokio::test]
+    async fn remapped_start_stop_replaces_its_keys() {
+        let mut t = term();
+        for c in ['s', 'S'] {
+            let mut released = app();
+            assert!(
+                released.config.keymap.set("start-stop", KeyCode::Char('x'))
+            );
+            released.on_key_event(char_key(c), &mut t).unwrap();
+            assert!(released.in_flight.is_empty(), "{c} is released");
+        }
+        let mut app = app();
+        assert!(app.config.keymap.set("start-stop", KeyCode::Char('x')));
+        app.on_key_event(char_key('x'), &mut t).unwrap();
+        assert!(!app.in_flight.is_empty(), "x fires");
+    }
+
+    #[tokio::test]
+    async fn container_actions_do_nothing_outside_containers() {
+        for kind in [ResourceKind::Images, ResourceKind::Volumes] {
+            for c in ['s', 'S', 'r', 'l', 'e', 'p', 'a'] {
+                let mut app = app();
+                let mut t = term();
+                app.switch_view(kind);
+                app.on_key_event(char_key(c), &mut t).unwrap();
+                assert_eq!(app.state, AppState::List, "{kind:?} {c}");
+                assert!(app.in_flight.is_empty(), "{kind:?} {c}");
+                assert!(!app.running_only, "{kind:?} {c}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn remapped_quit_and_search_follow_config() {
+        let mut app = app();
+        let mut t = term();
+        app.running = true;
+        assert!(app.config.keymap.set("quit", KeyCode::Char('z')));
+        assert!(app.config.keymap.set("search", KeyCode::Char('x')));
+        app.on_key_event(char_key('q'), &mut t).unwrap();
+        assert!(app.running, "old quit key is released");
+        app.on_key_event(char_key('/'), &mut t).unwrap();
+        assert!(!app.list_search_open, "old search key is released");
+        app.on_key_event(char_key('x'), &mut t).unwrap();
+        assert!(app.list_search_open, "new search key fires");
+        app.on_key_event(key(KeyCode::Esc), &mut t).unwrap();
+        app.on_key_event(char_key('z'), &mut t).unwrap();
+        assert!(!app.running, "new quit key fires");
+    }
+
+    fn send_connected(app: &mut App) {
+        app.bg_tx
+            .send(BackgroundEvent::Connected(DockerClient::unreachable()))
+            .unwrap();
+        app.drain_background_events();
+    }
+
+    #[tokio::test]
+    async fn connecting_keeps_a_config_warning() {
+        let mut app = app();
+        app.set_status("Config: bad");
+        send_connected(&mut app);
+        assert_eq!(app.status_line.message(), "Config: bad");
+    }
+
+    #[tokio::test]
+    async fn connecting_reports_when_there_is_no_warning() {
+        let mut app = app();
+        send_connected(&mut app);
+        assert_eq!(app.status_line.message(), "Connected to Docker");
+    }
+
+    #[tokio::test]
+    async fn hotkey_bar_shows_remapped_keys() {
+        let mut app = app();
+        let mut t = term();
+        assert!(app.config.keymap.set("remove", KeyCode::F(5)));
+        assert!(app.config.keymap.set("search", KeyCode::F(6)));
+        let out = screen(&mut app, &mut t);
+        assert!(out.contains("F5") && out.contains("F6"), "{out}");
+    }
 
     #[tokio::test]
     async fn i_failure_stays_on_list_with_status_in_every_view() {
@@ -922,7 +1170,6 @@ mod tests {
         app.on_key_event(key(KeyCode::Enter), &mut t).unwrap();
         assert!(!app.command_mode && !app.list_search_open);
         assert_eq!(app.view, ResourceKind::Images);
-        assert_eq!(app.hotkeys.len(), RESOURCE_HOTKEYS.len());
     }
 
     #[tokio::test]
@@ -1220,6 +1467,7 @@ mod tests {
 #[cfg(test)]
 mod filter_tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::{Terminal, backend::TestBackend};
 
     use crate::{
         app::App,
@@ -1345,7 +1593,8 @@ mod filter_tests {
         press(&mut app, KeyCode::Char('/'));
         type_str(&mut app, "ab");
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert!(app.on_key_list_filter_or_quit(ctrl_c));
+        let mut t = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        app.on_key_event(ctrl_c, &mut t).unwrap();
         assert!(!app.running);
         assert_eq!(app.list_filter, "ab");
     }
@@ -1354,8 +1603,23 @@ mod filter_tests {
     fn ctrl_c_outside_search_quits() {
         let mut app = app();
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert!(app.on_key_list_filter_or_quit(ctrl_c));
+        let mut t = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        app.on_key_event(ctrl_c, &mut t).unwrap();
         assert!(!app.running);
+    }
+
+    #[test]
+    fn ctrl_c_quits_with_a_filter_when_quit_is_c() {
+        let mut app = app();
+        assert!(app.config.keymap.set("quit", KeyCode::Char('c')));
+        press(&mut app, KeyCode::Char('/'));
+        type_str(&mut app, "ab");
+        press(&mut app, KeyCode::Enter);
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let mut t = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        app.on_key_event(ctrl_c, &mut t).unwrap();
+        assert!(!app.running);
+        assert_eq!(app.list_filter, "ab");
     }
 
     #[test]
