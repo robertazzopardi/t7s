@@ -10,6 +10,9 @@ use crate::config::builtin_palette;
 
 /// Colours for every UI element, one field per config colour name. Grouped by
 /// role, not by widget: several widgets share a role.
+///
+/// `themed_text` is the exception: set by a theme or a `text` colour so
+/// unstyled text takes `text`, even when it equals the built-in value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
     pub background: Color,
@@ -27,6 +30,7 @@ pub struct Palette {
     pub success: Color,
     pub warning: Color,
     pub link: Color,
+    pub themed_text: bool,
 }
 
 impl Default for Palette {
@@ -54,6 +58,7 @@ impl Palette {
         success: Color::Reset,
         warning: Color::Reset,
         link: Color::Reset,
+        themed_text: false,
     };
 
     /// Set a colour by its config name. Returns false if the name is unknown.
@@ -108,9 +113,7 @@ fn palette() -> Palette {
 /// Text a widget leaves unstyled: the theme's colour when a theme or text colour
 /// is set, otherwise the terminal's own, so the default look doesn't change.
 fn base_text(style: Style, palette: Palette) -> Style {
-    if palette.background != Color::Reset
-        || palette.text != Palette::default().text
-    {
+    if palette.background != Color::Reset || palette.themed_text {
         style.fg(palette.text)
     } else {
         style
@@ -327,6 +330,7 @@ mod tests {
     fn text_override_reaches_default_styled_text() {
         let palette = Palette {
             text: Color::Red,
+            themed_text: true,
             ..Palette::default()
         };
         override_for_thread(Some(palette));

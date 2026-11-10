@@ -121,6 +121,8 @@ pub struct Config {
     pub skin: Option<String>,
     pub theme: Option<String>,
     pub colours: BTreeMap<String, Color>,
+    /// A user file set `text`, which then reaches unstyled text too.
+    pub user_text: bool,
     pub keymap: Keymap,
     pub screens: BTreeMap<String, Screen>,
     /// Help sections, by name.
@@ -139,6 +141,7 @@ impl Config {
         for (name, colour) in &self.colours {
             palette.set(name, *colour);
         }
+        palette.themed_text |= self.user_text;
         palette
     }
 }
@@ -296,12 +299,14 @@ impl Merge<'_> {
             self.config.theme = Some(theme);
             // A more specific level's theme replaces inherited colours.
             self.config.colours.clear();
+            self.config.user_text = false;
         }
         if layer.skin.is_some() {
             self.config.skin = layer.skin;
         }
         for (key, Colour(colour)) in layer.colours {
             if self.colour_names.contains(&key) {
+                self.config.user_text |= !self.builtin && key == "text";
                 self.config.colours.insert(key, colour);
             } else {
                 self.errors
@@ -437,6 +442,7 @@ pub fn resolve(
             skin: None,
             theme: None,
             colours: BTreeMap::new(),
+            user_text: false,
             keymap,
             screens: BTreeMap::new(),
             help: BTreeMap::new(),
@@ -789,6 +795,14 @@ hotkeys = [
     #[test]
     fn other_app_tables_must_still_be_valid() {
         assert!(fatal("[other]\nnonsense = 1\n").contains("nonsense"));
+    }
+
+    #[test]
+    fn text_colour_equal_to_builtin_still_themes_text() {
+        assert_eq!(Palette::default().text, Color::White);
+        assert!(!ok("").palette().themed_text);
+        let config = ok("[t7s.colours]\ntext = \"white\"\n");
+        assert!(config.palette().themed_text);
     }
 
     #[test]

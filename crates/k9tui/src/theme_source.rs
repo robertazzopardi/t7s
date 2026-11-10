@@ -44,6 +44,7 @@ pub fn palette(name: &str) -> Option<Palette> {
         success: colour("success")?,
         warning: colour("warning")?,
         link: colour("accent.tertiary")?,
+        themed_text: true,
     })
 }
 
