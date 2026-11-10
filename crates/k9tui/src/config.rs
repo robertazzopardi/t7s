@@ -313,12 +313,21 @@ impl Merge<'_> {
         }
     }
 
+    /// `bar` shows the first action's key, so every action row needs one.
+    fn check_rows(&mut self, context: &str, rows: Option<&Vec<Row>>) {
+        let empty = |row: &Row| matches!(row, Row::Action { actions, .. } if actions.is_empty());
+        if rows.into_iter().flatten().any(empty) {
+            self.errors.push(format!("[{context}] row has no action"));
+        }
+    }
+
     fn apply_screen(&mut self, name: &str, id: String, part: ScreenLayer) {
         let context = format!("{name}.screens.{id}");
         if !self.builtin && !self.config.screens.contains_key(&id) {
             self.errors.push(format!("[{context}] unknown screen"));
             return;
         }
+        self.check_rows(&context, part.hotkeys.as_ref());
         let rows = part.hotkeys.iter().flatten().flat_map(Row::actions);
         self.check_actions(&context, rows.chain(part.hidden.iter().flatten()));
         let screen = self.config.screens.entry(id).or_default();
@@ -339,6 +348,7 @@ impl Merge<'_> {
             self.errors.push(format!("[{context}] unknown section"));
             return;
         }
+        self.check_rows(&context, part.rows.as_ref());
         let rows = part.rows.iter().flatten().flat_map(Row::actions);
         self.check_actions(&context, rows);
         let section = self.config.help.entry(id).or_default();
@@ -630,6 +640,13 @@ hidden = ["quit", "search", "command"]
         let file = "[app.screens.main]\nhotkeys = [\n\
                     { action = \"nope\", label = \"X\" },\n]\n";
         assert!(fatal(file).contains("nope"));
+    }
+
+    #[test]
+    fn user_row_with_no_action_is_fatal() {
+        let file = "[app.screens.main]\nhotkeys = [\n\
+                    { action = [], label = \"X\" },\n]\n";
+        assert!(fatal(file).contains("no action"));
     }
 
     #[test]
