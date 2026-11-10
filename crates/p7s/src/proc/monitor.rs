@@ -210,7 +210,7 @@ fn process_row(m: &Monitor, p: &Process, total_mem: u64) -> ProcessRow {
 }
 
 #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-fn percent_of(part: u64, whole: u64) -> f32 {
+pub(super) fn percent_of(part: u64, whole: u64) -> f32 {
     if whole == 0 {
         0.0
     } else {
@@ -257,6 +257,7 @@ fn info_from(system: &System) -> SystemInfo {
         load_five: load.five,
         load_fifteen: load.fifteen,
         cpu_count: system.cpus().len(),
+        cpu_usage: system.global_cpu_usage(),
         total_mem: system.total_memory(),
         used_mem: system.used_memory(),
         total_swap: system.total_swap(),
@@ -430,6 +431,7 @@ pub fn demo_snapshot() -> Snapshot {
         load_five: 0.51,
         load_fifteen: 0.60,
         cpu_count: 8,
+        cpu_usage: 23.4,
         total_mem: 16 * 1024 * 1024 * 1024,
         used_mem: 6 * 1024 * 1024 * 1024,
         total_swap: 8 * 1024 * 1024 * 1024,

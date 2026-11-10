@@ -104,6 +104,8 @@ pub struct SystemInfo {
     pub load_five: f64,
     pub load_fifteen: f64,
     pub cpu_count: usize,
+    /// Average use across all CPUs, in percent.
+    pub cpu_usage: f32,
     pub total_mem: u64,
     pub used_mem: u64,
     pub total_swap: u64,
@@ -135,6 +137,38 @@ impl SystemInfo {
                 format_size(self.total_swap)
             ),
         ]
+    }
+
+    /// Top-bar stats, one `Label: value` per line. `absolute` shows sizes and
+    /// core counts instead of percentages.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn stats(&self, rows: &[ProcessRow], absolute: bool) -> String {
+        let running = rows.iter().filter(|r| r.state == 'R').count();
+        let cpu = if absolute {
+            let cores = self.cpu_usage / 100.0 * self.cpu_count as f32;
+            format!("{cores:.1} / {} cores", self.cpu_count)
+        } else {
+            format!("{:.1}%", self.cpu_usage)
+        };
+        let usage = |used, total| {
+            if absolute {
+                format!("{} / {}", format_size(used), format_size(total))
+            } else {
+                format!("{:.1}%", monitor::percent_of(used, total))
+            }
+        };
+        format!(
+            "Procs: {} ({running} running)\nCPU: {cpu}\nMemory: {}\nSwap: \
+             {}\nLoad: {:.2} {:.2} {:.2}\nUptime: {}",
+            rows.len(),
+            usage(self.used_mem, self.total_mem),
+            usage(self.used_swap, self.total_swap),
+            self.load_one,
+            self.load_five,
+            self.load_fifteen,
+            format_uptime(self.uptime_secs),
+        )
     }
 }
 
@@ -343,6 +377,7 @@ mod tests {
             load_five: 0.4,
             load_fifteen: 0.3,
             cpu_count: 8,
+            cpu_usage: 0.0,
             total_mem: 16 * 1024 * 1024 * 1024,
             used_mem: 8 * 1024 * 1024 * 1024,
             total_swap: 1024 * 1024 * 1024,

@@ -10,6 +10,7 @@ pub fn list_hotkeys() -> Vec<Hotkey> {
         Hotkey::new('n', "sort name"),
         Hotkey::new('d', "describe"),
         Hotkey::new('i', "system info"),
+        Hotkey::new('u', "% / values"),
         Hotkey::new('K', "signal"),
         Hotkey::new(':', "command"),
     ]
@@ -17,6 +18,15 @@ pub fn list_hotkeys() -> Vec<Hotkey> {
 
 pub fn global_hotkeys() -> Vec<Hotkey> {
     vec![Hotkey::new('/', "search"), Hotkey::new('q', "quit")]
+}
+
+/// Hotkeys shown while the system panel is open.
+pub fn info_hotkeys() -> Vec<Hotkey> {
+    vec![
+        Hotkey::new('i', "close"),
+        Hotkey::code(KeyCode::Esc, "close"),
+        Hotkey::new('q', "close"),
+    ]
 }
 
 /// Hotkeys shown while the signal picker is open.

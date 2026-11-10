@@ -35,6 +35,7 @@ impl App {
             (_, KeyCode::Char('n')) => self.set_sort(SortKey::Name),
             (_, KeyCode::Char('d') | KeyCode::Enter) => self.open_describe(),
             (_, KeyCode::Char('i')) => self.open_info(),
+            (_, KeyCode::Char('u')) => self.toggle_stat_units(),
             (_, KeyCode::Char('K') | KeyCode::Delete) => {
                 self.open_signal_picker();
             }
@@ -167,7 +168,7 @@ impl App {
             }
             (_, KeyCode::Char('q')) => {
                 self.filter.clear();
-                self.reapply_filter();
+                self.rebuild_view();
             }
             (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => {
                 self.quit();
@@ -193,17 +194,17 @@ impl App {
             (_, KeyCode::Esc) => {
                 self.filter.clear();
                 self.search_open = false;
-                self.reapply_filter();
+                self.rebuild_view();
             }
             (_, KeyCode::Enter) => self.search_open = false,
             (_, KeyCode::Backspace) => {
                 self.filter.pop();
-                self.reapply_filter();
+                self.rebuild_view();
             }
             (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => self.quit(),
             (_, KeyCode::Char(c)) => {
                 self.filter.push(c);
-                self.reapply_filter();
+                self.rebuild_view();
             }
             _ => {}
         }
@@ -255,10 +256,7 @@ mod tests {
     use super::*;
     use crate::{
         app::App,
-        proc::{
-            ProcessRow,
-            monitor::{DemoSource, demo_snapshot},
-        },
+        proc::monitor::{DemoSource, demo_snapshot},
     };
 
     fn app() -> App {
@@ -301,25 +299,44 @@ mod tests {
     }
 
     #[test]
-    fn selection_follows_pid_across_refresh() {
+    fn highlight_keeps_its_row_across_refresh() {
         let mut app = app();
-        // Select the highest-CPU row (pid 4096) in the default cpu-desc view.
-        assert_eq!(app.selected_row().map(|r| r.pid), Some(4096));
+        app.processes.view.state.select(Some(2));
 
         let mut snap = demo_snapshot();
-        snap.rows.reverse();
-        snap.rows.push(ProcessRow {
-            pid: 6000,
-            name: "extra".to_string(),
-            ..ProcessRow::default()
-        });
+        // pid 1 jumps to the top of the cpu-desc view, shifting every row.
+        if let Some(r) = snap.rows.iter_mut().find(|r| r.pid == 1) {
+            r.cpu = 99.0;
+        }
         app.apply_snapshot(snap);
 
-        assert_eq!(
-            app.selected_row().map(|r| r.pid),
-            Some(4096),
-            "cursor must stay on the same PID, not the same row index"
-        );
+        assert_eq!(app.processes.view.state.selected(), Some(2));
+    }
+
+    #[test]
+    fn highlight_clamps_when_the_list_shrinks() {
+        let mut app = app();
+        app.processes.view.state.select(Some(7));
+
+        let mut snap = demo_snapshot();
+        snap.rows.truncate(3);
+        app.apply_snapshot(snap);
+        assert_eq!(app.processes.view.state.selected(), Some(2));
+
+        snap = demo_snapshot();
+        snap.rows.clear();
+        app.apply_snapshot(snap);
+        assert_eq!(app.processes.view.state.selected(), None);
+    }
+
+    #[test]
+    fn u_switches_stats_between_percent_and_actual_values() {
+        let mut app = app();
+        assert!(screen(&mut app).contains("Memory: 37.5%"));
+        app.on_key_event(key(KeyCode::Char('u')));
+        let out = screen(&mut app);
+        assert!(out.contains("Memory: 6.0G / 16.0G"), "{out}");
+        assert!(out.contains("CPU: 1.9 / 8 cores"), "{out}");
     }
 
     #[test]

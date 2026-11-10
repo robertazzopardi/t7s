@@ -14,7 +14,9 @@ use crate::{
     app_state::AppState,
     command::suggest,
     proc::{SystemInfo, signals},
-    ui::widgets::hotkeys::{describe_hotkeys, global_hotkeys, signal_hotkeys},
+    ui::widgets::hotkeys::{
+        describe_hotkeys, global_hotkeys, info_hotkeys, signal_hotkeys,
+    },
 };
 
 const TOPBAR_HEIGHT: u16 = 7;
@@ -23,23 +25,20 @@ const SEARCH_BAR_HEIGHT: u16 = 3;
 
 impl App {
     pub fn render(&mut self, frame: &mut Frame) {
+        if let AppState::Describe { name, text, .. } = &self.state {
+            let name = name.clone();
+            let text = text.clone();
+            self.render_describe(frame, &name, &text);
+            return;
+        }
+        // Modals draw over the live list.
+        self.render_list(frame);
         match &self.state {
-            AppState::List => self.render_list(frame),
-            AppState::Info(info) => {
-                let info = info.clone();
-                Self::render_info(frame, &info);
-            }
-            AppState::Describe { name, text, .. } => {
-                let name = name.clone();
-                let text = text.clone();
-                self.render_describe(frame, &name, &text);
-            }
+            AppState::Info(info) => Self::render_info(frame, info),
             AppState::Signal {
                 pid, name, index, ..
-            } => {
-                let (pid, name, index) = (*pid, name.clone(), *index);
-                self.render_signal(frame, pid, &name, index);
-            }
+            } => self.render_signal(frame, *pid, name, *index),
+            AppState::List | AppState::Describe { .. } => {}
         }
     }
 
@@ -56,27 +55,16 @@ impl App {
         let content_area = layout.get(1).copied().unwrap_or_default();
         let footer_area = layout.get(2).copied().unwrap_or_default();
 
-        let mut global = global_hotkeys();
-        if !self.filter.is_empty() {
-            // `q` clears the active filter instead of quitting while one is
-            // set; keep the hint truthful.
-            if let Some(q) =
-                global.iter_mut().find(|h| h.keycode == KeyCode::Char('q'))
-            {
-                *q = Hotkey::new('q', "clear filter");
-            }
-        }
-
+        let (hotkeys, global) = self.bar_hotkeys();
         let n = self.processes.model.items.len();
-        let summary = format!("Processes: {n}");
         frame.render_widget(
             TopBarView {
-                summary: &summary,
+                summary: &self.info.stats(&self.all, self.absolute_stats),
                 recent_hotkeys: &[],
-                hotkeys: &self.hotkeys,
+                hotkeys: &hotkeys,
                 global_hotkeys: &global,
                 app_name: APP_NAME,
-                build_info: Some(self.build_info.clone()),
+                build_info: None,
             },
             top_area,
         );
@@ -163,6 +151,28 @@ impl App {
         frame.render_widget(self.status_line.clone(), footer_area);
     }
 
+    /// Hotkeys for the top bar: while a modal is open, only the modal's keys.
+    fn bar_hotkeys(&self) -> (Vec<Hotkey>, Vec<Hotkey>) {
+        match &self.state {
+            AppState::Info(_) => (info_hotkeys(), Vec::new()),
+            AppState::Signal { .. } => (signal_hotkeys(), Vec::new()),
+            AppState::List | AppState::Describe { .. } => {
+                let mut global = global_hotkeys();
+                if !self.filter.is_empty() {
+                    // `q` clears the active filter instead of quitting while
+                    // one is set; keep the hint truthful.
+                    if let Some(q) = global
+                        .iter_mut()
+                        .find(|h| h.keycode == KeyCode::Char('q'))
+                    {
+                        *q = Hotkey::new('q', "clear filter");
+                    }
+                }
+                (self.hotkeys.clone(), global)
+            }
+        }
+    }
+
     fn render_info(frame: &mut Frame, info: &SystemInfo) {
         let area = frame.area();
         let mut text = info.lines().join("\n");
@@ -174,6 +184,7 @@ impl App {
             .title_alignment(Alignment::Center);
         let modal_area = centered_box(area, 44, 12);
         let inner = block.inner(modal_area);
+        frame.render_widget(Clear, modal_area);
         frame.render_widget(block, modal_area);
         Paragraph::new(text)
             .alignment(Alignment::Left)
@@ -236,39 +247,11 @@ impl App {
         name: &str,
         index: usize,
     ) {
-        let layout = Layout::vertical([
-            Constraint::Length(TOPBAR_HEIGHT),
-            Constraint::Min(0),
-            Constraint::Length(FOOTER_HEIGHT),
-        ])
-        .split(frame.area());
-
-        let top_area = layout.first().copied().unwrap_or_default();
-        let content_area = layout.get(1).copied().unwrap_or_default();
-        let footer_area = layout.get(2).copied().unwrap_or_default();
-
-        let hotkeys = signal_hotkeys();
-        frame.render_widget(
-            TopBarView {
-                summary: &format!("Signal: {name} (PID {pid})"),
-                recent_hotkeys: &[],
-                hotkeys: &hotkeys,
-                global_hotkeys: &[],
-                app_name: APP_NAME,
-                build_info: None,
-            },
-            top_area,
-        );
-
         let menu = signals::menu();
         let list_height = u16::try_from(menu.len())
             .unwrap_or(u16::MAX)
             .saturating_add(2);
-        let box_area = centered_box(
-            content_area,
-            40,
-            list_height.clamp(3, content_area.height.max(3)),
-        );
+        let box_area = centered_box(frame.area(), 40, list_height);
         let block = Block::new()
             .borders(Borders::ALL)
             .border_style(theme::modal_confirm_border())
@@ -297,8 +280,6 @@ impl App {
             })
             .collect();
         Paragraph::new(lines).render(inner, frame.buffer_mut());
-
-        frame.render_widget(self.status_line.clone(), footer_area);
 
         if let Some(dialog) = self.confirm_dialog.clone() {
             frame.render_widget(dialog, frame.area());
@@ -363,6 +344,42 @@ mod tests {
             ["PID", "USER", "CPU%", "COMMAND", "sort: cpu ↓", "Processes"]
         {
             assert!(out.contains(want), "missing {want:?} in\n{out}");
+        }
+    }
+
+    #[test]
+    fn top_bar_shows_stats_and_logo() {
+        let mut app = app();
+        let out = text(&render(&mut app, 120, 30));
+        for want in [
+            "Procs: 8 (3 running)",
+            "CPU: 23.4%",
+            "Memory: 37.5%",
+            "Swap: 0.0%",
+            "Load: 0.42 0.51 0.60",
+            "Uptime: 3d 4h 12m",
+            r"|____|   /____//____  /",
+        ] {
+            assert!(out.contains(want), "missing {want:?} in\n{out}");
+        }
+    }
+
+    #[test]
+    fn modals_keep_the_list_behind_them() {
+        let signal = AppState::Signal {
+            pid: 1,
+            name: "init".to_string(),
+            start_time: 0,
+            index: 0,
+        };
+        for state in [AppState::Info(demo_snapshot().info), signal] {
+            let mut app = app();
+            app.state = state;
+            let out = text(&render(&mut app, 120, 30));
+            // Left of the box: the tall signal menu hides the table title.
+            for want in ["USER", "4096", "Memory: 37.5%"] {
+                assert!(out.contains(want), "missing {want:?} in\n{out}");
+            }
         }
     }
 

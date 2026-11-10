@@ -30,6 +30,7 @@ p7s --demo   # canned data, no real processes are read
 | `:` | `:cpu` `:mem` `:pid` `:name` `:info` `:q` (Tab completes) |
 | `d` / Enter | Describe the selected process |
 | `i` | System summary |
+| `u` | Switch top-bar stats between percentages and actual values |
 | `K` / `Delete` | Signal the selected process (pick, then confirm) |
 | `q` / `Ctrl-C` | Quit |
 

@@ -32,11 +32,12 @@ use crate::{
 };
 
 /// ASCII logo shown in the top bar.
-pub const APP_NAME: &str = r"       __
-  ___ / /_
- / _ \/ __/
-/ .__/\__/
-/_/
+pub const APP_NAME: &str = r"_________________
+\______ \______  \______
+ |     __/  /    /  ___/
+ |    |    /    /\___  \
+ |____|   /____//____  /
+                     \/
 ";
 
 pub const PKG_NAME: &str = env!("CARGO_PKG_NAME");
@@ -77,7 +78,8 @@ pub struct App {
     pub(crate) describe_scroll: usize,
     /// Height of the last-rendered describe viewport, used to clamp scrolling.
     pub(crate) describe_viewport_height: usize,
-    pub(crate) build_info: String,
+    /// Top-bar stats show sizes and core counts instead of percentages.
+    pub(crate) absolute_stats: bool,
     pub(crate) bg_tx: UnboundedSender<BackgroundEvent>,
     pub(crate) bg_rx: UnboundedReceiver<BackgroundEvent>,
     poll_task: Option<JoinHandle<()>>,
@@ -107,7 +109,7 @@ impl App {
             pending_signal: None,
             describe_scroll: 0,
             describe_viewport_height: 0,
-            build_info: format!("Name: {PKG_NAME}\nVersion: {PKG_VERSION}"),
+            absolute_stats: false,
             bg_tx,
             bg_rx,
             poll_task: None,
@@ -181,45 +183,32 @@ impl App {
         Ok(())
     }
 
-    /// Publish the current selection's PID, so it can be restored after the
-    /// next refresh re-sorts the table.
-    pub(crate) fn current_selected_pid(&self) -> Option<i32> {
-        self.selected_row().map(|r| r.pid)
-    }
-
     pub(crate) fn selected_row(&self) -> Option<&ProcessRow> {
         let index = self.processes.view.state.selected()?;
         self.processes.model.items.get(index)
     }
 
-    /// Replace the master rows and rebuild the visible table, keeping the
-    /// cursor on the same PID where possible.
+    /// Replace the master rows and rebuild the visible table.
     pub(crate) fn apply_snapshot(&mut self, snapshot: Snapshot) {
-        let keep = self.current_selected_pid();
         self.all = snapshot.rows;
         self.info = snapshot.info;
-        self.rebuild_view(keep);
+        self.rebuild_view();
     }
 
-    /// Re-filter, re-sort and re-select, keeping the cursor on `keep_pid`.
-    pub(crate) fn rebuild_view(&mut self, keep_pid: Option<i32>) {
+    /// Re-filter and re-sort. The highlight keeps its row number, moving only
+    /// when the list shrinks past it.
+    pub(crate) fn rebuild_view(&mut self) {
         let mut rows = filter_rows(&self.all, &self.filter);
         sort_rows(&mut rows, self.sort_key, self.sort_desc);
         self.processes.model.longest_item_lens =
             constraint_len_calculator(&rows);
         self.processes.model.items = rows;
-        let selected = keep_pid
-            .and_then(|pid| {
-                self.processes.model.items.iter().position(|r| r.pid == pid)
-            })
-            .or_else(|| (!self.processes.model.items.is_empty()).then_some(0));
-        self.processes.view.state.select(selected);
-    }
-
-    /// Re-apply the filter/sort after the filter text changed.
-    pub(crate) fn reapply_filter(&mut self) {
-        let keep = self.current_selected_pid();
-        self.rebuild_view(keep);
+        let row = self.processes.view.state.selected().unwrap_or(0);
+        let last = self.processes.model.items.len().checked_sub(1);
+        self.processes
+            .view
+            .state
+            .select(last.map(|last| row.min(last)));
     }
 
     pub(crate) const fn quit(&mut self) {
@@ -238,13 +227,22 @@ impl App {
             self.sort_key = key;
             self.sort_desc = key.starts_descending();
         }
-        let keep = self.current_selected_pid();
-        self.rebuild_view(keep);
+        self.rebuild_view();
         self.set_status(format!(
             "Sort: {} {}",
             key.label(),
             if self.sort_desc { "desc" } else { "asc" }
         ));
+    }
+
+    /// `u`: switch the top-bar stats between percentages and actual values.
+    pub(crate) fn toggle_stat_units(&mut self) {
+        self.absolute_stats = !self.absolute_stats;
+        self.set_status(if self.absolute_stats {
+            "Stats: actual values"
+        } else {
+            "Stats: percentages"
+        });
     }
 
     /// `d`/Enter: open the describe view for the selection.
