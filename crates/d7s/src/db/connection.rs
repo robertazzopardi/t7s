@@ -6,7 +6,7 @@ use core::{
 };
 use std::env::var;
 
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use serde::{Deserialize, Serialize};
 use url::{Url, form_urlencoded::Serializer};
 
@@ -210,8 +210,8 @@ impl TableData for Connection {
             Some(theme::env_style(self.environment))
         } else if column == Self::STATUS_COLUMN {
             match self.status {
-                ConnectionStatus::Up => Some(Style::default().fg(Color::Green)),
-                ConnectionStatus::Down => Some(Style::default().fg(Color::Red)),
+                ConnectionStatus::Up => Some(theme::status_up()),
+                ConnectionStatus::Down => Some(theme::status_down()),
                 ConnectionStatus::Unknown => None,
             }
         } else {

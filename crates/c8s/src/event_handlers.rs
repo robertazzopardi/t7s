@@ -631,8 +631,10 @@ mod tests {
     use core::time::Duration;
     use std::time::Instant;
 
-    use k9tui::widgets::table::TableDataState;
-    use ratatui::{backend::TestBackend, buffer::Cell, text::Line};
+    use k9tui::{theme, theme_source, widgets::table::TableDataState};
+    use ratatui::{
+        backend::TestBackend, buffer::Cell, style::Color, text::Line,
+    };
     use tokio::time::sleep;
 
     use super::*;
@@ -984,6 +986,58 @@ mod tests {
         let mut app = app();
         send_connected(&mut app);
         assert_eq!(app.status_line.message(), "Connected to Docker");
+    }
+
+    fn assert_fully_painted(term: &Term) {
+        for cell in &term.backend().buffer().content {
+            assert_ne!(cell.bg, Color::Reset, "unpainted {:?}", cell.symbol());
+            if cell.symbol() != " " {
+                assert_ne!(
+                    cell.fg,
+                    Color::Reset,
+                    "no fg on {:?}",
+                    cell.symbol()
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn background_paints_every_cell_when_set() {
+        let palette = theme_source::palette("rose-pine").unwrap();
+        theme::override_for_thread(Some(palette));
+        let mut app = app();
+        let mut t = term();
+        // A second row, because only the selected row has its own colours.
+        app.containers = TableDataState::new(vec![
+            ContainerRow {
+                id: "c1".into(),
+                name: "web".into(),
+                ..Default::default()
+            },
+            ContainerRow {
+                id: "c2".into(),
+                name: "db".into(),
+                ..Default::default()
+            },
+        ]);
+        app.containers.view.state.select(Some(0));
+        let out = screen(&mut app, &mut t);
+        assert!(out.contains("db"), "{out}");
+        assert_fully_painted(&t);
+        app.on_key_event(shift_d(), &mut t).unwrap();
+        screen(&mut app, &mut t);
+        assert_fully_painted(&t);
+        theme::override_for_thread(None);
+    }
+
+    #[tokio::test]
+    async fn default_palette_paints_no_background() {
+        let mut app = app();
+        let mut t = term();
+        screen(&mut app, &mut t);
+        let cell = t.backend().buffer().cell((0, 0)).unwrap();
+        assert_eq!(cell.bg, Color::Reset);
     }
 
     #[tokio::test]

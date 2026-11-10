@@ -2,8 +2,8 @@
 //! `command_mode` switching its meaning from row filter to command line.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use k9tui::widgets::table::TableDataState;
-use ratatui::style::{Color, Style};
+use k9tui::{theme, widgets::table::TableDataState};
+use ratatui::style::Style;
 use ratatui_textarea::TextArea;
 
 use crate::{
@@ -21,7 +21,7 @@ use crate::{
 fn bar(text: &str) -> TextArea<'static> {
     let mut bar = TextArea::default();
     bar.set_cursor_line_style(Style::default());
-    bar.set_style(Style::default().fg(Color::White));
+    bar.set_style(theme::info_value());
     bar.set_max_histories(0);
     bar.insert_str(text);
     bar

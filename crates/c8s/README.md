@@ -89,4 +89,28 @@ wins on that screen.
 These can't be remapped: `Ctrl-C` always quits, `Ctrl-U` and `Ctrl-D` page in logs, and typing inside
 text inputs, modals and the search and command bars.
 
-`skin`, `theme` and `colours` are accepted but don't change anything yet.
+### Colours
+
+```toml
+[t7s]
+theme = "rose-pine"
+
+[c8s.colours]
+border = "#ff0000"
+```
+
+`theme` is a built-in theme name, such as `rose-pine`, `rose-pine-dawn`,
+`github` (same as `github-light`), `github-dark-dimmed`, `dracula`, `nord` or `tokyo-night`. With no
+theme, `c8s` keeps its default colours on your terminal's own background.
+
+A theme replaces all colours inherited from a less specific level, so
+`[c8s] theme = "nord"` drops anything set in `[t7s.colours]`. `[c8s.colours]`
+can still adjust it. Colours are ANSI names (`red`, `dark-gray`, `light-blue`) or
+`#rrggbb`.
+
+Colour names: `background`, `border`, `text`, `focus`, `on-focus`, `selection-fg`,
+`selection-bg`, `bg-alt`, `draft`, `multi-select`, `info`, `error`, `success`,
+`warning`, `link`.
+
+An unknown theme or a bad colour stops `c8s` from starting, like any other config
+error. `skin` is reserved: it is accepted but doesn't change the layout yet.

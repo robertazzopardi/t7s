@@ -19,6 +19,7 @@ use ratatui::{DefaultTerminal, Terminal, backend::Backend};
 use crate::{
     config::{AppSpec, Config, load_or_exit},
     error::{Result, err},
+    theme,
 };
 
 /// An app `launch` can start.
@@ -50,6 +51,7 @@ pub trait TuiApp: Sized {
 /// Returns the error from enabling bracketed paste, or the app's own error.
 pub fn launch<A: TuiApp>(args: A::Args) -> Result<()> {
     let config = load_or_exit(&A::SPEC);
+    theme::install(config.palette());
     let terminal = ratatui::init();
     execute!(stdout(), EnableBracketedPaste)?;
     let prev_hook = take_hook();

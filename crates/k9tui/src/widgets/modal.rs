@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     prelude::{Alignment, Buffer, Constraint, Direction, Layout, Rect, Widget},
-    style::{Color, Style},
+    style::Style,
     widgets::{Block, Borders, Clear, Paragraph},
 };
 use ratatui_textarea::{CursorMove, TextArea};
@@ -63,7 +63,7 @@ impl ModalField {
             self.input.set_style(theme::focus_field());
             self.input.set_cursor_style(theme::focus_cursor());
         } else {
-            self.input.set_style(Style::default().fg(Color::White));
+            self.input.set_style(theme::info_value());
             self.input.set_cursor_style(Style::default());
         }
     }
@@ -201,7 +201,7 @@ impl Widget for ConfirmDialog {
             .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
             .border_style(self.border_style)
-            .style(Style::default().bg(Color::Black));
+            .style(theme::modal_background());
         Clear.render(modal_area, buf);
         block.render(modal_area, buf);
 
@@ -213,7 +213,7 @@ impl Widget for ConfirmDialog {
 
         let content_layout = *inner_layout.first().unwrap_or(&Rect::ZERO);
         Paragraph::new(self.message)
-            .style(Style::default().fg(Color::White))
+            .style(theme::info_value())
             .alignment(Alignment::Center)
             .render(content_layout, buf);
 
@@ -438,7 +438,7 @@ impl Widget for TextPromptModal {
             .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
             .border_style(theme::modal_confirm_border())
-            .style(Style::default().bg(Color::Black));
+            .style(theme::modal_background());
         Clear.render(modal_area, buf);
         let inner = block.inner(modal_area);
         block.render(modal_area, buf);
@@ -452,7 +452,7 @@ impl Widget for TextPromptModal {
             .areas(inner);
 
             Paragraph::new(prompt.clone())
-                .style(Style::default().fg(Color::White))
+                .style(theme::info_value())
                 .alignment(Alignment::Left)
                 .render(prompt_area, buf);
             Widget::render(&self.input, input_area, buf);
@@ -483,6 +483,26 @@ mod tests {
     use ratatui::{Terminal, backend::TestBackend, buffer::Cell};
 
     use super::*;
+    use crate::theme_source;
+
+    #[test]
+    fn confirm_dialog_uses_palette() {
+        let palette = theme_source::palette("rose-pine").unwrap();
+        theme::override_for_thread(Some(palette));
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        ConfirmDialog::new("Delete?", "sure?", Style::default(), 0)
+            .render(area, &mut buf);
+        theme::override_for_thread(None);
+        let message = buf.content.iter().find(|cell| cell.symbol() == "?");
+        assert!(buf.content.iter().any(|c| c.bg == palette.background));
+        assert!(
+            buf.content
+                .iter()
+                .any(|c| c.symbol() == "s" && c.fg == palette.text),
+            "{message:?}"
+        );
+    }
 
     #[test]
     fn modal_field_set_value_updates_text_and_cursor() {

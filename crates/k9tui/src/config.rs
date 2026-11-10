@@ -15,29 +15,13 @@ use serde::{Deserialize, Deserializer};
 
 use crate::{
     keymap::{Keymap, ScreenActions, parse_key},
+    theme::Palette,
+    theme_source,
     widgets::hotkey::Hotkey,
 };
 
 /// Built-in globals, applied through the same path as a user's file.
 const GLOBAL_CONFIG: &str = include_str!("config.toml");
-
-const COLOUR_NAMES: [&str; 15] = [
-    "background",
-    "border",
-    "text",
-    "focus",
-    "on-focus",
-    "selection-fg",
-    "selection-bg",
-    "bg-alt",
-    "draft",
-    "multi-select",
-    "info",
-    "error",
-    "success",
-    "warning",
-    "link",
-];
 
 /// What an app tells the config loader about itself.
 pub struct AppSpec {
@@ -137,10 +121,29 @@ pub struct Config {
     pub skin: Option<String>,
     pub theme: Option<String>,
     pub colours: BTreeMap<String, Color>,
+    /// A user file set `text`, which then reaches unstyled text too.
+    pub user_text: bool,
     pub keymap: Keymap,
     pub screens: BTreeMap<String, Screen>,
     /// Help sections, by name.
     pub help: BTreeMap<String, HelpSection>,
+}
+
+impl Config {
+    /// The theme's colours, or the defaults, with colour overrides applied.
+    #[must_use]
+    pub fn palette(&self) -> Palette {
+        let mut palette = self
+            .theme
+            .as_deref()
+            .and_then(theme_source::palette)
+            .unwrap_or_default();
+        for (name, colour) in &self.colours {
+            palette.set(name, *colour);
+        }
+        palette.themed_text |= self.user_text;
+        palette
+    }
 }
 
 fn parse_colour(spec: &str) -> Option<Color> {
@@ -173,6 +176,7 @@ fn parse_colour(spec: &str) -> Option<Color> {
         "light-magenta" => Color::LightMagenta,
         "light-cyan" => Color::LightCyan,
         "white" => Color::White,
+        "reset" => Color::Reset,
         _ => return None,
     })
 }
@@ -243,6 +247,33 @@ fn action_names(file: &File, name: &str) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
+fn colour_names(global: &File) -> BTreeSet<String> {
+    global
+        .get("t7s")
+        .map(|layer| layer.colours.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// The built-in colours, for widgets drawn before any config loads.
+///
+/// # Panics
+///
+/// If the global built-in config is invalid.
+#[must_use]
+pub fn builtin_palette() -> Palette {
+    let mut global: File =
+        toml::from_str(GLOBAL_CONFIG).expect("global config is valid");
+    let colours = global
+        .remove("t7s")
+        .expect("global config has [t7s]")
+        .colours;
+    let mut palette = Palette::BLANK;
+    for (name, Colour(colour)) in colours {
+        assert!(palette.set(&name, colour), "unknown colour '{name}'");
+    }
+    palette
+}
+
 /// Merge state while the levels are applied in order.
 struct Merge<'a> {
     spec: &'a AppSpec,
@@ -252,22 +283,30 @@ struct Merge<'a> {
     shared: BTreeSet<String>,
     /// Actions from the app's built-in file.
     own: BTreeSet<String>,
+    /// Colours from the global built-in file.
+    colour_names: BTreeSet<String>,
     /// True while the built-in files apply; they may add screens.
     builtin: bool,
 }
 
 impl Merge<'_> {
     fn apply(&mut self, name: &str, layer: Layer) {
-        if layer.theme.is_some() {
-            self.config.theme = layer.theme;
-            // The more specific level's theme replaces inherited colours.
+        if let Some(theme) = layer.theme {
+            if theme_source::palette(&theme).is_none() {
+                self.errors
+                    .push(format!("[{name}] unknown theme '{theme}'"));
+            }
+            self.config.theme = Some(theme);
+            // A more specific level's theme replaces inherited colours.
             self.config.colours.clear();
+            self.config.user_text = false;
         }
         if layer.skin.is_some() {
             self.config.skin = layer.skin;
         }
         for (key, Colour(colour)) in layer.colours {
-            if COLOUR_NAMES.contains(&key.as_str()) {
+            if self.colour_names.contains(&key) {
+                self.config.user_text |= !self.builtin && key == "text";
                 self.config.colours.insert(key, colour);
             } else {
                 self.errors
@@ -403,6 +442,7 @@ pub fn resolve(
             skin: None,
             theme: None,
             colours: BTreeMap::new(),
+            user_text: false,
             keymap,
             screens: BTreeMap::new(),
             help: BTreeMap::new(),
@@ -410,6 +450,7 @@ pub fn resolve(
         errors: Vec::new(),
         shared,
         own,
+        colour_names: colour_names(&global),
         builtin: true,
     };
     merge.apply_file(global);
@@ -705,7 +746,7 @@ hotkeys = [
             assert_eq!(config.keymap.get("search"), c('/'));
             assert_eq!(config.keymap.get("command"), c(':'));
             assert_eq!(config.keymap.get("refresh"), c('r'));
-            assert!(config.colours.is_empty());
+            assert_eq!(config.colours, defaults(&SPEC).colours);
             assert_eq!(config.theme, None);
             assert_eq!(config.skin, None);
         }
@@ -754,6 +795,14 @@ hotkeys = [
     #[test]
     fn other_app_tables_must_still_be_valid() {
         assert!(fatal("[other]\nnonsense = 1\n").contains("nonsense"));
+    }
+
+    #[test]
+    fn text_colour_equal_to_builtin_still_themes_text() {
+        assert_eq!(Palette::default().text, Color::White);
+        assert!(!ok("").palette().themed_text);
+        let config = ok("[t7s.colours]\ntext = \"white\"\n");
+        assert!(config.palette().themed_text);
     }
 
     #[test]
@@ -865,6 +914,93 @@ hotkeys = [
     #[test]
     fn unknown_action_in_app_keys_is_fatal() {
         assert!(fatal("[app.keys]\nnope = \"z\"\n").contains("nope"));
+    }
+
+    #[test]
+    fn builtin_colours_match_todays_palette() {
+        let config = defaults(&SPEC);
+        for (name, colour) in [
+            ("background", Color::Reset),
+            ("border", Color::DarkGray),
+            ("text", Color::White),
+            ("focus", Color::Yellow),
+            ("on-focus", Color::Black),
+            ("selection-fg", Color::Black),
+            ("selection-bg", Color::Cyan),
+            ("bg-alt", Color::DarkGray),
+            ("draft", Color::Green),
+            ("multi-select", Color::Blue),
+            ("info", Color::Cyan),
+            ("error", Color::Red),
+            ("success", Color::Green),
+            ("warning", Color::Yellow),
+            ("link", Color::Blue),
+        ] {
+            assert_eq!(config.colours.get(name), Some(&colour), "{name}");
+        }
+        assert_eq!(config.palette(), Palette::default());
+    }
+
+    #[test]
+    fn theme_replaces_builtin_colours() {
+        let config = ok("[t7s]\ntheme = \"github\"\n");
+        assert_eq!(config.colours.len(), 0);
+        assert_eq!(config.palette(), theme_source::palette("github").unwrap());
+    }
+
+    #[test]
+    fn reset_is_a_colour() {
+        let config = ok("[t7s.colours]\nborder = \"reset\"\n");
+        assert_eq!(config.colours.get("border"), Some(&Color::Reset));
+    }
+
+    #[test]
+    fn no_config_gives_default_palette() {
+        assert_eq!(defaults(&SPEC).palette(), Palette::default());
+    }
+
+    #[test]
+    fn t7s_colours_reach_the_palette() {
+        let palette = ok("[t7s.colours]\nborder = \"red\"\n").palette();
+        assert_eq!(palette.border, Color::Red);
+        assert_eq!(palette.text, Palette::default().text);
+    }
+
+    #[test]
+    fn app_theme_palette_beats_t7s_colours() {
+        let palette = ok("[t7s.colours]\nborder = \"blue\"\n\
+             [app]\ntheme = \"github-light\"\n")
+        .palette();
+        let github = theme_source::palette("github-light").unwrap();
+        assert_eq!(palette, github);
+        assert_ne!(palette.border, Color::Blue);
+    }
+
+    #[test]
+    fn app_colours_adjust_app_theme() {
+        let palette = ok("[app]\ntheme = \"github-light\"\n\
+             [app.colours]\nborder = \"red\"\n")
+        .palette();
+        let github = theme_source::palette("github-light").unwrap();
+        assert_eq!(palette.border, Color::Red);
+        assert_eq!(palette.text, github.text);
+    }
+
+    #[test]
+    fn unknown_theme_is_fatal() {
+        assert!(fatal("[t7s]\ntheme = \"nope\"\n").contains("nope"));
+    }
+
+    #[test]
+    fn colour_names_match_palette_fields() {
+        let global: File = toml::from_str(GLOBAL_CONFIG).unwrap();
+        let names = colour_names(&global);
+        assert_eq!(names.len(), 15);
+        for name in names {
+            let mut palette = Palette::default();
+            assert!(palette.set(&name, Color::Rgb(1, 2, 3)), "{name}");
+            assert_ne!(palette, Palette::default(), "{name}");
+        }
     }
 
     #[test]

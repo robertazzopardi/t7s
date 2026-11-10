@@ -11,7 +11,6 @@ use k9tui::{
 use ratatui::{
     Frame,
     prelude::*,
-    style::Color,
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
@@ -27,6 +26,7 @@ const SEARCH_BAR_HEIGHT: u16 = 3;
 
 impl App {
     pub fn render(&mut self, frame: &mut Frame) {
+        theme::paint_background(frame);
         self.sync_column_width_mode();
         match &self.state {
             AppState::Connecting => Self::render_connecting(frame),
@@ -141,7 +141,7 @@ impl App {
         let text =
             format!("{message}\n\nPress {retry} to retry, {quit} to quit.");
         Paragraph::new(text)
-            .style(Style::default().fg(Color::Red))
+            .style(theme::error())
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true })
             .render(centered(area), frame.buffer_mut());
