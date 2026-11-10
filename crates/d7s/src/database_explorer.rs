@@ -95,7 +95,7 @@ impl App<'_> {
             total_rows,
         );
         let mut table_state = TableDataState::default();
-        table_state.reset(data, &column_names, Some(row_ids));
+        table_state.reset(data, &column_names, Some(row_ids), window_start + 1);
         explorer.table_data = Some(FilteredData {
             original: table_state.model.items.clone(),
             table: table_state,

@@ -44,6 +44,12 @@ pub trait TableData {
     fn is_section_header(&self) -> bool {
         false
     }
+
+    /// 1-based number for the row gutter. The gutter is only drawn when at
+    /// least one row has a number.
+    fn row_number(&self) -> Option<u64> {
+        None
+    }
 }
 
 /// Model (data) for the table view
@@ -347,6 +353,12 @@ fn calculate_visible_columns_for_table(
     (vis_cols, rel, start)
 }
 
+/// Digits needed for the largest row number, or `None` when no row has one.
+fn row_number_digits<T: TableData>(items: &[T]) -> Option<usize> {
+    let largest = items.iter().filter_map(TableData::row_number).max()?;
+    Some(largest.to_string().len())
+}
+
 /// Columns to draw plus how to size and truncate each one.
 struct ColumnPlan {
     cols: Vec<usize>,
@@ -541,6 +553,12 @@ impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
         // it then takes whatever width the other columns leave.
         let fill = T::fill_column();
         let selected_col_opt = state.view.state.selected_column();
+        // Gutter is an extra leading table column (digits + 1 spacing cell), so
+        // data column indices stay unchanged. Dropped when it would fill the area.
+        let gutter = row_number_digits(&state.model.items)
+            .filter(|&d| d + 1 < usize::from(area.width));
+        let data_width = area.width
+            - gutter.map_or(0, |d| u16::try_from(d + 1).unwrap_or(0));
         let plan = match state.view.column_width_mode {
             ColumnWidthMode::Content => {
                 let mut lens = state.model.longest_item_lens.clone();
@@ -552,7 +570,7 @@ impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
                     fill,
                     selected_col_opt,
                     state.view.column_offset,
-                    area.width,
+                    data_width,
                 )
             }
             ColumnWidthMode::Fit => plan_fit(
@@ -560,17 +578,22 @@ impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
                 fill,
                 selected_col_opt,
                 state.view.column_offset,
-                usize::from(area.width),
+                usize::from(data_width),
             ),
         };
         let ColumnPlan {
             cols: visible_cols,
-            constraints,
+            mut constraints,
             trunc,
             rel_selected: relative_selected_col,
             start: scroll_start,
         } = plan;
         state.view.column_offset = scroll_start;
+        if let Some(d) = gutter {
+            constraints.insert(0, length(d));
+        }
+        let relative_selected_col =
+            relative_selected_col.map(|c| c + usize::from(gutter.is_some()));
 
         let original_col = state.view.state.selected_column();
         state.view.state.select_column(relative_selected_col);
@@ -615,33 +638,26 @@ impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
         };
 
         // Use dynamic column names if available (for RawTableRow), otherwise use static cols()
-        let header = state.model.dynamic_column_names.as_ref().map_or_else(
-            || {
-                let all_cols = T::cols();
-                visible_cols
-                    .iter()
-                    .map(|&idx| {
-                        let col_name =
-                            all_cols.get(idx).copied().unwrap_or_default();
-                        Cell::from(col_name)
-                    })
-                    .collect::<Row>()
-                    .height(1)
-                    .style(theme::header_row())
-            },
-            |dyn_cols| {
-                visible_cols
-                    .iter()
-                    .map(|&idx| {
-                        let col_name =
-                            dyn_cols.get(idx).cloned().unwrap_or_default();
-                        Cell::from(col_name)
-                    })
-                    .collect::<Row>()
-                    .height(1)
-                    .style(theme::header_row())
-            },
-        );
+        let all_cols = T::cols();
+        let dyn_cols = state.model.dynamic_column_names.as_deref();
+        let header = gutter
+            .map(|_| Cell::from("#"))
+            .into_iter()
+            .chain(visible_cols.iter().map(|&idx| {
+                Cell::from(dyn_cols.map_or_else(
+                    || {
+                        all_cols
+                            .get(idx)
+                            .copied()
+                            .unwrap_or_default()
+                            .to_string()
+                    },
+                    |cols| cols.get(idx).cloned().unwrap_or_default(),
+                ))
+            }))
+            .collect::<Row>()
+            .height(1)
+            .style(theme::header_row());
 
         let rows =
             state.model.items.iter().enumerate().map(|(row_idx, data)| {
@@ -655,26 +671,35 @@ impl<T: TableData + fmt::Debug + Clone> StatefulWidget for DataTable<T> {
                 if state.multi_row_selection.contains(&row_idx) {
                     row_style = row_style.bg(theme::multi_select_bg());
                 }
-                visible_cols
-                    .iter()
-                    .enumerate()
-                    .map(|(vis_idx, &idx)| {
-                        let value =
-                            row_data.get(idx).cloned().unwrap_or_default();
-                        let (mut text, cell_style) =
-                            format_display_cell(data, idx, value);
-                        if let Some(w) = trunc.get(vis_idx).copied().flatten() {
-                            text = truncate_ellipsis(&text, w);
-                        }
-                        if data.is_draft_row() && vis_idx == 0 {
-                            text = format!("~{text}");
-                        }
-                        let mut cell = Cell::from(text);
-                        if let Some(style) = cell_style {
-                            cell = cell.style(style);
-                        }
-                        cell
-                    })
+                let number_cell = gutter.map(|d| {
+                    let n = data
+                        .row_number()
+                        .map_or_else(String::new, |n| n.to_string());
+                    Cell::from(format!("{n:>d$}")).style(theme::muted())
+                });
+                number_cell
+                    .into_iter()
+                    .chain(visible_cols.iter().enumerate().map(
+                        |(vis_idx, &idx)| {
+                            let value =
+                                row_data.get(idx).cloned().unwrap_or_default();
+                            let (mut text, cell_style) =
+                                format_display_cell(data, idx, value);
+                            if let Some(w) =
+                                trunc.get(vis_idx).copied().flatten()
+                            {
+                                text = truncate_ellipsis(&text, w);
+                            }
+                            if data.is_draft_row() && vis_idx == 0 {
+                                text = format!("~{text}");
+                            }
+                            let mut cell = Cell::from(text);
+                            if let Some(style) = cell_style {
+                                cell = cell.style(style);
+                            }
+                            cell
+                        },
+                    ))
                     .collect::<Row>()
                     .style(row_style)
                     .height(1)
@@ -830,6 +855,72 @@ mod tests {
         assert!(content.contains("Name"));
         assert!(content.contains("alpha"));
         assert!(content.contains("beta"));
+    }
+
+    #[derive(Debug, Clone)]
+    struct Numbered(Option<u64>, &'static str);
+
+    impl TableData for Numbered {
+        fn title() -> &'static str {
+            "numbered"
+        }
+        fn ref_array(&self) -> Vec<String> {
+            vec![self.1.to_string()]
+        }
+        fn num_columns(&self) -> usize {
+            1
+        }
+        fn cols() -> Vec<&'static str> {
+            vec!["Name"]
+        }
+        fn row_number(&self) -> Option<u64> {
+            self.0
+        }
+    }
+
+    #[test]
+    fn row_numbers_render_right_aligned_and_blank_when_unset() {
+        let lines = render_lines(
+            vec![
+                Numbered(Some(99), "a"),
+                Numbered(None, "draft"),
+                Numbered(Some(100), "b"),
+            ],
+            12,
+            4,
+        );
+        let trimmed: Vec<&str> = lines.iter().map(|l| l.trim_end()).collect();
+        assert_eq!(trimmed, ["#   Name", " 99 a", "    draft", "100 b"]);
+    }
+
+    #[test]
+    fn no_row_numbers_means_no_gutter() {
+        let lines = render_lines(items(), 20, 3);
+        assert!(lines.first().unwrap().starts_with("Name"), "{lines:?}");
+    }
+
+    #[test]
+    fn gutter_keeps_selected_column_on_its_data_column() {
+        let selected_cell_style = |row: Numbered, x: u16| {
+            let mut state = TableDataState::new(vec![row]);
+            state.view.state.select_column(Some(0));
+            let mut terminal = Terminal::new(TestBackend::new(12, 2)).unwrap();
+            terminal
+                .draw(|frame| {
+                    frame.render_stateful_widget(
+                        DataTable::<Numbered>::default(),
+                        frame.area(),
+                        &mut state,
+                    );
+                })
+                .unwrap();
+            assert_eq!(state.view.state.selected_column(), Some(0));
+            terminal.backend().buffer()[(x, 1)].style()
+        };
+        assert_eq!(
+            selected_cell_style(Numbered(Some(1), "a"), 2),
+            selected_cell_style(Numbered(None, "a"), 0),
+        );
     }
 
     fn render_lines<T: TableData + fmt::Debug + Clone>(

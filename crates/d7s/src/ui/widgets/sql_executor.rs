@@ -59,7 +59,7 @@ impl SqlExecutorState {
         self.results = Some(results.clone());
         self.column_names.clone_from(&column_names.to_vec());
         self.error_message = None;
-        self.table_state.reset(results, column_names, None);
+        self.table_state.reset(results, column_names, None, 1);
     }
 
     #[allow(dead_code)]
@@ -72,7 +72,7 @@ impl SqlExecutorState {
         self.results = None;
         self.column_names.clear();
         self.error_message = None;
-        self.table_state.reset(vec![], &[], None);
+        self.table_state.reset(vec![], &[], None, 1);
     }
 
     pub fn set_sql(&mut self, sql: &str) {
