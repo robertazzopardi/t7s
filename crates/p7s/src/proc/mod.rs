@@ -159,15 +159,10 @@ impl SystemInfo {
             }
         };
         format!(
-            "Procs: {} ({running} running)\nCPU: {cpu}\nMemory: {}\nSwap: \
-             {}\nLoad: {:.2} {:.2} {:.2}\nUptime: {}",
+            "Procs: {} ({running} running)\nCPU: {cpu}\nMemory: {}\nSwap: {}",
             rows.len(),
             usage(self.used_mem, self.total_mem),
             usage(self.used_swap, self.total_swap),
-            self.load_one,
-            self.load_five,
-            self.load_fifteen,
-            format_uptime(self.uptime_secs),
         )
     }
 }

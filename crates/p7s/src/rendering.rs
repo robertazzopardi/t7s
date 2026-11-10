@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{APP_NAME, App},
+    app::{APP_NAME, App, PKG_NAME, PKG_VERSION},
     app_state::AppState,
     command::suggest,
     proc::{SystemInfo, signals},
@@ -59,7 +59,10 @@ impl App {
         let n = self.processes.model.items.len();
         frame.render_widget(
             TopBarView {
-                summary: &self.info.stats(&self.all, self.absolute_stats),
+                summary: &format!(
+                    "Name: {PKG_NAME}\nVersion: {PKG_VERSION}\n{}",
+                    self.info.stats(&self.all, self.absolute_stats)
+                ),
                 recent_hotkeys: &[],
                 hotkeys: &hotkeys,
                 global_hotkeys: &global,
@@ -352,16 +355,17 @@ mod tests {
         let mut app = app();
         let out = text(&render(&mut app, 120, 30));
         for want in [
+            "Name: p7s",
+            "Version:",
             "Procs: 8 (3 running)",
             "CPU: 23.4%",
             "Memory: 37.5%",
             "Swap: 0.0%",
-            "Load: 0.42 0.51 0.60",
-            "Uptime: 3d 4h 12m",
             r"|____|   /____//____  /",
         ] {
             assert!(out.contains(want), "missing {want:?} in\n{out}");
         }
+        assert!(!out.contains("Load:"), "{out}");
     }
 
     #[test]
