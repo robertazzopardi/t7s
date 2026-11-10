@@ -1,6 +1,12 @@
 name: CI
 
 on:
+  # push to main seeds the shared cache that PR runs restore from.
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
   pull_request:
     paths-ignore:
       - "**/*.md"
@@ -47,7 +53,7 @@ jobs:
         with:
           args: --workspace --all-features --all-targets -- -D warnings -W clippy::all -W clippy::pedantic -W clippy::nursery -W clippy::cargo -A clippy::multiple_crate_versions
   doc:
-    # Nightly for docsrs cfg. Skipped on PRs (no push trigger today).
+    # Nightly for docsrs cfg. Runs on push to main only.
     name: doc
     runs-on: ubuntu-latest
     timeout-minutes: 20
