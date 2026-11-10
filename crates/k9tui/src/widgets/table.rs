@@ -379,10 +379,10 @@ fn row_number_label(
     cursor: Option<usize>,
     relative: bool,
 ) -> String {
-    match cursor.filter(|&c| relative && c != row) {
-        Some(c) => row.abs_diff(c).to_string(),
-        None => number.map_or_else(String::new, |n| n.to_string()),
-    }
+    cursor.filter(|&c| relative && c != row).map_or_else(
+        || number.map_or_else(String::new, |n| n.to_string()),
+        |c| row.abs_diff(c).to_string(),
+    )
 }
 
 /// Columns to draw plus how to size and truncate each one.
