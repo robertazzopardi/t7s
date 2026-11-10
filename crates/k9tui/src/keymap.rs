@@ -1,8 +1,20 @@
 use std::collections::HashMap;
 
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::widgets::hotkey::Hotkey;
+
+/// `key` as the keymap sees it. Bindings are never chords, so a key held with
+/// Ctrl or Alt matches nothing; Ctrl+Alt stays, as Windows sends it for `AltGr`.
+#[must_use]
+pub fn plain(key: KeyEvent) -> KeyCode {
+    let held = key.modifiers.difference(KeyModifiers::SHIFT);
+    if held.is_empty() || held == KeyModifiers::CONTROL | KeyModifiers::ALT {
+        key.code
+    } else {
+        KeyCode::Null
+    }
+}
 
 /// Parse a key spec: one character (case-sensitive) or a kebab-case key name
 /// such as `esc`, `page-up` or `f5` (case-insensitive).
@@ -290,6 +302,25 @@ mod tests {
     use crossterm::event::KeyCode;
 
     use super::*;
+
+    #[test]
+    fn plain_drops_ctrl_and_alt_but_keeps_shift_and_altgr() {
+        let press = |code, modifiers| plain(KeyEvent::new(code, modifiers));
+        let q = KeyCode::Char('q');
+        assert_eq!(press(q, KeyModifiers::NONE), q);
+        assert_eq!(
+            press(KeyCode::Char('G'), KeyModifiers::SHIFT),
+            KeyCode::Char('G')
+        );
+        assert_eq!(
+            press(KeyCode::BackTab, KeyModifiers::SHIFT),
+            KeyCode::BackTab
+        );
+        assert_eq!(press(q, KeyModifiers::CONTROL), KeyCode::Null);
+        assert_eq!(press(q, KeyModifiers::ALT), KeyCode::Null);
+        let altgr = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        assert_eq!(press(KeyCode::Char('['), altgr), KeyCode::Char('['));
+    }
 
     fn char_map(pairs: &[(&'static str, char)]) -> Keymap {
         Keymap::new(

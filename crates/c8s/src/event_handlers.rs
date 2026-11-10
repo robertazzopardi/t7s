@@ -5,7 +5,7 @@ use k9tui::{
     bg::spawn_keyed,
     error::Result,
     event::is_ctrl_c,
-    keymap::Nav,
+    keymap::{Nav, plain},
     theme,
     widgets::{
         modal::{ConfirmDialog, DialogAction},
@@ -59,7 +59,7 @@ impl App {
 
     fn on_key_info(&mut self, key: KeyEvent) {
         if matches!(
-            self.config.keymap.action("info", key.code),
+            self.config.keymap.action("info", plain(key)),
             "health" | "quit" | "back"
         ) {
             self.state = AppState::List;
@@ -67,12 +67,13 @@ impl App {
     }
 
     fn on_key_processes(&mut self, key: KeyEvent) {
-        match self.config.keymap.action("processes", key.code) {
+        match self.config.keymap.action("processes", plain(key)) {
             "quit" | "back" => self.close_processes(),
             "output" => self.open_process_output(),
             "width" => self.toggle_column_width_mode(),
             _ => {
-                if let Some(nav) = self.config.keymap.nav("processes", key.code)
+                if let Some(nav) =
+                    self.config.keymap.nav("processes", plain(key))
                 {
                     self.navigate_processes(nav);
                 }
@@ -115,14 +116,14 @@ impl App {
         let max_start = self
             .describe_view_len
             .saturating_sub(self.describe_viewport_height);
-        match self.config.keymap.action("describe", key.code) {
+        match self.config.keymap.action("describe", plain(key)) {
             "quit" | "back" if !self.describe_filter.is_empty() => {
                 self.describe_filter.clear();
                 self.describe_scroll = 0;
             }
             "quit" | "back" => self.close_describe(),
             "search" => self.describe_search_open = true,
-            _ => match self.config.keymap.nav("describe", key.code) {
+            _ => match self.config.keymap.nav("describe", plain(key)) {
                 Some(Nav::Up) => {
                     self.describe_scroll =
                         self.describe_scroll.saturating_sub(1);
@@ -150,7 +151,7 @@ impl App {
     }
 
     fn on_key_connect_error(&mut self, key: KeyEvent) {
-        match self.config.keymap.action("connect-error", key.code) {
+        match self.config.keymap.action("connect-error", plain(key)) {
             "retry" => self.connect(),
             "quit" => self.quit(),
             _ => {}
@@ -180,9 +181,8 @@ impl App {
         let max_start =
             self.log_view_len.saturating_sub(self.log_viewport_height);
         let keymap = &self.config.keymap;
-        let action = keymap.action("logs", key.code);
-        let nav = keymap.nav("logs", key.code);
-        let plain = key.modifiers.difference(KeyModifiers::SHIFT).is_empty();
+        let action = keymap.action("logs", plain(key));
+        let nav = keymap.nav("logs", plain(key));
         match (key.modifiers, key.code, nav) {
             (KeyModifiers::CONTROL, KeyCode::Char('u'), _)
             | (_, _, Some(Nav::PageUp)) => {
@@ -202,7 +202,7 @@ impl App {
                 }
             }
             _ if action == "search" => self.log_search_open = true,
-            _ if action == "dedup" && plain => {
+            _ if action == "dedup" => {
                 self.log_dedup = self.log_dedup.next();
             }
             _ if action == "history" => self.load_full_logs(),
@@ -300,7 +300,7 @@ impl App {
             self.on_key_list_search(key);
             return true;
         }
-        match self.config.keymap.action(self.list_screen(), key.code) {
+        match self.config.keymap.action(self.list_screen(), plain(key)) {
             "quit" if self.list_filter.is_empty() => self.quit(),
             "quit" => {
                 self.list_filter.clear();
@@ -355,7 +355,7 @@ impl App {
 
         let screen = self.list_screen();
         let on_containers = self.view == ResourceKind::Containers;
-        match self.config.keymap.action(screen, key.code) {
+        match self.config.keymap.action(screen, plain(key)) {
             "width" => self.toggle_column_width_mode(),
             "containers" => self.switch_view(ResourceKind::Containers),
             "images" => self.switch_view(ResourceKind::Images),
@@ -398,7 +398,7 @@ impl App {
             "health" => self.open_daemon_health(),
             "remove" => self.prompt_remove_selected(),
             _ => {
-                if let Some(nav) = self.config.keymap.nav(screen, key.code) {
+                if let Some(nav) = self.config.keymap.nav(screen, plain(key)) {
                     self.navigate(nav);
                 }
             }

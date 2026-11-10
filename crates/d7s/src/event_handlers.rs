@@ -7,7 +7,7 @@ use k9tui::{
     bg::spawn_keyed,
     error::Result,
     event::{is_ctrl_c, poll_input},
-    keymap::{Keymap, Nav},
+    keymap::{Keymap, Nav, plain},
     widgets::navigation::TableNavigationHandler,
 };
 use ratatui::widgets::TableState;
@@ -32,9 +32,9 @@ use crate::{
 const ANY_SCREEN: &str = "";
 
 fn should_clear_status_on_key(key: KeyEvent, keymap: &Keymap) -> bool {
-    keymap.nav(ANY_SCREEN, key.code).is_none()
-        && !keymap.fires(ANY_SCREEN, "copy", key.code)
-        && !keymap.fires(ANY_SCREEN, "copy-row", key.code)
+    keymap.nav(ANY_SCREEN, plain(key)).is_none()
+        && !keymap.fires(ANY_SCREEN, "copy", plain(key))
+        && !keymap.fires(ANY_SCREEN, "copy-row", plain(key))
 }
 
 impl App<'_> {
@@ -61,7 +61,7 @@ impl App<'_> {
                 // Esc is excluded here because its own handler below reads
                 // this flag to decide first-press vs. second-press.
                 if should_clear_status_on_key(key, &self.config.keymap)
-                    && !self.config.keymap.fires(ANY_SCREEN, "back", key.code)
+                    && !self.config.keymap.fires(ANY_SCREEN, "back", plain(key))
                 {
                     self.draft_discard_pending = false;
                 }
@@ -112,11 +112,12 @@ impl App<'_> {
 
         // Help view: only toggle/close and quit
         if self.show_help {
-            match self.config.keymap.action("help", key.code) {
+            match self.config.keymap.action("help", plain(key)) {
                 "back" | "help" => self.show_help = false,
                 "quit" => self.quit(),
                 _ => {
-                    if let Some(nav) = self.config.keymap.nav("help", key.code)
+                    if let Some(nav) =
+                        self.config.keymap.nav("help", plain(key))
                     {
                         TableNavigationHandler::navigate_table(
                             &self.help_table.model,
@@ -132,7 +133,7 @@ impl App<'_> {
         // Describe view: only toggle/close, filter, quit, and scroll.
         // While the filter bar is open, keys go to it below.
         if self.show_describe && self.search_filter.is_none() {
-            match self.config.keymap.action("describe", key.code) {
+            match self.config.keymap.action("describe", plain(key)) {
                 "back" if self.active_filter_query().is_some() => {
                     self.clear_filter();
                 }
@@ -141,7 +142,7 @@ impl App<'_> {
                 "quit" => self.quit(),
                 _ => {
                     if let Some(nav) =
-                        self.config.keymap.nav("describe", key.code)
+                        self.config.keymap.nav("describe", plain(key))
                     {
                         self.describe_table.navigate(nav);
                     }
@@ -152,11 +153,11 @@ impl App<'_> {
 
         // Query log view: Esc and the quit and query-log keys return; Ctrl+C quits
         if self.show_query_log {
-            match self.config.keymap.action("query-log", key.code) {
+            match self.config.keymap.action("query-log", plain(key)) {
                 "back" | "quit" | "query-log" => self.show_query_log = false,
                 _ => {
                     if let Some(nav) =
-                        self.config.keymap.nav("query-log", key.code)
+                        self.config.keymap.nav("query-log", plain(key))
                     {
                         TableNavigationHandler::navigate_table(
                             &self.query_log_table.model,
@@ -275,7 +276,7 @@ impl App<'_> {
             return true;
         }
         let screen = self.current_screen();
-        let action = self.config.keymap.action(screen, key.code);
+        let action = self.config.keymap.action(screen, plain(key));
         if let Some(idx) = RECENT_ACTIONS.iter().position(|a| *a == action) {
             if self.state != AppState::DatabaseConnected {
                 return false;
@@ -517,9 +518,9 @@ impl App<'_> {
     /// Handle navigation actions and the search key.
     fn handle_navigation_keys(&mut self, key: KeyEvent) {
         let screen = self.current_screen();
-        if let Some(nav) = self.config.keymap.nav(screen, key.code) {
+        if let Some(nav) = self.config.keymap.nav(screen, plain(key)) {
             self.handle_database_table_navigation(nav);
-        } else if self.config.keymap.fires(screen, "search", key.code)
+        } else if self.config.keymap.fires(screen, "search", plain(key))
             && !self.modal_manager.is_any_modal_open()
         {
             self.open_filter_bar();

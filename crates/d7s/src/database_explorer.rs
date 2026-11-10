@@ -5,7 +5,7 @@ use crossterm::event::KeyEvent;
 use k9tui::{
     bg::spawn_keyed,
     error::Result,
-    keymap::Nav,
+    keymap::{Nav, plain},
     widgets::{navigation::TableNavigationHandler, table::TableDataState},
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -770,7 +770,7 @@ impl App<'_> {
         if !key.modifiers.is_empty() {
             return false;
         }
-        let nav = self.config.keymap.nav("table-data", key.code);
+        let nav = self.config.keymap.nav("table-data", plain(key));
         if !matches!(nav, Some(Nav::Down | Nav::Up)) {
             return false;
         }

@@ -6,6 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use k9tui::{
     error::{Result, err},
     event::is_ctrl_c,
+    keymap::plain,
     widgets::navigation::TableNavigationHandler,
 };
 
@@ -264,7 +265,7 @@ impl App<'_> {
         if self
             .config
             .keymap
-            .fires("cell-edit", "cell-cancel", key.code)
+            .fires("cell-edit", "cell-cancel", plain(key))
         {
             self.cancel_cell_edit();
             return true;
@@ -735,7 +736,7 @@ impl App<'_> {
         // Uppercase letters (`D`, `A`, ...) arrive with SHIFT set; only
         // reject other modifiers (Ctrl/Alt chords).
         if self.cell_edit.is_some() {
-            match self.config.keymap.action("cell-edit", key.code) {
+            match self.config.keymap.action("cell-edit", plain(key)) {
                 "cell-next" => {
                     self.finish_cell_edit_and_move_editable_column(true);
                     return Ok(true);
@@ -766,7 +767,7 @@ impl App<'_> {
         if !allows_hotkey_modifiers(key.modifiers) {
             return Ok(false);
         }
-        match self.config.keymap.action("table-data", key.code) {
+        match self.config.keymap.action("table-data", plain(key)) {
             "refresh" => {
                 self.reload_current_table_data(None);
                 Ok(true)
