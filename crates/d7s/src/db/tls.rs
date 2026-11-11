@@ -15,8 +15,7 @@ use rustls::{
         HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
     },
     crypto::{
-        CryptoProvider, aws_lc_rs, verify_tls12_signature,
-        verify_tls13_signature,
+        CryptoProvider, ring, verify_tls12_signature, verify_tls13_signature,
     },
     pki_types::{CertificateDer, ServerName, UnixTime, pem::PemObject},
 };
@@ -124,7 +123,7 @@ impl TlsConfig {
     /// TLS mode was unrecognized.
     pub fn client_config(&self) -> io::Result<ClientConfig> {
         self.check_valid()?;
-        let provider = Arc::new(aws_lc_rs::default_provider());
+        let provider = Arc::new(ring::default_provider());
         let builder = ClientConfig::builder_with_provider(provider.clone())
             .with_safe_default_protocol_versions()
             .map_err(io::Error::other)?;
