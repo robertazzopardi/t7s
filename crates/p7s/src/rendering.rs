@@ -451,6 +451,10 @@ mod tests {
             start_time: 0,
             index: 0,
         };
+        // Before the confirm opens: on Windows the one-signal picker is short
+        // enough for the dialog to cover its title.
+        let out = text(&render(&mut app, 120, 30));
+        assert!(out.contains("Signal: nginx (PID 1024)"), "{out}");
         app.confirm_dialog = Some(ConfirmDialog::new(
             " Send signal ",
             "Send SIGTERM to 'nginx' (PID 1024)?",
@@ -458,8 +462,7 @@ mod tests {
             1,
         ));
         let out = text(&render(&mut app, 120, 30));
-        assert!(out.contains("Signal: nginx (PID 1024)"));
-        assert!(out.contains("SIGTERM"));
+        assert!(out.contains("Send SIGTERM to 'nginx' (PID 1024)?"), "{out}");
         assert!(out.contains("Yes") && out.contains("No"));
     }
 }
