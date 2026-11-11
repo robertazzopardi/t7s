@@ -128,11 +128,13 @@ fn shorten_value(val: &str, max_val: usize) -> String {
 }
 
 fn render_info_stack(text: &str, area: Rect, buf: &mut Buffer) {
-    let max_val = area.width.saturating_sub(12) as usize;
     let lines: Vec<Line> = text
         .lines()
         .map(|line| {
             if let Some((label, value)) = line.split_once(':') {
+                // Room left after `label: `.
+                let max_val = usize::from(area.width)
+                    .saturating_sub(label.trim().chars().count() + 2);
                 let val = shorten_value(value.trim(), max_val);
                 Line::from(vec![
                     Span::styled(
