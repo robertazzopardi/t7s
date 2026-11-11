@@ -73,6 +73,11 @@ c8s-demo-prep:
 c8s-demo-teardown:
     docker compose -f crates/c8s/demo/docker-compose.yml down
 
+# p7s demo uses canned data (`--demo`), so nothing real is read or recorded.
+p7s-demo:
+    cargo build --release --locked -p p7s
+    cd crates/p7s && vhs demo.tape
+
 docker-up:
     cd crates/d7s && docker compose up -d
 
@@ -94,8 +99,8 @@ release CRATE VERSION:
 
     case "{{CRATE}}" in
         d7s) TAG="v{{VERSION}}" ;;
-        c8s|k9tui) TAG="{{CRATE}}-v{{VERSION}}" ;;
-        *) echo "Error: CRATE must be one of: k9tui, d7s, c8s"; exit 1 ;;
+        c8s|k9tui|p7s) TAG="{{CRATE}}-v{{VERSION}}" ;;
+        *) echo "Error: CRATE must be one of: k9tui, d7s, c8s, p7s"; exit 1 ;;
     esac
 
     if ! git diff --quiet || ! git diff --cached --quiet; then

@@ -1,0 +1,468 @@
+use crossterm::event::KeyCode;
+use k9tui::{
+    theme,
+    widgets::{hotkey::Hotkey, table::DataTable, top_bar::TopBarView},
+};
+use ratatui::{
+    Frame,
+    prelude::*,
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+};
+
+use crate::{
+    app::{APP_NAME, App, PKG_NAME, PKG_VERSION},
+    app_state::AppState,
+    command::suggest,
+    proc::{SystemInfo, signals},
+    ui::widgets::hotkeys::{
+        describe_hotkeys, global_hotkeys, info_hotkeys, signal_hotkeys,
+    },
+};
+
+const TOPBAR_HEIGHT: u16 = 7;
+const FOOTER_HEIGHT: u16 = 1;
+const SEARCH_BAR_HEIGHT: u16 = 3;
+
+impl App {
+    pub fn render(&mut self, frame: &mut Frame) {
+        if let AppState::Describe { name, text, .. } = &self.state {
+            let name = name.clone();
+            let text = text.clone();
+            self.render_describe(frame, &name, &text);
+            return;
+        }
+        // Modals draw over the live list.
+        self.render_list(frame);
+        match &self.state {
+            AppState::Info => Self::render_info(frame, &self.info),
+            AppState::Signal {
+                pid, name, index, ..
+            } => self.render_signal(frame, *pid, name, *index),
+            AppState::List | AppState::Describe { .. } => {}
+        }
+    }
+
+    #[allow(clippy::too_many_lines)] // flat list-view render
+    fn render_list(&mut self, frame: &mut Frame) {
+        let layout = Layout::vertical([
+            Constraint::Length(TOPBAR_HEIGHT),
+            Constraint::Min(0),
+            Constraint::Length(FOOTER_HEIGHT),
+        ])
+        .split(frame.area());
+
+        let top_area = layout.first().copied().unwrap_or_default();
+        let content_area = layout.get(1).copied().unwrap_or_default();
+        let footer_area = layout.get(2).copied().unwrap_or_default();
+
+        let (hotkeys, global) = self.bar_hotkeys();
+        let n = self.processes.model.items.len();
+        frame.render_widget(
+            TopBarView {
+                summary: &format!(
+                    "Name: {PKG_NAME}\nVersion: {PKG_VERSION}\n{}",
+                    self.info.stats(&self.all, self.absolute_stats)
+                ),
+                recent_hotkeys: &[],
+                hotkeys: &hotkeys,
+                global_hotkeys: &global,
+                app_name: APP_NAME,
+                build_info: None,
+            },
+            top_area,
+        );
+
+        let content_area = if self.search_open || !self.filter.is_empty() {
+            let search_layout = Layout::vertical([
+                Constraint::Length(SEARCH_BAR_HEIGHT),
+                Constraint::Min(0),
+            ])
+            .split(content_area);
+            let search_area =
+                search_layout.first().copied().unwrap_or_default();
+            let search_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme::border())
+                .title(if self.command_mode {
+                    " Command "
+                } else {
+                    " Search "
+                })
+                .title_style(theme::title());
+            let inner = search_block.inner(search_area);
+            frame.render_widget(search_block, search_area);
+            if self.command_mode {
+                let ghost = suggest(&self.command_text)
+                    .map(|s| {
+                        s.chars()
+                            .skip(self.command_text.chars().count())
+                            .collect::<String>()
+                    })
+                    .unwrap_or_default();
+                Paragraph::new(Line::from(vec![
+                    Span::raw(format!(":{}", self.command_text)),
+                    Span::styled(ghost, theme::muted()),
+                ]))
+                .render(inner, frame.buffer_mut());
+            } else {
+                let cursor = if self.search_open { "_" } else { "" };
+                Paragraph::new(format!("/{}{cursor}", self.filter))
+                    .render(inner, frame.buffer_mut());
+            }
+            search_layout.get(1).copied().unwrap_or_default()
+        } else {
+            content_area
+        };
+
+        let arrow = if self.sort_desc { "↓" } else { "↑" };
+        let follow = self
+            .following
+            .map_or_else(String::new, |(pid, _)| format!("  following: {pid}"));
+        let title = if self.filter.is_empty() {
+            format!(
+                " Processes [{n}]  sort: {} {arrow}{follow} ",
+                self.sort_key.label()
+            )
+        } else {
+            format!(
+                " Processes [{n} matches]  sort: {} {arrow}{follow} ",
+                self.sort_key.label()
+            )
+        };
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_style(theme::border())
+            .title(title)
+            .title_alignment(Alignment::Center);
+        let inner = block.inner(content_area);
+        frame.render_widget(block, content_area);
+
+        if n == 0 {
+            Paragraph::new(if self.all.is_empty() {
+                "No processes".to_string()
+            } else {
+                "No matching processes".to_string()
+            })
+            .style(theme::muted())
+            .alignment(Alignment::Center)
+            .render(inner, frame.buffer_mut());
+        } else {
+            frame.render_stateful_widget(
+                DataTable::default(),
+                inner,
+                &mut self.processes,
+            );
+        }
+
+        frame.render_widget(self.status_line.clone(), footer_area);
+    }
+
+    /// Hotkeys for the top bar: while a modal is open, only the modal's keys.
+    fn bar_hotkeys(&self) -> (Vec<Hotkey>, Vec<Hotkey>) {
+        match &self.state {
+            AppState::Info => (info_hotkeys(), Vec::new()),
+            AppState::Signal { .. } => (signal_hotkeys(), Vec::new()),
+            AppState::List | AppState::Describe { .. } => {
+                let mut global = global_hotkeys();
+                if !self.filter.is_empty() {
+                    // `q` clears the active filter instead of quitting while
+                    // one is set; keep the hint truthful.
+                    if let Some(q) = global
+                        .iter_mut()
+                        .find(|h| h.keycode == KeyCode::Char('q'))
+                    {
+                        *q = Hotkey::new('q', "clear filter");
+                    }
+                }
+                (self.hotkeys.clone(), global)
+            }
+        }
+    }
+
+    fn render_info(frame: &mut Frame, info: &SystemInfo) {
+        let area = frame.area();
+        let mut text = info.lines().join("\n");
+        text.push_str("\n\nPress i, q, or Esc to close.");
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_style(theme::border())
+            .title(" System ")
+            .title_alignment(Alignment::Center);
+        let modal_area = centered_box(area, 44, 12);
+        let inner = block.inner(modal_area);
+        frame.render_widget(Clear, modal_area);
+        frame.render_widget(block, modal_area);
+        Paragraph::new(text)
+            .alignment(Alignment::Left)
+            .wrap(Wrap { trim: true })
+            .render(inner, frame.buffer_mut());
+    }
+
+    fn render_describe(&mut self, frame: &mut Frame, name: &str, text: &str) {
+        let layout = Layout::vertical([
+            Constraint::Length(TOPBAR_HEIGHT),
+            Constraint::Min(0),
+            Constraint::Length(FOOTER_HEIGHT),
+        ])
+        .split(frame.area());
+
+        let top_area = layout.first().copied().unwrap_or_default();
+        let content_area = layout.get(1).copied().unwrap_or_default();
+        let footer_area = layout.get(2).copied().unwrap_or_default();
+
+        let hotkeys = describe_hotkeys();
+        frame.render_widget(
+            TopBarView {
+                summary: &format!("Describe: {name}"),
+                recent_hotkeys: &[],
+                hotkeys: &hotkeys,
+                global_hotkeys: &[],
+                app_name: APP_NAME,
+                build_info: None,
+            },
+            top_area,
+        );
+
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_style(theme::border())
+            .title(format!(" Describe: {name} "))
+            .title_alignment(Alignment::Center);
+        let inner = block.inner(content_area);
+        frame.render_widget(block, content_area);
+
+        let all_lines: Vec<&str> = text.lines().collect();
+        let visible = inner.height as usize;
+        self.describe_viewport_height = visible;
+        let max_start = all_lines.len().saturating_sub(visible);
+        let start = self.describe_scroll.min(max_start);
+        self.describe_scroll = start;
+        let end = (start + visible).min(all_lines.len());
+        let shown = all_lines.get(start..end).unwrap_or(&[]).join("\n");
+        Paragraph::new(shown)
+            .wrap(Wrap { trim: false })
+            .render(inner, frame.buffer_mut());
+
+        frame.render_widget(self.status_line.clone(), footer_area);
+    }
+
+    fn render_signal(
+        &self,
+        frame: &mut Frame,
+        pid: i32,
+        name: &str,
+        index: usize,
+    ) {
+        let menu = signals::menu();
+        let list_height = u16::try_from(menu.len())
+            .unwrap_or(u16::MAX)
+            .saturating_add(2);
+        let box_area = centered_box(frame.area(), 40, list_height);
+        let block = Block::new()
+            .borders(Borders::ALL)
+            .border_style(theme::modal_confirm_border())
+            .title(format!(" Signal: {name} (PID {pid}) "))
+            .title_alignment(Alignment::Center);
+        let inner = block.inner(box_area);
+        frame.render_widget(Clear, box_area);
+        frame.render_widget(block, box_area);
+
+        let lines: Vec<Line> = menu
+            .iter()
+            .enumerate()
+            .map(|(i, sig)| {
+                let label = signals::label(*sig);
+                if i == index {
+                    Line::from(Span::styled(
+                        format!("> {label}"),
+                        theme::accent(),
+                    ))
+                } else {
+                    Line::from(Span::styled(
+                        format!("  {label}"),
+                        theme::info_value(),
+                    ))
+                }
+            })
+            .collect();
+        // Keep the highlighted signal on screen when the box is short.
+        let visible = usize::from(inner.height);
+        let start = index
+            .saturating_sub(visible / 2)
+            .min(lines.len().saturating_sub(visible));
+        Paragraph::new(lines)
+            .scroll((u16::try_from(start).unwrap_or(u16::MAX), 0))
+            .render(inner, frame.buffer_mut());
+
+        if let Some(dialog) = self.confirm_dialog.clone() {
+            frame.render_widget(dialog, frame.area());
+        }
+    }
+}
+
+/// A fixed-size box centered within `area`, clamped to fit.
+fn centered_box(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    let vertical = Layout::vertical([Constraint::Length(height)])
+        .flex(layout::Flex::Center)
+        .split(area);
+    let horizontal = Layout::horizontal([Constraint::Length(width)])
+        .flex(layout::Flex::Center)
+        .split(vertical.first().copied().unwrap_or(area));
+    horizontal.first().copied().unwrap_or(area)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use k9tui::widgets::modal::ConfirmDialog;
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        buffer::{Buffer, Cell},
+    };
+
+    use super::*;
+    use crate::proc::monitor::{DemoSource, demo_snapshot};
+
+    fn app() -> App {
+        let mut app = App::new(Arc::new(DemoSource::new()));
+        app.apply_snapshot(demo_snapshot());
+        app
+    }
+
+    fn text(buf: &Buffer) -> String {
+        let width = usize::from(buf.area.width);
+        buf.content()
+            .chunks(width)
+            .map(|row| row.iter().map(Cell::symbol).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn render(app: &mut App, w: u16, h: u16) -> Buffer {
+        let mut terminal =
+            Terminal::new(TestBackend::new(w, h)).expect("test terminal");
+        terminal.draw(|f| app.render(f)).expect("draw");
+        terminal.backend().buffer().clone()
+    }
+
+    #[test]
+    fn list_shows_columns_and_sort_indicator() {
+        let mut app = app();
+        let out = text(&render(&mut app, 120, 30));
+        for want in
+            ["PID", "USER", "CPU%", "COMMAND", "sort: cpu ↓", "Processes"]
+        {
+            assert!(out.contains(want), "missing {want:?} in\n{out}");
+        }
+    }
+
+    #[test]
+    fn top_bar_shows_stats_and_logo() {
+        let mut app = app();
+        let out = text(&render(&mut app, 120, 30));
+        for want in [
+            "Name: p7s",
+            "Version:",
+            "Procs: 8 (3 running)",
+            "CPU: 23.4%",
+            "Memory: 37.5%",
+            "Swap: 0.0%",
+            r"|____|   /____//____  /",
+        ] {
+            assert!(out.contains(want), "missing {want:?} in\n{out}");
+        }
+        assert!(!out.contains("Load:"), "{out}");
+    }
+
+    #[test]
+    fn modals_keep_the_list_behind_them() {
+        let signal = AppState::Signal {
+            pid: 1,
+            name: "init".to_string(),
+            start_time: 0,
+            index: 0,
+        };
+        for state in [AppState::Info, signal] {
+            let mut app = app();
+            app.state = state;
+            let out = text(&render(&mut app, 120, 30));
+            // Left of the box: the tall signal menu hides the table title.
+            for want in ["USER", "4096", "Memory: 37.5%"] {
+                assert!(out.contains(want), "missing {want:?} in\n{out}");
+            }
+        }
+    }
+
+    #[test]
+    fn signal_picker_scrolls_to_the_highlight() {
+        let menu = signals::menu();
+        let Some(last) = menu.last() else {
+            return; // no signals on this platform
+        };
+        let mut app = app();
+        app.state = AppState::Signal {
+            pid: 1,
+            name: "init".to_string(),
+            start_time: 0,
+            index: menu.len() - 1,
+        };
+        let out = text(&render(&mut app, 120, 10));
+        let want = format!("> {}", signals::label(*last));
+        assert!(out.contains(&want), "missing {want:?} in\n{out}");
+    }
+
+    #[test]
+    fn every_state_renders_at_small_and_normal_sizes() {
+        let describe = AppState::Describe {
+            pid: 1,
+            name: "init".to_string(),
+            text: "line\n".repeat(60),
+        };
+        let signal = AppState::Signal {
+            pid: 1,
+            name: "init".to_string(),
+            start_time: 0,
+            index: 0,
+        };
+        for (w, h) in [(1, 1), (3, 3), (10, 4), (20, 5), (40, 12), (120, 30)] {
+            for state in [
+                AppState::List,
+                AppState::Info,
+                describe.clone(),
+                signal.clone(),
+            ] {
+                let mut app = app();
+                app.state = state;
+                let _ = render(&mut app, w, h);
+            }
+        }
+    }
+
+    #[test]
+    fn signal_picker_with_confirm_renders_overlay() {
+        let mut app = app();
+        app.state = AppState::Signal {
+            pid: 1024,
+            name: "nginx".to_string(),
+            start_time: 0,
+            index: 0,
+        };
+        // Before the confirm opens: on Windows the one-signal picker is short
+        // enough for the dialog to cover its title.
+        let out = text(&render(&mut app, 120, 30));
+        assert!(out.contains("Signal: nginx (PID 1024)"), "{out}");
+        app.confirm_dialog = Some(ConfirmDialog::new(
+            " Send signal ",
+            "Send SIGTERM to 'nginx' (PID 1024)?",
+            theme::modal_danger_border(),
+            1,
+        ));
+        let out = text(&render(&mut app, 120, 30));
+        assert!(out.contains("Send SIGTERM to 'nginx' (PID 1024)?"), "{out}");
+        assert!(out.contains("Yes") && out.contains("No"));
+    }
+}

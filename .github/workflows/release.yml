@@ -39,6 +39,7 @@ jobs:
         run: |
           case "$TAG" in
             c8s-v*) crate=c8s; ver_tag="${TAG#c8s-}" ;;
+            p7s-v*) crate=p7s; ver_tag="${TAG#p7s-}" ;;
             v*)     crate=d7s; ver_tag="$TAG" ;;
             *) echo "Unsupported tag: $TAG"; exit 1 ;;
           esac
