@@ -44,10 +44,6 @@ futures-util = "0.3"
 # Docker
 bollard = "0.21"
 
-# Serialization
-serde = { version = "1", features = ["derive"] }
-serde_json = "1.0.154"
-
 # Utilities
 ansi-to-tui = "8.0.1"
 

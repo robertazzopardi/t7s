@@ -16,6 +16,9 @@ use std::{
 
 #[cfg(not(debug_assertions))]
 use keyring::Entry;
+// Debug builds use the in-memory store below; keep `keyring` counted as used.
+#[cfg(debug_assertions)]
+use keyring as _;
 
 #[cfg(not(debug_assertions))]
 const SERVICE_NAME: &str = "d7s";
