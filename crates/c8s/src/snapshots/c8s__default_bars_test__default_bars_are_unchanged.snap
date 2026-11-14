@@ -37,6 +37,7 @@ g top
 G follow
 / search
 d dedup
+Ctrl+z level filter
 p previous run
 H full history
 Esc back

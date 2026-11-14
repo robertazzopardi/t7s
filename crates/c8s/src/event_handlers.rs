@@ -202,6 +202,9 @@ impl App {
                 }
             }
             _ if action == "search" => self.log_search_open = true,
+            (KeyModifiers::CONTROL, KeyCode::Char('z'), _) => {
+                self.log_level = self.log_level.next();
+            }
             _ if action == "dedup" => {
                 self.log_dedup = self.log_dedup.next();
             }
@@ -645,6 +648,7 @@ mod tests {
             client::{DaemonHealth, DockerClient},
         },
         in_flight::container_key,
+        log_level::LevelFilter,
     };
 
     type Term = Terminal<TestBackend>;
@@ -799,6 +803,20 @@ mod tests {
         assert_ne!(app.log_dedup, before);
         app.on_key_logs(char_key('y'));
         assert_eq!(app.log_scroll, 10);
+    }
+
+    #[tokio::test]
+    async fn ctrl_z_cycles_log_level_filter() {
+        let mut app = app();
+        let ctrl_z = KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL);
+        app.on_key_logs(ctrl_z);
+        assert_eq!(app.log_level, LevelFilter::Warn);
+        app.on_key_logs(char_key('z'));
+        assert_eq!(
+            app.log_level,
+            LevelFilter::Warn,
+            "plain z is not the chord"
+        );
     }
 
     #[tokio::test]

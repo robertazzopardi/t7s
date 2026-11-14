@@ -84,6 +84,7 @@ hotkeys = [
   { action = "bottom", label = "follow" },
   { action = "search", label = "search" },
   { action = "dedup", label = "dedup" },
+  { key = "Ctrl+z", label = "level filter" },
   { action = "previous", label = "previous run" },
   { action = "history", label = "full history" },
   { action = "back", label = "back" },

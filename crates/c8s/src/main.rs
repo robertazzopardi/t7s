@@ -10,6 +10,7 @@ mod event_handlers;
 mod in_flight;
 mod keymap;
 mod log_dedup;
+mod log_level;
 mod rendering;
 
 use app::App;
