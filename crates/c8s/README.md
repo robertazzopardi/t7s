@@ -10,7 +10,7 @@ just c8s-demo   # vhs + Docker; fake demo-web/demo-cache containers
 
 ## Features
 
-Containers (CPU/memory, start/stop/restart/remove, running-only filter), images, volumes, networks; `/` search; log tail with dedup; process list; describe; `docker exec` shell; daemon health (`i`). Needs a reachable Docker daemon and `docker` on `PATH` for exec.
+Containers (CPU/memory, start/stop/restart/remove, running-only filter), images, volumes, networks; `/` search; log tail with dedup and level filter (`Ctrl+z`: warn+, error+); process list; describe; `docker exec` shell; daemon health (`i`). Needs a reachable Docker daemon and `docker` on `PATH` for exec.
 
 v1 is flat list views — no compose graphs.
 

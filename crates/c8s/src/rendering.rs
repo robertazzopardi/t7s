@@ -20,6 +20,7 @@ use crate::{
     command::suggest,
     docker::{client::DaemonHealth, short_id},
     log_dedup::fold,
+    log_level,
 };
 
 const SEARCH_BAR_HEIGHT: u16 = 3;
@@ -368,11 +369,13 @@ impl App {
             Some(lines) if self.log_show_prev => lines,
             _ => &self.log_lines,
         };
-        let folded = fold(source, self.log_dedup);
+        let levelled = log_level::filter(source, self.log_level);
+        let folded = fold(&levelled, self.log_dedup);
         let filtered = filter_and_highlight(&folded, &self.log_filter);
         self.log_view_len = filtered.len();
 
         let dedup = self.log_dedup;
+        let level = self.log_level;
         let name = if self.log_show_prev {
             format!("{name} [previous run, p for current]")
         } else if !has_prev {
@@ -382,13 +385,15 @@ impl App {
         };
         let title = if !self.log_filter.is_empty() {
             format!(
-                " Logs: {name} ({} matches, dedup: {dedup}) ",
+                " Logs: {name} ({} matches, dedup: {dedup}, level: {level}) ",
                 filtered.len()
             )
         } else if self.log_follow {
-            format!(" Logs: {name} (live, dedup: {dedup}) ")
+            format!(" Logs: {name} (live, dedup: {dedup}, level: {level}) ")
         } else {
-            format!(" Logs: {name} (scrolled, G to follow, dedup: {dedup}) ")
+            format!(
+                " Logs: {name} (scrolled, G to follow, dedup: {dedup}, level: {level}) "
+            )
         };
         let block = Block::new()
             .borders(Borders::ALL)

@@ -42,6 +42,7 @@ use crate::{
     in_flight::DAEMON_KEY,
     keymap::SPEC,
     log_dedup::DedupMode,
+    log_level::LevelFilter,
 };
 
 pub const APP_NAME: &str = r"         ______
@@ -176,6 +177,8 @@ pub struct App {
     /// Row count of the last-rendered (deduped + filtered) log view.
     pub(crate) log_view_len: usize,
     pub(crate) log_dedup: DedupMode,
+    /// Minimum severity shown in the log view.
+    pub(crate) log_level: LevelFilter,
     /// Case-insensitive substring filter applied to log lines. Empty = no filter.
     pub(crate) log_filter: String,
     /// True while the `/` search bar is open for editing.
@@ -240,6 +243,7 @@ impl App {
             log_viewport_height: 0,
             log_view_len: 0,
             log_dedup: DedupMode::default(),
+            log_level: LevelFilter::default(),
             log_filter: String::new(),
             log_search_open: false,
             describe_scroll: 0,
