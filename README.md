@@ -20,7 +20,9 @@ Docker TUI: containers (CPU/memory), images, volumes, networks, logs, exec. [REA
 
 ### [p7s](crates/p7s)
 
-System process viewer: live process list (CPU/memory), sort, filter, describe, signal picker. [README](crates/p7s/README.md); demo with `just p7s-demo` (canned data).
+System process viewer: live process list (CPU/memory), sort, filter, describe, signal picker. [README](crates/p7s/README.md).
+
+![p7s — process list, sort, filter, follow, signal picker](crates/p7s/demo.gif)
 
 ### [k9tui](crates/k9tui)
 

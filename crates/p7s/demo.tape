@@ -39,6 +39,19 @@ Sleep 1s
 Type "q"
 Sleep 800ms
 
+# top-bar stats as absolute sizes
+Type "u"
+Sleep 1.5s
+Type "u"
+Sleep 800ms
+
+# follow the selected process as it moves in the sort order
+Type "jj"
+Type "f"
+Sleep 2.5s
+Type "f"
+Sleep 800ms
+
 # describe the selected process
 Type "d"
 Sleep 2s

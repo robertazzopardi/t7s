@@ -2,6 +2,8 @@
 
 Part of [t7s](https://github.com/robertazzopardi/t7s). k9s-style system process viewer on [Ratatui](https://ratatui.rs) / [k9tui](https://crates.io/crates/k9tui).
 
+![p7s](https://raw.githubusercontent.com/robertazzopardi/t7s/main/crates/p7s/demo.gif)
+
 ```sh
 just p7s-demo   # vhs + `p7s --demo` (canned data, nothing real is read)
 ```
