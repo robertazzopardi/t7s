@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+#[cfg(feature = "bg")]
 pub mod bg;
 pub mod config;
 pub mod error;

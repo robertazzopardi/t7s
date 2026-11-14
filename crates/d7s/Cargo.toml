@@ -42,7 +42,7 @@ pkg-fmt = "zip"
 
 [dependencies]
 # Internal
-k9tui = { path = "../k9tui", version = "0.1.0" }
+k9tui = { path = "../k9tui", version = "0.1.0", features = ["bg"] }
 
 # UI
 crossterm = { version = "0.29.0", default-features = false, features = ["osc52", "bracketed-paste", "events", "windows"] }
@@ -63,7 +63,6 @@ tokio-postgres = { version = "0.7.18", features = [
     "with-uuid-1",
     "array-impls",
 ] }
-postgres-types = { version = "0.2", features = ["derive", "with-chrono-0_4", "with-serde_json-1", "with-uuid-1"] }
 
 # Keyring
 keyring = "4.2.0"
