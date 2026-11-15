@@ -71,7 +71,7 @@ c8s-demo-prep:
     docker compose -f crates/c8s/demo/docker-compose.yml up -d
 
 c8s-demo-teardown:
-    docker compose -f crates/c8s/demo/docker-compose.yml down
+    docker compose -f crates/c8s/demo/docker-compose.yml down -v
 
 # p7s demo uses canned data (`--demo`), so nothing real is read or recorded.
 p7s-demo:
@@ -88,6 +88,10 @@ docker-tls-up:
 
 docker-down:
     cd crates/d7s && docker compose down
+
+# Wipe the named data volumes (incl. TLS profile) so the next `up` re-seeds.
+docker-reset:
+    cd crates/d7s && docker compose --profile tls down -v
 
 docker-logs:
     cd crates/d7s && docker compose logs -f
