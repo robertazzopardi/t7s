@@ -80,7 +80,7 @@ rust_decimal = { version = "1.43.0", default-features = false, features = ["db-t
 # Utilities
 directories = "6.0.0"
 ratatui-textarea = "0.9.3"
-sqlparser = "0.63.0"
+sqlparser = "0.64.0"
 mysql_async = { version = "0.37.1", default-features = false, features = ["minimal", "rustls-tls"] }
 tokio-postgres-rustls = "0.14.0"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
