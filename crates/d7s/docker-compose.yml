@@ -10,8 +10,9 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      # Uncomment the line below for persistent data storage
-      # - postgres_data:/var/lib/postgresql/data
+      # Named so `down`/`up` reuses it instead of leaving an orphan anonymous volume.
+      # postgres:18 keeps data in /var/lib/postgresql, not .../data.
+      - postgres_data:/var/lib/postgresql
       - ./docker/seed.sql:/docker-entrypoint-initdb.d/01-seed.sql
       - ./docker/init-db.sh:/docker-entrypoint-initdb.d/02-init-db.sh
     healthcheck:
@@ -33,6 +34,7 @@ services:
     ports:
       - "13306:3306"
     volumes:
+      - mysql_data:/var/lib/mysql
       - ./docker/seed-mysql.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
     networks:
       - d7s-network
@@ -46,6 +48,7 @@ services:
     ports:
       - "3307:3306"
     volumes:
+      - mariadb_data:/var/lib/mysql
       - ./docker/seed-mysql.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
     networks:
       - d7s-network
@@ -65,6 +68,7 @@ services:
     ports:
       - "15432:5432"
     volumes:
+      - postgres_tls_data:/var/lib/postgresql
       - ./docker/certs:/certs:ro
       - ./docker/pg-tls-only.sh:/docker-entrypoint-initdb.d/01-tls-only.sh:ro
     # Postgres insists the key is owned by it and mode 0600.
@@ -96,6 +100,7 @@ services:
     ports:
       - "3308:3306"
     volumes:
+      - mariadb_tls_data:/var/lib/mysql
       - ./docker/certs:/certs:ro
       - ./docker/seed-mysql.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
     networks:
@@ -112,6 +117,8 @@ services:
     command: ["--skip-ssl"]
     ports:
       - "3310:3306"
+    volumes:
+      - mariadb_plain_data:/var/lib/mysql
     networks:
       - d7s-network
 
@@ -127,9 +134,15 @@ services:
     entrypoint: ["sh", "-c", "rm -f /data/d7s_test.sqlite && sqlite3 /data/d7s_test.sqlite < /seed.sql && echo 'sqlite test db ready at ./docker/sqlite/d7s_test.sqlite'"]
     restart: "no"
 
-# Uncomment for persistent data storage
-# volumes:
-#   postgres_data:
+# Named volumes: data persists across `down`/`up`, so seed scripts only run on
+# first init. `just docker-reset` (`down -v`) wipes them to re-seed.
+volumes:
+  postgres_data:
+  mysql_data:
+  mariadb_data:
+  postgres_tls_data:
+  mariadb_tls_data:
+  mariadb_plain_data:
 
 networks:
   d7s-network:

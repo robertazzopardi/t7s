@@ -8,3 +8,9 @@ services:
   demo-cache:
     image: redis:alpine
     container_name: demo-cache
+    # redis declares VOLUME /data; name it so restarts don't leave anonymous volumes.
+    volumes:
+      - demo_cache_data:/data
+
+volumes:
+  demo_cache_data:
