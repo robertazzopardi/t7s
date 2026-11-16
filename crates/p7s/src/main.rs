@@ -79,7 +79,7 @@ async fn main() -> error::Result<()> {
     let source: Arc<dyn ProcessSource> = if demo {
         Arc::new(DemoSource::new())
     } else {
-        Arc::new(SystemMonitor::new())
+        Arc::new(SystemMonitor::new()?)
     };
     let mut app = App::new(source);
     let result = app.run(terminal);

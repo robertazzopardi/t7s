@@ -44,7 +44,7 @@ tokio = { version = "1.47.0", features = ["full"] }
 # System information (processes, CPU, memory).
 # 0.38.x is the newest line whose MSRV (1.88) is within the workspace's 1.89;
 # 0.39 requires rustc 1.95.
-sysinfo = { version = "0.38", default-features = false, features = ["system", "user"] }
+sysinfo = { version = "0.40", default-features = false, features = ["system", "user"] }
 
 [lints]
 workspace = true

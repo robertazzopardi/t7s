@@ -57,20 +57,21 @@ pub struct SystemMonitor {
 }
 
 impl SystemMonitor {
-    #[must_use]
-    pub fn new() -> Self {
-        let mut system = System::new();
+    /// # Errors
+    /// Fails when sysinfo cannot query the system or its users.
+    pub fn new() -> Result<Self, sysinfo::Error> {
+        let mut system = System::new()?;
         // Prime memory + CPU so the first snapshot is not all zeros.
         system.refresh_memory();
         system.refresh_cpu_usage();
         let self_pid = sysinfo::get_current_pid().map_or(-1, pid_to_i32);
-        Self {
+        Ok(Self {
             inner: Mutex::new(Monitor {
                 system,
-                users: Users::new_with_refreshed_list(),
+                users: Users::new_with_refreshed_list()?,
                 self_pid,
             }),
-        }
+        })
     }
 
     /// Refresh only `pid` with full detail and hand it to `f`.
@@ -94,12 +95,6 @@ impl SystemMonitor {
         }
         let process = m.system.process(spid)?;
         Some(f(&m, process))
-    }
-}
-
-impl Default for SystemMonitor {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -245,14 +240,15 @@ const fn state_char(status: ProcessStatus) -> char {
 }
 
 fn info_from(system: &System) -> SystemInfo {
-    let load = System::load_average();
+    let load = System::load_average().unwrap_or_default();
     SystemInfo {
         os_name: System::long_os_version()
-            .or_else(System::os_version)
-            .unwrap_or_else(|| System::name().unwrap_or_default()),
+            .or_else(|_| System::os_version())
+            .or_else(|_| System::name())
+            .unwrap_or_default(),
         kernel: System::kernel_version().unwrap_or_default(),
         host: System::host_name().unwrap_or_default(),
-        uptime_secs: System::uptime(),
+        uptime_secs: System::uptime().unwrap_or_default(),
         load_one: load.one,
         load_five: load.five,
         load_fifteen: load.fifteen,
@@ -509,7 +505,7 @@ mod tests {
     #[test]
     fn real_monitor_takes_a_snapshot() {
         // Smoke test: must not panic on any supported platform.
-        let monitor = SystemMonitor::new();
+        let monitor = SystemMonitor::new().unwrap();
         let self_pid = monitor.self_pid();
         let snap = monitor.snapshot();
         // p7s itself is always in the list.
