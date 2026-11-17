@@ -78,6 +78,9 @@ impl App {
     }
 
     /// Run the application's main loop.
+    ///
+    /// # Errors
+    /// If drawing or reading terminal events fails.
     pub fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
 
