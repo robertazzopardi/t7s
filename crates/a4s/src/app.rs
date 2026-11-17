@@ -163,6 +163,7 @@ impl App {
     pub(crate) fn drain_background_events(&mut self) {
         let mut changed = false;
         let mut output = Vec::new();
+        let mut tick = false;
         while let Ok(event) = self.bg_rx.try_recv() {
             changed = true;
             match event {
@@ -177,12 +178,16 @@ impl App {
                         output.push(id);
                     }
                 }
-                BackgroundEvent::Tick => self.on_tick(),
+                BackgroundEvent::Tick => tick = true,
             }
         }
         // Once per session per drain, not once per output chunk.
         for id in output {
             self.on_output(id);
+        }
+        // Outputs first so the tick sees fresh `last_output`.
+        if tick {
+            self.on_tick();
         }
         if changed {
             self.refresh_table();

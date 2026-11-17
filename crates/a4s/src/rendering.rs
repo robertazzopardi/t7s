@@ -66,7 +66,11 @@ impl App {
         let footer_area = layout.get(2).copied().unwrap_or_default();
 
         let n = self.sessions.model.items.len();
-        let hotkeys = self.config.bar("sessions");
+        let hotkeys = self.config.bar(if self.view == View::Agent {
+            "agent"
+        } else {
+            "sessions"
+        });
         let global = self.config.bar("global");
         let recent = self.recent_hotkeys();
         frame.render_widget(

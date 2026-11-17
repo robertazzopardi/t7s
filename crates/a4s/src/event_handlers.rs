@@ -1,5 +1,5 @@
 use crossterm::event::{
-    KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
 use k9tui::{
     event::is_ctrl_c,
@@ -93,6 +93,9 @@ impl App {
     }
 
     fn on_key_agent(&mut self, key: KeyEvent) {
+        if key.kind == KeyEventKind::Press {
+            self.scroll_focused(|_| 0);
+        }
         match self.router.route(key) {
             Route::Agent(k) => self.send_focused(|p| {
                 encode(
@@ -322,7 +325,8 @@ mod tests {
     use super::*;
     use crate::{
         agent::AgentProfile,
-        defaults::KILLED_CODE,
+        app::BackgroundEvent,
+        defaults::{IDLE_AFTER, KILLED_CODE},
         session::Session,
         status::{Status, StatusTracker},
     };
@@ -643,6 +647,29 @@ mod tests {
         press(&mut app, KeyCode::Left);
         press(&mut app, KeyCode::Enter);
         assert!(!app.running);
+    }
+
+    #[test]
+    fn output_is_processed_before_tick_in_one_drain() {
+        static WORKER: AgentProfile = AgentProfile {
+            name: "test-worker",
+            command: &["/bin/sh"],
+            resume: None,
+            blocked: &[],
+            working: &["WORK"],
+        };
+        let mut app = App::new();
+        app.create_session("one", &WORKER, &tmp());
+        let id = app.sessions_by_id[0].id;
+        let old = Instant::now().checked_sub(IDLE_AFTER * 2).unwrap();
+        let mut tracker = StatusTracker::new(old);
+        tracker.observe("WORK", &WORKER, old);
+        assert_eq!(tracker.status(), Status::Working);
+        app.sessions_by_id[0].status = tracker;
+        app.bg_tx.send(BackgroundEvent::Tick).unwrap();
+        app.bg_tx.send(BackgroundEvent::Output(id)).unwrap();
+        app.drain_background_events();
+        assert_eq!(app.sessions_by_id[0].status.status(), Status::Working);
     }
 
     #[test]
