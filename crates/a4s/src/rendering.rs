@@ -12,7 +12,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::app::{APP_NAME, App};
+use crate::app::{APP_NAME, App, View};
 
 impl App {
     pub fn render(&mut self, frame: &mut Frame) {
@@ -28,6 +28,13 @@ impl App {
         let footer_area = layout.get(2).copied().unwrap_or_default();
 
         let n = self.sessions.model.items.len();
+        let focused_name = (self.view == View::Agent)
+            .then(|| {
+                let id = self.focused?;
+                self.sessions_by_id.iter().find(|s| s.id == id)
+            })
+            .flatten()
+            .map(|s| s.name.clone());
         let hotkeys = self.config.bar("sessions");
         let global = self.config.bar("global");
         frame.render_widget(
@@ -42,14 +49,20 @@ impl App {
             top_area,
         );
 
+        // Placeholder until the agent view renders the live terminal.
+        let title = focused_name.clone().map_or_else(
+            || format!(" Sessions [{n}] "),
+            |name| format!(" {name} "),
+        );
         let block = Block::new()
             .borders(Borders::ALL)
             .border_style(theme::border())
-            .title(format!(" Sessions [{n}] "))
+            .title(title)
             .title_alignment(Alignment::Center);
         let inner = block.inner(content_area);
         frame.render_widget(block, content_area);
-        if n == 0 {
+        if focused_name.is_some() {
+        } else if n == 0 {
             Paragraph::new("No sessions — press c to create one")
                 .style(theme::muted())
                 .alignment(Alignment::Center)
@@ -63,6 +76,13 @@ impl App {
         }
 
         frame.render_widget(self.status_line.clone(), footer_area);
+
+        if let Some(modal) = &self.new_modal {
+            frame.render_widget(modal, frame.area());
+        }
+        if let Some(dialog) = self.confirm_dialog.clone() {
+            frame.render_widget(dialog, frame.area());
+        }
     }
 }
 

@@ -1,8 +1,9 @@
 use core::time::Duration;
 use std::{
+    env,
     io::stdout,
     panic::{set_hook, take_hook},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use crossterm::{
@@ -24,14 +25,20 @@ use k9tui::{
     },
 };
 use ratatui::DefaultTerminal;
-use tokio::sync::mpsc::{
-    UnboundedReceiver, UnboundedSender, unbounded_channel,
+use tokio::{
+    sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+    time::interval,
 };
 
 #[cfg(unix)]
 use crate::hooks::HookSocket;
 use crate::{
-    keymap::SPEC, pty::SessionId, session::SessionRow, status::Status,
+    keymap::SPEC,
+    new_session::NewSessionModal,
+    pty::SessionId,
+    session::{Session, SessionRow},
+    sessions::Pending,
+    status::Status,
 };
 
 pub const APP_NAME: &str = r"        _  _
@@ -46,23 +53,24 @@ pub const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Update pushed from a background task into the app's event loop. Later
 /// tasks add variants.
-#[allow(dead_code, reason = "later tasks send events")]
 pub enum BackgroundEvent {
     /// Message for the status line from a background task.
     Status(String),
     /// Status reported by an agent hook (`a4s notify`).
     Hook { id: SessionId, status: Status },
+    /// New output arrived on this session's PTY.
+    Output(SessionId),
+    /// Once a second: idle detection and exit polling.
+    Tick,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[allow(dead_code, reason = "agent view arrives in a later task")]
 pub enum View {
     #[default]
     Sessions,
     Agent,
 }
 
-#[allow(dead_code, reason = "fields are used by later tasks")]
 pub struct App {
     pub(crate) running: bool,
     pub(crate) config: Config,
@@ -71,6 +79,18 @@ pub struct App {
     pub(crate) status_line: StatusLine,
     pub(crate) confirm_dialog: Option<ConfirmDialog>,
     pub(crate) build_info: String,
+    /// Sessions in table order; position + 1 is the `#` and `Ctrl+N` number.
+    pub(crate) sessions_by_id: Vec<Session>,
+    /// Most recently focused first.
+    pub(crate) recent: Vec<SessionId>,
+    pub(crate) focused: Option<SessionId>,
+    pub(crate) next_id: SessionId,
+    pub(crate) new_modal: Option<NewSessionModal>,
+    pub(crate) pending: Option<Pending>,
+    /// Default directory for new sessions.
+    pub(crate) launch_dir: PathBuf,
+    /// BELs sent for newly blocked background sessions.
+    pub(crate) bells: u32,
     pub(crate) bg_tx: UnboundedSender<BackgroundEvent>,
     pub(crate) bg_rx: UnboundedReceiver<BackgroundEvent>,
     /// Keeps the hook socket alive (and removes it on drop).
@@ -90,6 +110,14 @@ impl App {
             status_line: StatusLine::new(),
             confirm_dialog: None,
             build_info: format!("Name: {PKG_NAME}\nVersion: {PKG_VERSION}"),
+            sessions_by_id: Vec::new(),
+            recent: Vec::new(),
+            focused: None,
+            next_id: 1,
+            new_modal: None,
+            pending: None,
+            launch_dir: env::current_dir().unwrap_or_default(),
+            bells: 0,
             bg_tx,
             bg_rx,
             #[cfg(unix)]
@@ -130,14 +158,22 @@ impl App {
     }
 
     pub(crate) fn drain_background_events(&mut self) {
+        let mut changed = false;
         while let Ok(event) = self.bg_rx.try_recv() {
+            changed = true;
             match event {
                 BackgroundEvent::Status(message) => {
                     self.status_line.set_message(message);
                 }
-                // Task 6 routes hooks to sessions.
-                BackgroundEvent::Hook { .. } => {}
+                BackgroundEvent::Hook { id, status } => {
+                    self.on_hook(id, status);
+                }
+                BackgroundEvent::Output(id) => self.on_output(id),
+                BackgroundEvent::Tick => self.on_tick(),
             }
+        }
+        if changed {
+            self.refresh_table();
         }
     }
 
@@ -177,6 +213,13 @@ impl TuiApp for App {
             // Hooks are best effort: run without them if binding fails.
             self.hook_socket = HookSocket::bind(self.bg_tx.clone()).ok();
         }
+        let tx = self.bg_tx.clone();
+        tokio::spawn(async move {
+            let mut every = interval(Duration::from_secs(1));
+            while tx.send(BackgroundEvent::Tick).is_ok() {
+                every.tick().await;
+            }
+        });
         let _guard = InputModes::enter();
         self.run(terminal)
     }

@@ -1,7 +1,6 @@
 //! A child process on a PTY, with its output parsed into a vt100 screen.
 use core::error::Error;
 use std::{
-    env,
     io::{self, Read, Write},
     path::Path,
     sync::{Arc, Mutex, MutexGuard},
@@ -13,7 +12,7 @@ use portable_pty::{
     Child, CommandBuilder, MasterPty, PtySize, native_pty_system,
 };
 
-use crate::{defaults::SCROLLBACK_LINES, keys::KittyMode};
+use crate::{agent::on_path, defaults::SCROLLBACK_LINES, keys::KittyMode};
 
 pub type SessionId = u64;
 
@@ -43,16 +42,6 @@ fn to_io(e: impl Into<Box<dyn Error + Send + Sync>>) -> io::Error {
     }
 }
 
-/// portable-pty reports a missing binary as a plain string error, so check up front.
-fn on_path(prog: &str, cwd: &Path) -> bool {
-    if prog.contains('/') {
-        return cwd.join(prog).is_file();
-    }
-    env::var_os("PATH").is_some_and(|path| {
-        env::split_paths(&path).any(|d| d.join(prog).is_file())
-    })
-}
-
 impl Pty {
     /// `on_output` runs on the reader thread after each chunk and once more at EOF.
     ///
@@ -69,7 +58,8 @@ impl Pty {
         let (prog, args) = cmd.split_first().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "empty command")
         })?;
-        if !on_path(prog, cwd) {
+        // portable-pty reports a missing binary as a plain string error.
+        if !on_path(prog) {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("{prog} not found on PATH"),
