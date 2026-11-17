@@ -99,8 +99,10 @@ fn csi_u_code(code: KeyCode) -> Option<u32> {
 /// Kitty form for modified keys; `None` means fall back to legacy bytes.
 fn kitty(key: KeyEvent) -> Option<Vec<u8>> {
     let mut m = key.modifiers;
-    if matches!(key.code, KeyCode::Char(_)) {
-        // Shift on text is already in the char; send it as plain text.
+    if matches!(key.code, KeyCode::Char(_))
+        && !m.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        // Shift on plain text is already in the char; keep it with Ctrl/Alt.
         m.remove(KeyModifiers::SHIFT);
     } else if key.code == KeyCode::BackTab {
         m.insert(KeyModifiers::SHIFT);
@@ -116,6 +118,18 @@ fn kitty(key: KeyEvent) -> Option<Vec<u8>> {
     Some(format!("\x1b[{num};{mods}{fin}").into_bytes())
 }
 
+const fn ctrl_punct(c: char) -> Option<u8> {
+    match c {
+        ' ' | '@' => Some(0x00),
+        '[' => Some(0x1b),
+        '\\' => Some(0x1c),
+        ']' => Some(0x1d),
+        '^' => Some(0x1e),
+        '_' => Some(0x1f),
+        _ => None,
+    }
+}
+
 fn legacy(key: KeyEvent, app_cursor: bool) -> Vec<u8> {
     let mut out = Vec::new();
     if key.modifiers.contains(KeyModifiers::ALT) {
@@ -126,8 +140,8 @@ fn legacy(key: KeyEvent, app_cursor: bool) -> Vec<u8> {
             let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
             if ctrl && c.is_ascii_alphabetic() {
                 out.push(c.to_ascii_lowercase() as u8 - b'a' + 1);
-            } else if ctrl && c == ' ' {
-                out.push(0);
+            } else if let (true, Some(b)) = (ctrl, ctrl_punct(c)) {
+                out.push(b);
             } else {
                 let mut b = [0; 4];
                 out.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
@@ -309,6 +323,32 @@ mod tests {
                 false,
                 b"\x1bx".to_vec(),
             ),
+            (
+                k(KeyCode::Char('['), KeyModifiers::CONTROL),
+                false,
+                vec![0x1b],
+            ),
+            (
+                k(KeyCode::Char('\\'), KeyModifiers::CONTROL),
+                false,
+                vec![0x1c],
+            ),
+            (
+                k(KeyCode::Char(']'), KeyModifiers::CONTROL),
+                false,
+                vec![0x1d],
+            ),
+            (
+                k(KeyCode::Char('^'), KeyModifiers::CONTROL),
+                false,
+                vec![0x1e],
+            ),
+            (
+                k(KeyCode::Char('_'), KeyModifiers::CONTROL),
+                false,
+                vec![0x1f],
+            ),
+            (k(KeyCode::Char('@'), KeyModifiers::CONTROL), false, vec![0]),
             (k(KeyCode::Up, n), false, b"\x1b[A".to_vec()),
             (k(KeyCode::Up, n), true, b"\x1bOA".to_vec()),
             (k(KeyCode::Enter, n), false, b"\r".to_vec()),
@@ -343,6 +383,17 @@ mod tests {
         assert_eq!(
             encode(k(KeyCode::Char('c'), KeyModifiers::CONTROL), true, false),
             b"\x1b[99;5u"
+        );
+        assert_eq!(
+            encode(
+                k(
+                    KeyCode::Char('c'),
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT
+                ),
+                true,
+                false
+            ),
+            b"\x1b[99;6u"
         );
         assert_eq!(
             encode(k(KeyCode::Up, KeyModifiers::CONTROL), true, false),
@@ -380,7 +431,11 @@ mod tests {
         let mut m = KittyMode::default();
         m.feed(b"\x1b[>1");
         m.feed(&[b'0'; 1000]);
-        assert!(m.carry.len() <= CARRY_CAP);
+        m.feed(b"u");
+        assert!(!m.enabled(), "garbage run must not complete a sequence");
+        m.feed(b"\x1b[>1u");
+        assert!(m.enabled(), "valid sequence after garbage still parses");
+        m.feed(b"\x1b[<u");
         for _ in 0..100 {
             m.feed(b"\x1b[>1u");
         }
