@@ -1,6 +1,6 @@
 # t7s
 
-k9s-style terminal UIs in Rust ([Ratatui](https://ratatui.rs)). **t7s** is short for “terminals”: **d7s** (databases), **c8s** (containers), **p7s** (processes), and **k9tui** (shared UI crate).
+k9s-style terminal UIs in Rust ([Ratatui](https://ratatui.rs)). **t7s** is short for “terminals”: **d7s** (databases), **c8s** (containers), **p7s** (processes), **a4s** (coding agents), and **k9tui** (shared UI crate).
 
 Inspired by [k9s](https://k9scli.io/) — keyboard-driven, table-first TUIs for more than Kubernetes.
 
@@ -26,7 +26,7 @@ System process viewer: live process list (CPU/memory), sort, filter, describe, s
 
 ### [a4s](crates/a4s)
 
-Agent multiplexer: run CLI coding agents side by side in PTY sessions (early scaffold). [README](crates/a4s/README.md).
+Agent multiplexer: run CLI coding agents side by side in PTY sessions. [README](crates/a4s/README.md).
 
 ### [k9tui](crates/k9tui)
 
