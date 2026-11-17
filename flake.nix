@@ -139,6 +139,7 @@
           d7s = mkCrate "d7s";
           c8s = mkCrate "c8s";
           p7s = mkCrate "p7s";
+          a4s = mkCrate "a4s";
         };
 
         # Formatter configuration

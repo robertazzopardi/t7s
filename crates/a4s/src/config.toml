@@ -1,0 +1,25 @@
+# Built-in a4s definitions, merged over k9tui's config.toml.
+[a4s.keys]
+open = "enter"
+new = "c"
+kill = "K"
+forget = "F"
+restart = "r"
+
+[a4s.screens.sessions]
+hotkeys = [
+  { action = "open", label = "open" },
+  { action = "new", label = "new" },
+  { action = "kill", label = "kill" },
+  { action = "forget", label = "forget" },
+  { action = "restart", label = "restart" },
+]
+hidden = ["search", "quit", "back", "down", "up", "top", "bottom"]
+
+[a4s.screens.agent]
+typing = true
+
+[a4s.screens.global]
+hotkeys = [
+  { action = "quit", label = "quit" },
+]
