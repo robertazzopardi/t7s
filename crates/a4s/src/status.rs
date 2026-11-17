@@ -48,7 +48,9 @@ impl StatusTracker {
 
     /// Quiet `Working` output for `IDLE_AFTER` becomes `Done`.
     pub fn tick(&mut self, now: Instant) {
-        if self.status == Status::Working
+        // Once a hook has reported, it is the authority on Working/Done.
+        if !self.hook_seen
+            && self.status == Status::Working
             && now.saturating_duration_since(self.last_output) >= IDLE_AFTER
         {
             self.status = Status::Done;
@@ -138,6 +140,15 @@ mod tests {
         t.hook(Status::Done);
         t.observe("esc to interrupt", claude(), now);
         assert_eq!(t.status(), Status::Done);
+    }
+
+    #[test]
+    fn tick_does_not_override_hook() {
+        let now = Instant::now();
+        let mut t = StatusTracker::new(now);
+        t.hook(Status::Working);
+        t.tick(now + IDLE_AFTER * 2);
+        assert_eq!(t.status(), Status::Working);
     }
 
     #[test]

@@ -1,10 +1,12 @@
 //! Agent hook channel: `a4s notify <state>` writes `"<id> <state>\n"` to a
 //! unix socket the running app listens on. Unix only.
 
+use core::time::Duration;
 use std::{
-    env, fs,
+    env,
+    fs::{self, Permissions},
     io::{self, Write},
-    os::unix::net::UnixStream,
+    os::unix::{fs::PermissionsExt, net::UnixStream},
     path::{Path, PathBuf},
     process,
 };
@@ -13,6 +15,7 @@ use tokio::{
     io::{AsyncBufReadExt, BufReader},
     net::UnixListener,
     sync::mpsc::UnboundedSender,
+    time::sleep,
 };
 
 use crate::{
@@ -48,8 +51,13 @@ impl HookSocket {
         let path = env::temp_dir().join(socket_name(process::id()));
         let _ = fs::remove_file(&path);
         let listener = UnixListener::bind(&path)?;
+        let _ = fs::set_permissions(&path, Permissions::from_mode(0o600));
         tokio::spawn(async move {
-            while let Ok((conn, _)) = listener.accept().await {
+            loop {
+                let Ok((conn, _)) = listener.accept().await else {
+                    sleep(Duration::from_millis(100)).await;
+                    continue;
+                };
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     let mut lines = BufReader::new(conn).lines();
