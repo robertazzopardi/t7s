@@ -4,7 +4,8 @@
 use std::{
     env::var_os,
     ffi::OsString,
-    fs, io,
+    fs::{self, OpenOptions},
+    io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -77,7 +78,11 @@ pub fn ensure_excluded(repo: &Path) -> io::Result<()> {
     };
     let common = repo.join(common); // an absolute result replaces `repo`
     let file = common.join("info").join("exclude");
-    let text = fs::read_to_string(&file).unwrap_or_default();
+    let text = match fs::read_to_string(&file) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e), // never overwrite what we cannot read
+    };
     if text.lines().any(|l| l.trim() == "/.a4s/") {
         return Ok(());
     }
@@ -87,7 +92,11 @@ pub fn ensure_excluded(repo: &Path) -> io::Result<()> {
     } else {
         "\n"
     };
-    fs::write(&file, format!("{text}{sep}/.a4s/\n"))
+    OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&file)?
+        .write_all(format!("{sep}/.a4s/\n").as_bytes())
 }
 
 fn write_atomic(path: &Path, file: &File) -> io::Result<()> {
@@ -100,8 +109,37 @@ fn write_atomic(path: &Path, file: &File) -> io::Result<()> {
     fs::rename(&tmp, path)
 }
 
-fn read(path: &Path) -> Option<File> {
-    toml::from_str(&fs::read_to_string(path).ok()?).ok()
+/// Missing file: `None`. Unreadable or corrupt file: moved aside to a
+/// `.bak` (never clobbering an earlier one), a warning is pushed, `None`.
+fn read(path: &Path, warnings: &mut Vec<String>) -> Option<File> {
+    let text = match fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            warnings.push(format!("cannot read {}: {e}", path.display()));
+            return None;
+        }
+    };
+    match toml::from_str(&text) {
+        Ok(f) => Some(f),
+        Err(e) => {
+            let mut bak = path.with_extension("toml.bak");
+            let mut n = 1;
+            while bak.exists() {
+                bak = path.with_extension(format!("toml.bak.{n}"));
+                n += 1;
+            }
+            let moved = match fs::rename(path, &bak) {
+                Ok(()) => format!("saved as {}", bak.display()),
+                Err(re) => format!("backup failed: {re}"),
+            };
+            warnings.push(format!(
+                "corrupt manifest {} ({e}); {moved}",
+                path.display()
+            ));
+            None
+        }
+    }
 }
 
 /// Write one file per repo plus the global file. Repos listed by the
@@ -112,7 +150,10 @@ fn read(path: &Path) -> Option<File> {
 /// The first write error; other files are still attempted.
 pub fn save(entries: &[Entry], state_home: &Path) -> io::Result<()> {
     let global_path = manifest_path(None, state_home);
-    let mut repos = read(&global_path).map(|f| f.repos).unwrap_or_default();
+    let mut ignored = Vec::new(); // load already reported these
+    let mut repos = read(&global_path, &mut ignored)
+        .map(|f| f.repos)
+        .unwrap_or_default();
     for r in entries.iter().filter_map(|e| e.repo.as_ref()) {
         if !repos.contains(r) {
             repos.push(r.clone());
@@ -129,6 +170,8 @@ pub fn save(entries: &[Entry], state_home: &Path) -> io::Result<()> {
             .filter(|e| e.repo.as_ref() == Some(&repo))
             .cloned()
             .collect();
+        // Back up a corrupt repo file before it is replaced.
+        let _ = read(&manifest_path(Some(&repo), state_home), &mut ignored);
         let r = ensure_excluded(&repo).and_then(|()| {
             write_atomic(
                 &manifest_path(Some(&repo), state_home),
@@ -156,19 +199,24 @@ pub fn save(entries: &[Entry], state_home: &Path) -> io::Result<()> {
     result.and(r)
 }
 
-/// Global entries plus each listed repo's entries; unreadable files skipped.
+/// Global entries plus each listed repo's entries, and warnings for files
+/// that were corrupt or unreadable (corrupt ones are backed up).
 #[must_use]
-pub fn load(state_home: &Path) -> Vec<Entry> {
-    let Some(global) = read(&manifest_path(None, state_home)) else {
-        return Vec::new();
+pub fn load(state_home: &Path) -> (Vec<Entry>, Vec<String>) {
+    let mut warnings = Vec::new();
+    let Some(global) = read(&manifest_path(None, state_home), &mut warnings)
+    else {
+        return (Vec::new(), warnings);
     };
     let mut out = global.sessions;
     for repo in &global.repos {
-        if let Some(f) = read(&manifest_path(Some(repo), state_home)) {
+        if let Some(f) =
+            read(&manifest_path(Some(repo), state_home), &mut warnings)
+        {
             out.extend(f.sessions);
         }
     }
-    out
+    (out, warnings)
 }
 
 #[cfg(test)]
@@ -207,7 +255,7 @@ mod tests {
         let r = repo_root(repo.path()).unwrap();
         let es = vec![entry("a", &r, Some(&r)), entry("b", other.path(), None)];
         save(&es, home.path()).unwrap();
-        let mut got = load(home.path());
+        let mut got = load(home.path()).0;
         got.sort_by(|x, y| x.name.cmp(&y.name));
         assert_eq!(got, es);
     }
@@ -238,7 +286,7 @@ mod tests {
         let es = [entry("a", &r, Some(&r)), entry("b", other.path(), None)];
         save(&es, home.path()).unwrap();
         drop(repo);
-        let got = load(home.path());
+        let got = load(home.path()).0;
         assert_eq!(got, vec![entry("b", other.path(), None)]);
     }
 
@@ -248,9 +296,61 @@ mod tests {
         let r = repo_root(repo.path()).unwrap();
         save(&[entry("a", &r, Some(&r))], home.path()).unwrap();
         save(&[], home.path()).unwrap();
-        assert_eq!(load(home.path()), vec![]);
-        let f = read(&r.join(".a4s/sessions.toml")).unwrap();
+        assert_eq!(load(home.path()).0, vec![]);
+        let f = read(&r.join(".a4s/sessions.toml"), &mut vec![]).unwrap();
         assert_eq!(f.sessions, vec![]);
+    }
+
+    #[test]
+    fn corrupt_global_is_backed_up_not_destroyed() {
+        let (home, other) = (tmp(), tmp());
+        let path = manifest_path(None, home.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "not [valid toml").unwrap();
+        let (got, warnings) = load(home.path());
+        assert_eq!(got, vec![]);
+        assert_eq!(warnings.len(), 1);
+        let bak = path.with_extension("toml.bak");
+        assert_eq!(fs::read_to_string(&bak).unwrap(), "not [valid toml");
+        save(&[entry("b", other.path(), None)], home.path()).unwrap();
+        assert_eq!(fs::read_to_string(&bak).unwrap(), "not [valid toml");
+        assert_eq!(load(home.path()).0.len(), 1);
+    }
+
+    #[test]
+    fn corrupt_repo_file_is_backed_up() {
+        let (repo, home) = (init_repo(), tmp());
+        let r = repo_root(repo.path()).unwrap();
+        save(&[entry("a", &r, Some(&r))], home.path()).unwrap();
+        let path = manifest_path(Some(&r), home.path());
+        fs::write(&path, "garbage = [").unwrap();
+        let (got, warnings) = load(home.path());
+        assert_eq!((got, warnings.len()), (vec![], 1));
+        let bak = path.with_extension("toml.bak");
+        assert_eq!(fs::read_to_string(&bak).unwrap(), "garbage = [");
+        // A second corrupt file must not clobber the first backup.
+        fs::write(&path, "again = [").unwrap();
+        let _ = load(home.path());
+        assert_eq!(fs::read_to_string(&bak).unwrap(), "garbage = [");
+        assert!(path.with_extension("toml.bak.1").exists());
+    }
+
+    #[test]
+    fn exclude_keeps_existing_line_without_newline() {
+        let repo = init_repo();
+        let file = repo.path().join(".git/info/exclude");
+        fs::write(&file, "target").unwrap();
+        ensure_excluded(repo.path()).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "target\n/.a4s/\n");
+    }
+
+    #[test]
+    fn unreadable_exclude_is_not_truncated() {
+        let repo = init_repo();
+        let file = repo.path().join(".git/info/exclude");
+        fs::write(&file, [0xff, 0xfe, b'\n']).unwrap();
+        assert!(ensure_excluded(repo.path()).is_err());
+        assert_eq!(fs::read(&file).unwrap(), [0xff, 0xfe, b'\n']);
     }
 
     #[test]

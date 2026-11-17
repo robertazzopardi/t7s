@@ -123,7 +123,9 @@ impl App {
         let name = name.trim();
         let error = if name.is_empty() {
             Some("name must not be empty".to_string())
-        } else if self.sessions_by_id.iter().any(|s| s.name == name) {
+        } else if self.sessions_by_id.iter().any(|s| s.name == name)
+            || self.orphans.iter().any(|o| o.name == name)
+        {
             Some(format!("name `{name}` is already in use"))
         } else if !dir.is_dir() {
             Some(format!("directory `{}` does not exist", dir.display()))

@@ -178,7 +178,8 @@ impl App {
     /// Turn saved entries into exited sessions; unknown agents become orphans.
     pub(crate) fn load_sessions(&mut self, home: &Path) {
         let mut unknown = Vec::new();
-        for e in manifest::load(home) {
+        let (entries, warnings) = manifest::load(home);
+        for e in entries {
             let Some(agent) = profile(&e.agent) else {
                 unknown.push(e.name.clone());
                 self.orphans.push(e);
@@ -198,11 +199,15 @@ impl App {
             });
             self.next_id += 1;
         }
+        let mut notes = warnings;
         if !unknown.is_empty() {
-            self.status_line.set_message(format!(
+            notes.push(format!(
                 "unknown agent for: {} (kept in manifest)",
                 unknown.join(", ")
             ));
+        }
+        if !notes.is_empty() {
+            self.status_line.set_message(notes.join("; "));
         }
         self.refresh_table();
     }
@@ -383,8 +388,22 @@ mod tests {
 
         app.state_home = Some(home.path().into());
         app.persist();
-        let mut got = manifest::load(home.path());
+        let mut got = manifest::load(home.path()).0;
         got.sort_by(|x, y| x.name.cmp(&y.name));
         assert_eq!(got, saved);
+    }
+
+    #[test]
+    fn new_session_cannot_reuse_orphan_name() {
+        let mut app = App::new();
+        app.orphans.push(Entry {
+            name: "ghost".into(),
+            agent: "nope".into(),
+            dir: "/".into(),
+            repo: None,
+        });
+        let agent = profile("claude").unwrap();
+        assert!(!app.create_session("ghost", agent, Path::new("/")));
+        assert!(app.sessions_by_id.is_empty());
     }
 }
