@@ -1,5 +1,6 @@
 ---
 source: crates/a4s/src/default_bars_test.rs
+assertion_line: 26
 expression: out
 ---
 [sessions]
@@ -9,3 +10,6 @@ K kill
 F forget
 r restart
 [agent]
+Ctrl+a s sessions
+Ctrl+a ? help
+Ctrl+q quit

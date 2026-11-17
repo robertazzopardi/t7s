@@ -71,7 +71,12 @@ impl App {
         } else {
             "sessions"
         });
-        let global = self.config.bar("global");
+        // In the agent view q goes to the agent; its bar lists the chords.
+        let global = if self.view == View::Agent {
+            Vec::new()
+        } else {
+            self.config.bar("global")
+        };
         let recent = self.recent_hotkeys();
         frame.render_widget(
             TopBarView {

@@ -20,7 +20,7 @@ use crossterm::{
 use k9tui::{
     TuiApp,
     config::{AppSpec, Config, defaults},
-    error::Result,
+    error::{Result, err},
     event::poll_input,
     widgets::{
         modal::ConfirmDialog, status_line::StatusLine, table::TableDataState,
@@ -59,8 +59,6 @@ pub const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Update pushed from a background task into the app's event loop. Later
 /// tasks add variants.
 pub enum BackgroundEvent {
-    /// Message for the status line from a background task.
-    Status(String),
     /// Status reported by an agent hook (`a4s notify`).
     Hook { id: SessionId, status: Status },
     /// New output arrived on this session's PTY.
@@ -99,6 +97,8 @@ pub struct App {
     pub(crate) bells: u32,
     /// Where manifests are saved; `None` turns persistence off (tests).
     pub(crate) state_home: Option<PathBuf>,
+    /// Error from the latest save, reported on exit if quitting with it.
+    pub(crate) save_error: Option<String>,
     /// Loaded entries with an unknown agent, re-saved untouched.
     pub(crate) orphans: Vec<Entry>,
     /// Repos whose manifest is already reflected in memory.
@@ -132,6 +132,7 @@ impl App {
             launch_dir: env::current_dir().unwrap_or_default(),
             bells: 0,
             state_home: None,
+            save_error: None,
             orphans: Vec::new(),
             loaded_repos: HashSet::new(),
             bg_tx,
@@ -173,9 +174,11 @@ impl App {
             })
             .chain(self.orphans.iter().cloned())
             .collect();
-        if let Err(e) = manifest::save(&entries, home) {
-            self.status_line
-                .set_message(format!("could not save sessions: {e}"));
+        self.save_error = manifest::save(&entries, home)
+            .err()
+            .map(|e| format!("could not save sessions: {e}"));
+        if let Some(e) = &self.save_error {
+            self.status_line.set_message(e.clone());
         }
     }
 
@@ -256,7 +259,8 @@ impl App {
     /// Run the application's main loop.
     ///
     /// # Errors
-    /// If drawing or reading terminal events fails.
+    /// If drawing or reading terminal events fails, or the final save of
+    /// the sessions failed (printed once the terminal is restored).
     pub fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
 
@@ -265,7 +269,7 @@ impl App {
             terminal.draw(|frame| self.render(frame))?;
             self.poll_terminal_event()?;
         }
-        Ok(())
+        self.save_error.take().map_or(Ok(()), |e| Err(err(e)))
     }
 
     pub(crate) fn drain_background_events(&mut self) {
@@ -275,9 +279,6 @@ impl App {
         while let Ok(event) = self.bg_rx.try_recv() {
             changed = true;
             match event {
-                BackgroundEvent::Status(message) => {
-                    self.status_line.set_message(message);
-                }
                 BackgroundEvent::Hook { id, status } => {
                     self.on_hook(id, status);
                 }

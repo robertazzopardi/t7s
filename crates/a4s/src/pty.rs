@@ -2,8 +2,9 @@
 use core::error::Error;
 use std::{
     io::{self, Read, Write},
+    panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc},
     thread,
     time::Duration,
 };
@@ -19,8 +20,10 @@ pub type SessionId = u64;
 pub struct Pty {
     child: Box<dyn Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
-    parser: Arc<Mutex<vt100::Parser>>,
+    /// Bytes for the writer thread, so a child that stops reading never
+    /// blocks the UI thread.
+    writer: mpsc::Sender<Vec<u8>>,
+    parser: Arc<Mutex<vt100::Parser<Replies>>>,
     kitty: Arc<Mutex<KittyMode>>,
     exit: Option<u32>,
 }
@@ -39,6 +42,43 @@ fn to_io(e: impl Into<Box<dyn Error + Send + Sync>>) -> io::Error {
     match e.into().downcast::<io::Error>() {
         Ok(e) => *e,
         Err(e) => io::Error::other(e),
+    }
+}
+
+/// Answers the terminal queries agents block on (cursor position, device
+/// attributes, kitty keyboard flags) by writing the reply to the PTY.
+pub struct Replies {
+    tx: mpsc::Sender<Vec<u8>>,
+    kitty: Arc<Mutex<KittyMode>>,
+}
+
+impl vt100::Callbacks for Replies {
+    fn unhandled_csi(
+        &mut self,
+        screen: &mut vt100::Screen,
+        i1: Option<u8>,
+        i2: Option<u8>,
+        params: &[&[u16]],
+        c: char,
+    ) {
+        let first = params.first().and_then(|p| p.first()).copied();
+        let reply = match (i1, i2, c, first) {
+            (None, None, 'n', Some(6)) => {
+                let (row, col) = screen.cursor_position();
+                format!("\x1b[{};{}R", row + 1, col + 1)
+            }
+            (None, None, 'c', None | Some(0)) => "\x1b[?1;2c".to_string(),
+            (Some(b'?'), None, 'u', _) => {
+                let flags = self
+                    .kitty
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .flags();
+                format!("\x1b[?{flags}u")
+            }
+            _ => return,
+        };
+        let _ = self.tx.send(reply.into_bytes());
     }
 }
 
@@ -77,30 +117,52 @@ impl Pty {
         let child = pair.slave.spawn_command(builder).map_err(to_io)?;
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(to_io)?;
-        let writer = pair.master.take_writer().map_err(to_io)?;
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(
+        let mut pty_writer = pair.master.take_writer().map_err(to_io)?;
+        let (writer, rx) = mpsc::channel::<Vec<u8>>();
+        thread::spawn(move || {
+            while let Ok(bytes) = rx.recv() {
+                if pty_writer
+                    .write_all(&bytes)
+                    .and_then(|()| pty_writer.flush())
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        let kitty = Arc::new(Mutex::new(KittyMode::default()));
+        let replies = Replies {
+            tx: writer.clone(),
+            kitty: Arc::clone(&kitty),
+        };
+        let parser = Arc::new(Mutex::new(vt100::Parser::new_with_callbacks(
             rows,
             cols,
             SCROLLBACK_LINES,
+            replies,
         )));
-
-        let kitty = Arc::new(Mutex::new(KittyMode::default()));
         let thread_parser = Arc::clone(&parser);
         let thread_kitty = Arc::clone(&kitty);
         thread::spawn(move || {
             let mut buf = [0u8; 8192];
             while let Ok(n @ 1..) = reader.read(&mut buf) {
-                if let (Ok(mut p), Some(chunk)) =
-                    (thread_parser.lock(), buf.get(..n))
-                {
-                    p.process(chunk);
-                }
-                if let (Ok(mut k), Some(chunk)) =
-                    (thread_kitty.lock(), buf.get(..n))
-                {
-                    k.feed(chunk);
-                }
+                let chunk = buf.get(..n).unwrap_or_default();
+                // Kitty first, so a flags query in this chunk sees a push.
+                thread_kitty
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .feed(chunk);
+                let mut p = thread_parser
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                // A vt100 bug must not take the app (and every agent) down.
+                let ok = catch_unwind(AssertUnwindSafe(|| p.process(chunk)));
+                drop(p);
                 on_output();
+                if ok.is_err() {
+                    break;
+                }
             }
             on_output();
         });
@@ -115,11 +177,14 @@ impl Pty {
         })
     }
 
+    /// Queue bytes for the child; never blocks.
+    ///
     /// # Errors
-    /// If the PTY write fails (e.g. the child is gone).
+    /// If the writer thread has stopped (a PTY write failed).
     pub fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
-        self.writer.write_all(bytes)?;
-        self.writer.flush()
+        self.writer
+            .send(bytes.to_vec())
+            .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))
     }
 
     /// # Errors
@@ -130,16 +195,18 @@ impl Pty {
         Ok(())
     }
 
-    /// # Panics
-    /// If the reader thread panicked while holding the lock.
-    pub fn screen(&self) -> MutexGuard<'_, vt100::Parser> {
-        self.parser.lock().expect("parser lock poisoned")
+    /// The parser, even if a reader thread panicked while holding it.
+    pub fn screen(&self) -> MutexGuard<'_, vt100::Parser<Replies>> {
+        self.parser.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Whether the child enabled the kitty keyboard protocol.
     #[must_use]
     pub fn kitty_keys(&self) -> bool {
-        self.kitty.lock().is_ok_and(|k| k.enabled())
+        self.kitty
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .enabled()
     }
 
     /// Exit code once the child has exited.
@@ -165,5 +232,37 @@ impl Drop for Pty {
             }
             thread::sleep(Duration::from_millis(10));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queries_get_replies() {
+        let (tx, rx) = mpsc::channel();
+        let kitty = Arc::new(Mutex::new(KittyMode::default()));
+        let replies = Replies {
+            tx,
+            kitty: Arc::clone(&kitty),
+        };
+        let mut p = vt100::Parser::new_with_callbacks(24, 80, 0, replies);
+        p.process(b"ab\x1b[6n\x1b[c\x1b[?u");
+        kitty
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .feed(b"\x1b[>3u");
+        p.process(b"\x1b[?u");
+        let got: Vec<Vec<u8>> = rx.try_iter().collect();
+        assert_eq!(
+            got,
+            [
+                b"\x1b[1;3R".to_vec(),
+                b"\x1b[?1;2c".to_vec(),
+                b"\x1b[?0u".to_vec(),
+                b"\x1b[?3u".to_vec(),
+            ]
+        );
     }
 }

@@ -114,7 +114,12 @@ fn kitty(key: KeyEvent) -> Option<Vec<u8>> {
     if let Some(code) = csi_u_code(key.code) {
         return Some(format!("\x1b[{code};{mods}u").into_bytes());
     }
-    let (num, fin) = nav(key.code)?;
+    xterm_modified(key.code, mods)
+}
+
+/// xterm form `CSI <num> ; <mods> <final>` for a modified nav or F key.
+fn xterm_modified(code: KeyCode, mods: u8) -> Option<Vec<u8>> {
+    let (num, fin) = nav(code)?;
     Some(format!("\x1b[{num};{mods}{fin}").into_bytes())
 }
 
@@ -125,12 +130,18 @@ const fn ctrl_punct(c: char) -> Option<u8> {
         '\\' => Some(0x1c),
         ']' => Some(0x1d),
         '^' => Some(0x1e),
-        '_' => Some(0x1f),
+        '_' | '/' => Some(0x1f),
         _ => None,
     }
 }
 
 fn legacy(key: KeyEvent, app_cursor: bool) -> Vec<u8> {
+    let mods = mod_param(key.modifiers);
+    if mods != 1
+        && let Some(bytes) = xterm_modified(key.code, mods)
+    {
+        return bytes;
+    }
     let mut out = Vec::new();
     if key.modifiers.contains(KeyModifiers::ALT) {
         out.push(ESC);
@@ -298,9 +309,15 @@ impl KittyMode {
         }
     }
 
+    /// Top-of-stack flags, as reported to a `CSI ? u` query.
+    #[must_use]
+    pub fn flags(&self) -> u32 {
+        self.stack.last().copied().unwrap_or(0)
+    }
+
     #[must_use]
     pub fn enabled(&self) -> bool {
-        self.stack.last().is_some_and(|&f| f != 0)
+        self.flags() != 0
     }
 }
 
@@ -362,6 +379,51 @@ mod tests {
                 b"\x1b[Z".to_vec(),
             ),
             (k(KeyCode::Char('é'), n), false, "é".as_bytes().to_vec()),
+            (
+                k(KeyCode::Char('/'), KeyModifiers::CONTROL),
+                false,
+                vec![0x1f],
+            ),
+            (
+                k(KeyCode::Left, KeyModifiers::CONTROL),
+                false,
+                b"\x1b[1;5D".to_vec(),
+            ),
+            (
+                k(KeyCode::Left, KeyModifiers::CONTROL),
+                true,
+                b"\x1b[1;5D".to_vec(),
+            ),
+            (
+                k(KeyCode::Up, KeyModifiers::SHIFT),
+                false,
+                b"\x1b[1;2A".to_vec(),
+            ),
+            (
+                k(KeyCode::Left, KeyModifiers::ALT),
+                false,
+                b"\x1b[1;3D".to_vec(),
+            ),
+            (
+                k(KeyCode::Delete, KeyModifiers::CONTROL),
+                false,
+                b"\x1b[3;5~".to_vec(),
+            ),
+            (
+                k(KeyCode::F(5), KeyModifiers::CONTROL),
+                false,
+                b"\x1b[15;5~".to_vec(),
+            ),
+            (
+                k(KeyCode::F(1), KeyModifiers::SHIFT),
+                false,
+                b"\x1b[1;2P".to_vec(),
+            ),
+            (
+                k(KeyCode::F(4), KeyModifiers::CONTROL),
+                false,
+                b"\x1b[1;5S".to_vec(),
+            ),
         ];
         for (key, app, want) in cases {
             assert_eq!(encode(key, false, app), want, "{key:?}");

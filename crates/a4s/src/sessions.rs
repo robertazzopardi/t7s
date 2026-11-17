@@ -2,8 +2,9 @@
 //! reacting to PTY output, hooks and the once-a-second tick.
 
 use std::{
+    env,
     io::{self, Write, stdout},
-    path::Path,
+    path::{Path, PathBuf, absolute},
     time::{Instant, SystemTime},
 };
 
@@ -28,6 +29,16 @@ pub enum Pending {
     Kill(SessionId),
     Forget(SessionId),
     Quit,
+}
+
+/// Expand a leading `~` to `home` and make `dir` absolute, so a session
+/// keeps pointing at the same place whatever a4s's working directory is.
+fn resolve_dir(dir: &Path, home: Option<&Path>) -> PathBuf {
+    let dir = match (dir.strip_prefix("~"), home) {
+        (Ok(rest), Some(home)) => home.join(rest),
+        _ => dir.to_path_buf(),
+    };
+    absolute(&dir).unwrap_or(dir)
 }
 
 /// PTY size used before the agent view resizes it to the real pane.
@@ -121,6 +132,10 @@ impl App {
         dir: &Path,
     ) -> bool {
         let name = name.trim();
+        let dir = &resolve_dir(
+            dir,
+            env::var_os("HOME").map(PathBuf::from).as_deref(),
+        );
         let repo = repo_root(dir);
         if let Some(r) = &repo {
             self.adopt_repo(r);
@@ -163,7 +178,7 @@ impl App {
             id,
             name: name.to_string(),
             agent: profile,
-            dir: dir.to_path_buf(),
+            dir: dir.clone(),
             pty: Some(pty),
             status: StatusTracker::new(Instant::now()),
             created: SystemTime::now(),
@@ -303,5 +318,26 @@ impl App {
             let _ = out.write_all(b"\x07");
             let _ = out.flush();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_dir_expands_tilde_and_relative() {
+        let home = Path::new("/home/me");
+        assert_eq!(resolve_dir(Path::new("~"), Some(home)), home);
+        assert_eq!(
+            resolve_dir(Path::new("~/src"), Some(home)),
+            home.join("src")
+        );
+        let rel = resolve_dir(Path::new("src"), Some(home));
+        assert!(rel.is_absolute() && rel.ends_with("src"), "{rel:?}");
+        assert_eq!(
+            resolve_dir(Path::new("/abs"), Some(home)),
+            Path::new("/abs")
+        );
     }
 }

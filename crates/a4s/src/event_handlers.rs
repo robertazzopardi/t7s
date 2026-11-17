@@ -177,8 +177,12 @@ impl App {
             self.request_quit();
             return;
         }
+        // Plain or Ctrl, as the top bar advertises `Ctrl+N`.
         if let KeyCode::Char(c @ '1'..='9') = key.code
-            && key.modifiers == KeyModifiers::NONE
+            && matches!(
+                key.modifiers,
+                KeyModifiers::NONE | KeyModifiers::CONTROL
+            )
         {
             let n = c.to_digit(10).map_or(0, |d| d as usize);
             if let Some(id) = self.sessions_by_id.get(n - 1).map(|s| s.id) {
@@ -314,7 +318,7 @@ mod tests {
     use core::{fmt::Write as _, time::Duration};
     use std::{
         env::temp_dir,
-        path::PathBuf,
+        path::{Path, PathBuf},
         thread::sleep,
         time::{Instant, SystemTime},
     };
@@ -416,6 +420,13 @@ mod tests {
         assert!(!app.create_session("  ", &SH, &tmp()));
         assert!(!app.create_session("two", &SH, &tmp().join("a4s-nope")));
         assert_eq!(app.sessions_by_id.len(), 1);
+    }
+
+    #[test]
+    fn relative_dir_is_stored_absolute() {
+        let mut app = App::new();
+        assert!(app.create_session("one", &SH, Path::new(".")));
+        assert!(app.sessions_by_id[0].dir.is_absolute());
     }
 
     #[test]
@@ -617,6 +628,9 @@ mod tests {
         assert_eq!(app.view, View::Sessions);
         press(&mut app, KeyCode::Char('1'));
         assert_eq!(app.view, View::Agent);
+        app.view = View::Sessions;
+        ctrl(&mut app, '1');
+        assert_eq!(app.view, View::Agent, "Ctrl+N works in sessions view");
     }
 
     #[test]

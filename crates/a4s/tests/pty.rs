@@ -76,6 +76,27 @@ fn drop_kills_child() {
 }
 
 #[test]
+fn write_to_child_that_never_reads_does_not_block() {
+    let mut p = spawn(&["sh", "-c", "sleep 30"]);
+    let start = Instant::now();
+    p.write(&vec![b'x'; 256 * 1024]).unwrap();
+    p.write(b"more").unwrap();
+    assert!(start.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn cursor_position_query_is_answered() {
+    // Raw mode so `dd` gets the `ESC[1;1R` reply without a newline.
+    let p = spawn(&[
+        "sh",
+        "-c",
+        "stty raw -echo; printf '\\033[6n'; dd bs=1 count=6 >/dev/null 2>&1; \
+         stty sane; echo got-cpr",
+    ]);
+    wait_for(|| screen_text(&p).contains("got-cpr").then_some(()));
+}
+
+#[test]
 fn missing_binary_is_not_found() {
     let cmd = vec!["a4s-no-such-cmd".to_owned()];
     let Err(e) = Pty::spawn(&cmd, Path::new("."), &[], 24, 80, || {}) else {

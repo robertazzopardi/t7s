@@ -18,6 +18,11 @@ hidden = ["search", "quit", "back", "down", "up", "top", "bottom"]
 
 [a4s.screens.agent]
 typing = true
+hotkeys = [
+  { key = "Ctrl+a s", label = "sessions" },
+  { key = "Ctrl+a ?", label = "help" },
+  { key = "Ctrl+q", label = "quit" },
+]
 
 [a4s.screens.global]
 hotkeys = [

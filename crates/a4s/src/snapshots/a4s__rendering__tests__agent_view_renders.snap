@@ -1,11 +1,11 @@
 ---
 source: crates/a4s/src/rendering.rs
-assertion_line: 235
+assertion_line: 240
 expression: dump(&terminal)
 ---
-         <Ctrl+1               <q> quit         _  _
-                                          __ _ | || |  ___
-                                         / _` || || |_/ __|
+            <Ctrl+1>  <Ctrl+a s> sessi          _  _
+                      <Ctrl+a ?> help     __ _ | || |  ___
+                      <Ctrl+q> quit      / _` || || |_/ __|
                                         | (_| ||__   _\__ \
                                          \__,_|   |_| |___/
 
