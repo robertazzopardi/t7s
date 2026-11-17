@@ -691,6 +691,7 @@ mod tests {
                 pty: None,
                 status: StatusTracker::new(Instant::now()),
                 created,
+                repo: None,
             });
         }
         app.sessions_by_id[1].status.exited(2);

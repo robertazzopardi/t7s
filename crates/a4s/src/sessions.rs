@@ -16,6 +16,7 @@ use crate::{
     agent::{AgentProfile, on_path, resolve_command},
     app::{App, BackgroundEvent, View},
     defaults::KILLED_CODE,
+    manifest::repo_root,
     pty::{Pty, SessionId},
     session::Session,
     status::{Status, StatusTracker},
@@ -160,7 +161,9 @@ impl App {
             pty: Some(pty),
             status: StatusTracker::new(Instant::now()),
             created: SystemTime::now(),
+            repo: repo_root(dir),
         });
+        self.persist();
         self.refresh_table();
         self.sessions
             .view
@@ -193,6 +196,7 @@ impl App {
         self.sessions_by_id.retain(|s| s.id != id || !s.is_exited());
         let gone = !self.sessions_by_id.iter().any(|s| s.id == id);
         if gone {
+            self.persist();
             self.recent.retain(|r| *r != id);
             if self.focused == Some(id) {
                 self.focused = None;

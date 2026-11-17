@@ -4,6 +4,7 @@ use std::{
     io::stdout,
     panic::{set_hook, take_hook},
     path::{Path, PathBuf},
+    time::{Instant, SystemTime},
 };
 
 use crossterm::{
@@ -33,13 +34,15 @@ use tokio::{
 #[cfg(unix)]
 use crate::hooks::HookSocket;
 use crate::{
+    agent::profile,
     chords::Router,
     keymap::SPEC,
+    manifest::{self, Entry},
     new_session::NewSessionModal,
     pty::SessionId,
     session::{Session, SessionRow},
     sessions::Pending,
-    status::Status,
+    status::{Status, StatusTracker},
 };
 
 pub const APP_NAME: &str = r"        _  _
@@ -93,6 +96,10 @@ pub struct App {
     pub(crate) launch_dir: PathBuf,
     /// BELs sent for newly blocked background sessions.
     pub(crate) bells: u32,
+    /// Where manifests are saved; `None` turns persistence off (tests).
+    pub(crate) state_home: Option<PathBuf>,
+    /// Loaded entries with an unknown agent, re-saved untouched.
+    pub(crate) orphans: Vec<Entry>,
     pub(crate) bg_tx: UnboundedSender<BackgroundEvent>,
     pub(crate) bg_rx: UnboundedReceiver<BackgroundEvent>,
     /// Keeps the hook socket alive (and removes it on drop).
@@ -121,6 +128,8 @@ impl App {
             router: Router::default(),
             launch_dir: env::current_dir().unwrap_or_default(),
             bells: 0,
+            state_home: None,
+            orphans: Vec::new(),
             bg_tx,
             bg_rx,
             #[cfg(unix)]
@@ -141,8 +150,61 @@ impl App {
         }
     }
 
-    pub(crate) const fn quit(&mut self) {
+    pub(crate) fn quit(&mut self) {
+        self.persist();
         self.running = false;
+    }
+
+    /// Save every session's manifest entry; errors go to the status line.
+    pub(crate) fn persist(&mut self) {
+        let Some(home) = &self.state_home else { return };
+        let entries: Vec<Entry> = self
+            .sessions_by_id
+            .iter()
+            .map(|s| Entry {
+                name: s.name.clone(),
+                agent: s.agent.name.to_string(),
+                dir: s.dir.clone(),
+                repo: s.repo.clone(),
+            })
+            .chain(self.orphans.iter().cloned())
+            .collect();
+        if let Err(e) = manifest::save(&entries, home) {
+            self.status_line
+                .set_message(format!("could not save sessions: {e}"));
+        }
+    }
+
+    /// Turn saved entries into exited sessions; unknown agents become orphans.
+    pub(crate) fn load_sessions(&mut self, home: &Path) {
+        let mut unknown = Vec::new();
+        for e in manifest::load(home) {
+            let Some(agent) = profile(&e.agent) else {
+                unknown.push(e.name.clone());
+                self.orphans.push(e);
+                continue;
+            };
+            let mut status = StatusTracker::new(Instant::now());
+            status.exited(0);
+            self.sessions_by_id.push(Session {
+                id: self.next_id,
+                name: e.name,
+                agent,
+                dir: e.dir,
+                pty: None,
+                status,
+                created: SystemTime::now(),
+                repo: e.repo,
+            });
+            self.next_id += 1;
+        }
+        if !unknown.is_empty() {
+            self.status_line.set_message(format!(
+                "unknown agent for: {} (kept in manifest)",
+                unknown.join(", ")
+            ));
+        }
+        self.refresh_table();
     }
 
     /// Run the application's main loop.
@@ -222,6 +284,9 @@ impl TuiApp for App {
     fn build(config: Config, (): ()) -> Result<Self> {
         let mut app = Self::new();
         app.config = config;
+        let home = manifest::state_home();
+        app.load_sessions(&home);
+        app.state_home = Some(home);
         Ok(app)
     }
 
@@ -286,5 +351,40 @@ fn restore(enhanced: bool) {
 impl Default for App {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persist_then_load_keeps_sessions_and_orphans() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let entry = |name: &str, agent: &str| Entry {
+            name: name.into(),
+            agent: agent.into(),
+            dir: dir.path().into(),
+            repo: None,
+        };
+        let saved = [entry("a", "claude"), entry("b", "nope")];
+        manifest::save(&saved, home.path()).unwrap();
+
+        let mut app = App::new();
+        app.load_sessions(home.path());
+        assert_eq!(app.sessions_by_id.len(), 1);
+        assert!(
+            app.sessions_by_id
+                .iter()
+                .all(|s| s.is_exited() && s.pty.is_none())
+        );
+        assert_eq!(app.orphans, vec![entry("b", "nope")]);
+
+        app.state_home = Some(home.path().into());
+        app.persist();
+        let mut got = manifest::load(home.path());
+        got.sort_by(|x, y| x.name.cmp(&y.name));
+        assert_eq!(got, saved);
     }
 }

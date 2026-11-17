@@ -26,6 +26,8 @@ pub struct Session {
     pub pty: Option<Pty>,
     pub status: StatusTracker,
     pub created: SystemTime,
+    /// Git repo containing `dir`, computed once at create.
+    pub repo: Option<PathBuf>,
 }
 
 impl Session {

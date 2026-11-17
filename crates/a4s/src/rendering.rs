@@ -248,6 +248,7 @@ mod tests {
                 pty: None,
                 status: StatusTracker::new(Instant::now()),
                 created: SystemTime::UNIX_EPOCH,
+                repo: None,
             });
         }
         app.sessions_by_id[2].status.exited(1);

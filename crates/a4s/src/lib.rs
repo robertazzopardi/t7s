@@ -9,6 +9,7 @@ pub mod event_handlers;
 pub mod hooks;
 pub mod keymap;
 pub mod keys;
+pub mod manifest;
 pub mod new_session;
 pub mod pty;
 pub mod rendering;
