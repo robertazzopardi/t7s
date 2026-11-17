@@ -13,7 +13,7 @@ use portable_pty::{
     Child, CommandBuilder, MasterPty, PtySize, native_pty_system,
 };
 
-use crate::defaults::SCROLLBACK_LINES;
+use crate::{defaults::SCROLLBACK_LINES, keys::KittyMode};
 
 pub type SessionId = u64;
 
@@ -22,6 +22,7 @@ pub struct Pty {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     parser: Arc<Mutex<vt100::Parser>>,
+    kitty: Arc<Mutex<KittyMode>>,
     exit: Option<u32>,
 }
 
@@ -93,7 +94,9 @@ impl Pty {
             SCROLLBACK_LINES,
         )));
 
+        let kitty = Arc::new(Mutex::new(KittyMode::default()));
         let thread_parser = Arc::clone(&parser);
+        let thread_kitty = Arc::clone(&kitty);
         thread::spawn(move || {
             let mut buf = [0u8; 8192];
             while let Ok(n @ 1..) = reader.read(&mut buf) {
@@ -101,6 +104,11 @@ impl Pty {
                     (thread_parser.lock(), buf.get(..n))
                 {
                     p.process(chunk);
+                }
+                if let (Ok(mut k), Some(chunk)) =
+                    (thread_kitty.lock(), buf.get(..n))
+                {
+                    k.feed(chunk);
                 }
                 on_output();
             }
@@ -112,6 +120,7 @@ impl Pty {
             master: pair.master,
             writer,
             parser,
+            kitty,
             exit: None,
         })
     }
@@ -137,10 +146,10 @@ impl Pty {
         self.parser.lock().expect("parser lock poisoned")
     }
 
-    /// Always `false` for now; Task 3 wires kitty keyboard protocol tracking.
+    /// Whether the child enabled the kitty keyboard protocol.
     #[must_use]
-    pub const fn kitty_keys(&self) -> bool {
-        false
+    pub fn kitty_keys(&self) -> bool {
+        self.kitty.lock().is_ok_and(|k| k.enabled())
     }
 
     /// Exit code once the child has exited.
