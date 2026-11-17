@@ -26,6 +26,7 @@ use crate::{
 pub enum Pending {
     Kill(SessionId),
     Forget(SessionId),
+    Quit,
 }
 
 /// PTY size used before the agent view resizes it to the real pane.
@@ -85,7 +86,8 @@ impl App {
             .collect();
         let selected = self.sessions.view.state.selected();
         let last = rows.len().checked_sub(1);
-        self.sessions = TableDataState::new(rows);
+        // Swap only the model so scroll offset and selection survive.
+        self.sessions.model = TableDataState::new(rows).model;
         self.sessions
             .view
             .state
@@ -281,7 +283,6 @@ impl App {
                 }
             });
         }
-        self.refresh_table();
     }
 
     fn ring_bell(&mut self) {

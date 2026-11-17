@@ -17,8 +17,8 @@ pub const GLYPH_DONE: &str = "✓";
 pub const GLYPH_IDLE: &str = "○";
 pub const GLYPH_EXITED: &str = "✗";
 
-/// Exit code recorded for a session the user killed (128 + SIGKILL, the
-/// shell convention; `Pty` drop sends SIGKILL).
+/// Exit code recorded for a session the user killed. 137 (128 + SIGKILL)
+/// is only a conventional marker; `Pty` drop actually sends SIGHUP.
 pub const KILLED_CODE: u32 = 137;
 
 /// Hook socket file name for the a4s process with this id.

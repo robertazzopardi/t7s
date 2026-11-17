@@ -33,6 +33,7 @@ use tokio::{
 #[cfg(unix)]
 use crate::hooks::HookSocket;
 use crate::{
+    chords::Router,
     keymap::SPEC,
     new_session::NewSessionModal,
     pty::SessionId,
@@ -87,6 +88,7 @@ pub struct App {
     pub(crate) next_id: SessionId,
     pub(crate) new_modal: Option<NewSessionModal>,
     pub(crate) pending: Option<Pending>,
+    pub(crate) router: Router,
     /// Default directory for new sessions.
     pub(crate) launch_dir: PathBuf,
     /// BELs sent for newly blocked background sessions.
@@ -116,6 +118,7 @@ impl App {
             next_id: 1,
             new_modal: None,
             pending: None,
+            router: Router::default(),
             launch_dir: env::current_dir().unwrap_or_default(),
             bells: 0,
             bg_tx,
@@ -159,6 +162,7 @@ impl App {
 
     pub(crate) fn drain_background_events(&mut self) {
         let mut changed = false;
+        let mut output = Vec::new();
         while let Ok(event) = self.bg_rx.try_recv() {
             changed = true;
             match event {
@@ -168,9 +172,17 @@ impl App {
                 BackgroundEvent::Hook { id, status } => {
                     self.on_hook(id, status);
                 }
-                BackgroundEvent::Output(id) => self.on_output(id),
+                BackgroundEvent::Output(id) => {
+                    if !output.contains(&id) {
+                        output.push(id);
+                    }
+                }
                 BackgroundEvent::Tick => self.on_tick(),
             }
+        }
+        // Once per session per drain, not once per output chunk.
+        for id in output {
+            self.on_output(id);
         }
         if changed {
             self.refresh_table();
@@ -186,11 +198,12 @@ impl App {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 self.on_key_event(key);
             }
+            Event::Mouse(m) => self.on_mouse(m),
+            Event::Paste(text) => self.on_paste(&text),
+            // Resizes are picked up by the next frame.
             Event::Key(_)
             | Event::FocusGained
             | Event::FocusLost
-            | Event::Mouse(_)
-            | Event::Paste(_)
             | Event::Resize(_, _) => {}
         }
         Ok(())

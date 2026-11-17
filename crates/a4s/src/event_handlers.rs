@@ -1,4 +1,6 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+};
 use k9tui::{
     event::is_ctrl_c,
     keymap::plain,
@@ -11,42 +13,181 @@ use k9tui::{
 
 use crate::{
     app::{App, View},
+    chords::{AppAction, Route},
+    keys::{encode, encode_paste},
     new_session::NewSessionModal,
-    pty::SessionId,
+    pty::{Pty, SessionId},
     sessions::Pending,
+    status::Status,
 };
 
 impl App {
     pub fn on_key_event(&mut self, key: KeyEvent) {
-        match self.view {
-            View::Sessions => self.on_key_sessions(key),
-            // Agent keys are forwarded to the PTY in a later task.
-            View::Agent => {}
+        if self.confirm_dialog.is_some() {
+            self.on_key_confirm(key);
+        } else if self.new_modal.is_some() {
+            self.on_key_new_modal(key);
+        } else {
+            match self.view {
+                View::Sessions => self.on_key_sessions(key),
+                View::Agent => self.on_key_agent(key),
+            }
         }
     }
 
-    fn on_key_sessions(&mut self, key: KeyEvent) {
-        if self.confirm_dialog.is_some() {
-            self.on_key_confirm(key);
+    /// Bracketed paste from the terminal, forwarded to the focused agent.
+    pub fn on_paste(&mut self, text: &str) {
+        if self.view != View::Agent
+            || self.new_modal.is_some()
+            || self.confirm_dialog.is_some()
+        {
             return;
         }
-        if self.new_modal.is_some() {
-            self.on_key_new_modal(key);
+        self.send_focused(|p| {
+            encode_paste(text, p.screen().screen().bracketed_paste())
+        });
+    }
+
+    /// Wheel scrolls the focused agent's scrollback by 3 lines.
+    #[allow(clippy::wildcard_enum_match_arm)]
+    pub fn on_mouse(&mut self, m: MouseEvent) {
+        if self.view != View::Agent {
             return;
         }
-        if is_ctrl_c(key) {
+        match m.kind {
+            MouseEventKind::ScrollUp => {
+                self.scroll_focused(|n| n.saturating_add(3));
+            }
+            MouseEventKind::ScrollDown => {
+                self.scroll_focused(|n| n.saturating_sub(3));
+            }
+            _ => {}
+        }
+    }
+
+    fn scroll_focused(&mut self, f: impl FnOnce(usize) -> usize) {
+        let Some(id) = self.focused else {
+            return;
+        };
+        if let Some(p) = self.session_mut(id).and_then(|s| s.pty.as_ref()) {
+            let mut parser = p.screen();
+            let now = parser.screen().scrollback();
+            parser.screen_mut().set_scrollback(f(now));
+        }
+    }
+
+    /// Encode with the focused PTY's modes and write it; any input snaps
+    /// the view back to the live screen.
+    fn send_focused(&mut self, encode_with: impl FnOnce(&Pty) -> Vec<u8>) {
+        let Some(id) = self.focused else {
+            return;
+        };
+        self.scroll_focused(|_| 0);
+        let bytes = self
+            .session_mut(id)
+            .and_then(|s| s.pty.as_ref())
+            .map(encode_with);
+        if let Some(bytes) = bytes {
+            self.send_to_session(id, &bytes);
+        }
+    }
+
+    fn on_key_agent(&mut self, key: KeyEvent) {
+        match self.router.route(key) {
+            Route::Agent(k) => self.send_focused(|p| {
+                encode(
+                    k,
+                    p.kitty_keys(),
+                    p.screen().screen().application_cursor(),
+                )
+            }),
+            Route::App(action) => self.run_action(action),
+            Route::Pending | Route::Ignore => {}
+        }
+    }
+
+    fn run_action(&mut self, action: AppAction) {
+        let count = self.sessions_by_id.len();
+        let current = self
+            .focused
+            .and_then(|f| self.sessions_by_id.iter().position(|s| s.id == f));
+        let focus_index = |app: &mut Self, i: usize| {
+            if let Some(id) = app.sessions_by_id.get(i).map(|s| s.id) {
+                app.focus_session(id);
+            }
+        };
+        match action {
+            AppAction::Quit => self.request_quit(),
+            AppAction::Focus(n) => focus_index(self, n - 1),
+            AppAction::Next if count > 0 => {
+                focus_index(self, current.map_or(0, |i| (i + 1) % count));
+            }
+            AppAction::Prev if count > 0 => {
+                focus_index(self, current.map_or(0, |i| (i + count - 1) % count));
+            }
+            AppAction::Next | AppAction::Prev => {}
+            AppAction::Sessions => self.view = View::Sessions,
+            AppAction::New => self.open_new_modal(),
+            AppAction::Restart => {
+                if let Some(id) = self.focused {
+                    self.restart_session(id);
+                }
+            }
+            AppAction::Help => self.status_line.set_message(
+                "Ctrl+a: n next, p prev, s sessions, c new, r restart, 1-9 focus; Ctrl+q quit",
+            ),
+        }
+    }
+
+    fn open_new_modal(&mut self) {
+        self.new_modal =
+            Some(NewSessionModal::new(&self.launch_dir.display().to_string()));
+    }
+
+    /// Quit, asking first when agents are still busy.
+    fn request_quit(&mut self) {
+        let busy = self
+            .sessions_by_id
+            .iter()
+            .filter(|s| {
+                matches!(s.status.status(), Status::Working | Status::Blocked)
+            })
+            .count();
+        if busy == 0 {
             self.quit();
+            return;
+        }
+        self.pending = Some(Pending::Quit);
+        self.confirm_dialog = Some(ConfirmDialog::new(
+            " Quit ",
+            format!("{busy} agents are still running. Quit and stop them?"),
+            theme::modal_danger_border(),
+            1,
+        ));
+    }
+
+    fn on_key_sessions(&mut self, key: KeyEvent) {
+        if is_ctrl_c(key)
+            || (key.code == KeyCode::Char('q')
+                && key.modifiers == KeyModifiers::CONTROL)
+        {
+            self.request_quit();
+            return;
+        }
+        if let KeyCode::Char(c @ '1'..='9') = key.code
+            && key.modifiers == KeyModifiers::NONE
+        {
+            let n = c.to_digit(10).map_or(0, |d| d as usize);
+            if let Some(id) = self.sessions_by_id.get(n - 1).map(|s| s.id) {
+                self.focus_session(id);
+            }
             return;
         }
         let screen = "sessions";
         let selected = self.selected_session().map(|(id, ..)| id);
         match self.config.keymap.action(screen, plain(key)) {
-            "quit" => self.quit(),
-            "new" => {
-                self.new_modal = Some(NewSessionModal::new(
-                    &self.launch_dir.display().to_string(),
-                ));
-            }
+            "quit" => self.request_quit(),
+            "new" => self.open_new_modal(),
             "open" => {
                 if let Some(id) = selected {
                     self.focus_session(id);
@@ -135,6 +276,7 @@ impl App {
                     (DialogAction::Submit, Some(Pending::Forget(id))) => {
                         self.forget_session(id);
                     }
+                    (DialogAction::Submit, Some(Pending::Quit)) => self.quit(),
                     _ => {}
                 }
             }
@@ -395,6 +537,112 @@ mod tests {
         assert!(app.new_modal.is_some());
         press(&mut app, KeyCode::Esc);
         assert!(app.new_modal.is_none());
+    }
+
+    fn ctrl(app: &mut App, c: char) {
+        app.on_key_event(KeyEvent::new(
+            KeyCode::Char(c),
+            KeyModifiers::CONTROL,
+        ));
+    }
+
+    fn type_str(app: &mut App, text: &str) {
+        for c in text.chars() {
+            press(app, KeyCode::Char(c));
+        }
+    }
+
+    fn wait_screen(app: &mut App, id: SessionId, needle: &str) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let text = app
+                .session_mut(id)
+                .and_then(|s| {
+                    s.pty.as_ref().map(|p| p.screen().screen().contents())
+                })
+                .unwrap_or_default();
+            if text.contains(needle) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "no {needle:?} in {text:?}");
+            sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn typed_keys_reach_focused_agent() {
+        let mut app = App::new();
+        app.create_session("one", &SH, &tmp());
+        let id = app.sessions_by_id[0].id;
+        type_str(&mut app, "echo $((20+22))");
+        press(&mut app, KeyCode::Enter);
+        wait_screen(&mut app, id, "\n42");
+    }
+
+    #[test]
+    fn ctrl_c_reaches_agent_not_quit() {
+        let mut app = App::new();
+        app.running = true;
+        app.create_session("one", &SH, &tmp());
+        ctrl(&mut app, 'c');
+        assert!(app.running);
+        assert_eq!(app.view, View::Agent);
+        assert!(app.confirm_dialog.is_none());
+    }
+
+    #[test]
+    fn ctrl_number_switches_focus() {
+        let mut app = App::new();
+        app.create_session("one", &SH, &tmp());
+        app.create_session("two", &SH, &tmp());
+        let (a, b) = (app.sessions_by_id[0].id, app.sessions_by_id[1].id);
+        assert_eq!(app.focused, Some(b));
+        ctrl(&mut app, '1');
+        assert_eq!(app.focused, Some(a));
+        assert_eq!(app.recent, vec![a, b]);
+        ctrl(&mut app, '9'); // no such session
+        assert_eq!(app.focused, Some(a));
+    }
+
+    #[test]
+    fn prefix_s_leaves_agent_view_and_digit_reenters() {
+        let mut app = App::new();
+        app.create_session("one", &SH, &tmp());
+        ctrl(&mut app, 'a');
+        press(&mut app, KeyCode::Char('s'));
+        assert_eq!(app.view, View::Sessions);
+        press(&mut app, KeyCode::Char('1'));
+        assert_eq!(app.view, View::Agent);
+    }
+
+    #[test]
+    fn paste_is_forwarded() {
+        let mut app = App::new();
+        app.create_session("one", &SH, &tmp());
+        let id = app.sessions_by_id[0].id;
+        app.on_paste("echo $((20+24))\n");
+        wait_screen(&mut app, id, "\n44");
+    }
+
+    #[test]
+    fn quit_with_working_agent_asks_first() {
+        let mut app = App::new();
+        app.running = true;
+        app.create_session("one", &SH, &tmp());
+        let id = app.sessions_by_id[0].id;
+        ctrl(&mut app, 'q');
+        assert!(!app.running, "idle agents quit without asking");
+        app.running = true;
+        app.on_hook(id, Status::Working);
+        ctrl(&mut app, 'q');
+        assert!(app.running);
+        assert!(app.confirm_dialog.is_some());
+        press(&mut app, KeyCode::Enter); // default No
+        assert!(app.running);
+        ctrl(&mut app, 'q');
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Enter);
+        assert!(!app.running);
     }
 
     #[test]

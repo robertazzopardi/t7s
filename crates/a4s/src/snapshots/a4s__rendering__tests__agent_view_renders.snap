@@ -1,0 +1,20 @@
+---
+source: crates/a4s/src/rendering.rs
+assertion_line: 230
+expression: dump(&terminal)
+---
+         <Ctrl+1 <Enter> open  <q> quit         _  _
+                 <c> new                  __ _ | || |  ___
+                 <K> kill                / _` || || |_/ __|
+                 <F> forget             | (_| ||__   _\__ \
+                 <r> restart             \__,_|   |_| |___/
+
+
+┌──────────────────── one · test-sleep ────────────────────┐
+│hello red                                                 │
+│second line█                                              │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
