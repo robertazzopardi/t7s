@@ -1,4 +1,5 @@
 pub mod app;
+pub mod chords;
 #[cfg(test)]
 mod default_bars_test;
 pub mod defaults;

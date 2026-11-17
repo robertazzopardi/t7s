@@ -1,6 +1,18 @@
 use core::time::Duration;
+use std::{
+    io::stdout,
+    panic::{set_hook, take_hook},
+};
 
-use crossterm::event::{Event, KeyEventKind, read};
+use crossterm::{
+    event::{
+        DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags, read,
+    },
+    execute,
+    terminal::supports_keyboard_enhancement,
+};
 use k9tui::{
     TuiApp,
     config::{AppSpec, Config, defaults},
@@ -133,7 +145,48 @@ impl TuiApp for App {
     }
 
     fn start(&mut self, terminal: DefaultTerminal) -> Result<()> {
+        let _guard = InputModes::enter();
         self.run(terminal)
+    }
+}
+
+/// Keyboard enhancement (for Ctrl+digit chords) and mouse capture, undone
+/// on drop and on panic.
+struct InputModes {
+    enhanced: bool,
+}
+
+impl InputModes {
+    fn enter() -> Self {
+        let enhanced = supports_keyboard_enhancement().unwrap_or(false);
+        if enhanced {
+            let _ = execute!(
+                stdout(),
+                PushKeyboardEnhancementFlags(
+                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                )
+            );
+        }
+        let _ = execute!(stdout(), EnableMouseCapture);
+        let prev_hook = take_hook();
+        set_hook(Box::new(move |info| {
+            restore(enhanced);
+            prev_hook(info);
+        }));
+        Self { enhanced }
+    }
+}
+
+impl Drop for InputModes {
+    fn drop(&mut self) {
+        restore(self.enhanced);
+    }
+}
+
+fn restore(enhanced: bool) {
+    let _ = execute!(stdout(), DisableMouseCapture);
+    if enhanced {
+        let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     }
 }
 
