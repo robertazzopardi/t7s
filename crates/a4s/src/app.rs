@@ -1,5 +1,6 @@
 use core::time::Duration;
 use std::{
+    collections::HashSet,
     env,
     io::stdout,
     panic::{set_hook, take_hook},
@@ -100,6 +101,8 @@ pub struct App {
     pub(crate) state_home: Option<PathBuf>,
     /// Loaded entries with an unknown agent, re-saved untouched.
     pub(crate) orphans: Vec<Entry>,
+    /// Repos whose manifest is already reflected in memory.
+    pub(crate) loaded_repos: HashSet<PathBuf>,
     pub(crate) bg_tx: UnboundedSender<BackgroundEvent>,
     pub(crate) bg_rx: UnboundedReceiver<BackgroundEvent>,
     /// Keeps the hook socket alive (and removes it on drop).
@@ -130,6 +133,7 @@ impl App {
             bells: 0,
             state_home: None,
             orphans: Vec::new(),
+            loaded_repos: HashSet::new(),
             bg_tx,
             bg_rx,
             #[cfg(unix)]
@@ -175,10 +179,10 @@ impl App {
         }
     }
 
-    /// Turn saved entries into exited sessions; unknown agents become orphans.
-    pub(crate) fn load_sessions(&mut self, home: &Path) {
+    /// Turn saved entries into exited sessions; unknown agents become
+    /// orphans. Returns the names of the orphaned ones.
+    fn add_entries(&mut self, entries: Vec<Entry>) -> Vec<String> {
         let mut unknown = Vec::new();
-        let (entries, warnings) = manifest::load(home);
         for e in entries {
             let Some(agent) = profile(&e.agent) else {
                 unknown.push(e.name.clone());
@@ -199,7 +203,10 @@ impl App {
             });
             self.next_id += 1;
         }
-        let mut notes = warnings;
+        unknown
+    }
+
+    fn report_load(&mut self, mut notes: Vec<String>, unknown: &[String]) {
         if !unknown.is_empty() {
             notes.push(format!(
                 "unknown agent for: {} (kept in manifest)",
@@ -209,7 +216,41 @@ impl App {
         if !notes.is_empty() {
             self.status_line.set_message(notes.join("; "));
         }
+    }
+
+    pub(crate) fn load_sessions(&mut self, home: &Path) {
+        let loaded = manifest::load(home);
+        self.loaded_repos.extend(loaded.repos);
+        let unknown = self.add_entries(loaded.entries);
+        self.report_load(loaded.warnings, &unknown);
         self.refresh_table();
+    }
+
+    /// Before a repo's manifest is first written, pull in its existing
+    /// entries (the global file may have been bad, so it was never loaded)
+    /// so saving cannot drop them.
+    pub(crate) fn adopt_repo(&mut self, repo: &Path) {
+        let Some(home) = self.state_home.clone() else {
+            return;
+        };
+        if self.loaded_repos.contains(repo) {
+            return;
+        }
+        let mut warnings = Vec::new();
+        if let Some(entries) = manifest::load_repo(repo, &home, &mut warnings) {
+            let fresh = entries
+                .into_iter()
+                .filter(|e| {
+                    !self.sessions_by_id.iter().any(|s| s.name == e.name)
+                        && !self.orphans.iter().any(|o| o.name == e.name)
+                })
+                .collect();
+            let unknown = self.add_entries(fresh);
+            self.report_load(warnings, &unknown);
+            self.loaded_repos.insert(repo.to_path_buf());
+        } else {
+            self.report_load(warnings, &[]);
+        }
     }
 
     /// Run the application's main loop.
@@ -361,6 +402,8 @@ impl Default for App {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, process::Command};
+
     use super::*;
 
     #[test]
@@ -388,7 +431,7 @@ mod tests {
 
         app.state_home = Some(home.path().into());
         app.persist();
-        let mut got = manifest::load(home.path()).0;
+        let mut got = manifest::load(home.path()).entries;
         got.sort_by(|x, y| x.name.cmp(&y.name));
         assert_eq!(got, saved);
     }
@@ -405,5 +448,44 @@ mod tests {
         let agent = profile("claude").unwrap();
         assert!(!app.create_session("ghost", agent, Path::new("/")));
         assert!(app.sessions_by_id.is_empty());
+    }
+
+    #[test]
+    fn bad_global_does_not_drop_repo_entries() {
+        let (home, repo) =
+            (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let ok = Command::new("git")
+            .arg("init")
+            .arg("-q")
+            .arg(repo.path())
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        let r = manifest::repo_root(repo.path()).unwrap();
+        let entry = |name: &str| Entry {
+            name: name.into(),
+            agent: "claude".into(),
+            dir: r.clone(),
+            repo: Some(r.clone()),
+        };
+        manifest::save(&[entry("A")], home.path()).unwrap();
+        let global = manifest::manifest_path(None, home.path());
+        fs::write(&global, "bad = [").unwrap();
+
+        let mut app = App::new();
+        app.load_sessions(home.path());
+        assert!(app.sessions_by_id.is_empty());
+        app.state_home = Some(home.path().into());
+        app.adopt_repo(&r);
+        let _ = app.add_entries(vec![entry("B")]);
+        app.persist();
+        let mut names: Vec<_> = manifest::load(home.path())
+            .entries
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        names.sort();
+        assert_eq!(names, ["A", "B"]);
     }
 }

@@ -121,6 +121,10 @@ impl App {
         dir: &Path,
     ) -> bool {
         let name = name.trim();
+        let repo = repo_root(dir);
+        if let Some(r) = &repo {
+            self.adopt_repo(r);
+        }
         let error = if name.is_empty() {
             Some("name must not be empty".to_string())
         } else if self.sessions_by_id.iter().any(|s| s.name == name)
@@ -163,7 +167,7 @@ impl App {
             pty: Some(pty),
             status: StatusTracker::new(Instant::now()),
             created: SystemTime::now(),
-            repo: repo_root(dir),
+            repo,
         });
         self.persist();
         self.refresh_table();

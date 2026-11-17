@@ -109,37 +109,35 @@ fn write_atomic(path: &Path, file: &File) -> io::Result<()> {
     fs::rename(&tmp, path)
 }
 
-/// Missing file: `None`. Unreadable or corrupt file: moved aside to a
-/// `.bak` (never clobbering an earlier one), a warning is pushed, `None`.
-fn read(path: &Path, warnings: &mut Vec<String>) -> Option<File> {
-    let text = match fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return None,
-        Err(e) => {
-            warnings.push(format!("cannot read {}: {e}", path.display()));
-            return None;
-        }
+/// Missing file: `Ok(None)`. Unreadable or corrupt file: moved aside to a
+/// `.bak` (never clobbering an earlier one) with a warning, `Ok(None)`. If the
+/// move fails the file stays put and the result is `Err(())`: callers must
+/// not write that path.
+#[allow(clippy::result_unit_err)]
+fn read(path: &Path, warnings: &mut Vec<String>) -> Result<Option<File>, ()> {
+    let problem = match fs::read_to_string(path) {
+        Ok(text) => match toml::from_str(&text) {
+            Ok(f) => return Ok(Some(f)),
+            Err(e) => e.to_string(),
+        },
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => e.to_string(),
     };
-    match toml::from_str(&text) {
-        Ok(f) => Some(f),
-        Err(e) => {
-            let mut bak = path.with_extension("toml.bak");
-            let mut n = 1;
-            while bak.exists() {
-                bak = path.with_extension(format!("toml.bak.{n}"));
-                n += 1;
-            }
-            let moved = match fs::rename(path, &bak) {
-                Ok(()) => format!("saved as {}", bak.display()),
-                Err(re) => format!("backup failed: {re}"),
-            };
-            warnings.push(format!(
-                "corrupt manifest {} ({e}); {moved}",
-                path.display()
-            ));
-            None
-        }
+    let mut bak = path.with_extension("toml.bak");
+    let mut n = 1;
+    while bak.exists() {
+        bak = path.with_extension(format!("toml.bak.{n}"));
+        n += 1;
     }
+    let (moved, result) = match fs::rename(path, &bak) {
+        Ok(()) => (format!("saved as {}", bak.display()), Ok(None)),
+        Err(re) => (format!("backup failed, left untouched: {re}"), Err(())),
+    };
+    warnings.push(format!(
+        "bad manifest {} ({problem}); {moved}",
+        path.display()
+    ));
+    result
 }
 
 /// Write one file per repo plus the global file. Repos listed by the
@@ -151,9 +149,10 @@ fn read(path: &Path, warnings: &mut Vec<String>) -> Option<File> {
 pub fn save(entries: &[Entry], state_home: &Path) -> io::Result<()> {
     let global_path = manifest_path(None, state_home);
     let mut ignored = Vec::new(); // load already reported these
-    let mut repos = read(&global_path, &mut ignored)
-        .map(|f| f.repos)
-        .unwrap_or_default();
+    let Ok(old) = read(&global_path, &mut ignored) else {
+        return Err(io::Error::other("global manifest is unreadable"));
+    };
+    let mut repos = old.map(|f| f.repos).unwrap_or_default();
     for r in entries.iter().filter_map(|e| e.repo.as_ref()) {
         if !repos.contains(r) {
             repos.push(r.clone());
@@ -170,8 +169,16 @@ pub fn save(entries: &[Entry], state_home: &Path) -> io::Result<()> {
             .filter(|e| e.repo.as_ref() == Some(&repo))
             .cloned()
             .collect();
-        // Back up a corrupt repo file before it is replaced.
-        let _ = read(&manifest_path(Some(&repo), state_home), &mut ignored);
+        // Back up a corrupt repo file before it is replaced; never write a
+        // file that could not be backed up.
+        if read(&manifest_path(Some(&repo), state_home), &mut ignored).is_err()
+        {
+            result = result.and_then(|()| {
+                Err(io::Error::other("repo manifest is unreadable"))
+            });
+            kept.push(repo);
+            continue;
+        }
         let r = ensure_excluded(&repo).and_then(|()| {
             write_atomic(
                 &manifest_path(Some(&repo), state_home),
@@ -199,24 +206,44 @@ pub fn save(entries: &[Entry], state_home: &Path) -> io::Result<()> {
     result.and(r)
 }
 
+/// What `load` found.
+#[derive(Default)]
+pub struct Loaded {
+    pub entries: Vec<Entry>,
+    pub warnings: Vec<String>,
+    /// Repos whose manifest was read (or is absent) this run.
+    pub repos: Vec<PathBuf>,
+}
+
 /// Global entries plus each listed repo's entries, and warnings for files
-/// that were corrupt or unreadable (corrupt ones are backed up).
+/// that were corrupt or unreadable (those are backed up).
 #[must_use]
-pub fn load(state_home: &Path) -> (Vec<Entry>, Vec<String>) {
-    let mut warnings = Vec::new();
-    let Some(global) = read(&manifest_path(None, state_home), &mut warnings)
+pub fn load(state_home: &Path) -> Loaded {
+    let mut out = Loaded::default();
+    let Ok(Some(global)) =
+        read(&manifest_path(None, state_home), &mut out.warnings)
     else {
-        return (Vec::new(), warnings);
+        return out;
     };
-    let mut out = global.sessions;
-    for repo in &global.repos {
-        if let Some(f) =
-            read(&manifest_path(Some(repo), state_home), &mut warnings)
-        {
-            out.extend(f.sessions);
+    out.entries = global.sessions;
+    for repo in global.repos {
+        if let Some(entries) = load_repo(&repo, state_home, &mut out.warnings) {
+            out.entries.extend(entries);
+            out.repos.push(repo);
         }
     }
-    (out, warnings)
+    out
+}
+
+/// One repo's entries; `None` if its file is bad and could not be backed up.
+#[must_use]
+pub fn load_repo(
+    repo: &Path,
+    state_home: &Path,
+    warnings: &mut Vec<String>,
+) -> Option<Vec<Entry>> {
+    let file = read(&manifest_path(Some(repo), state_home), warnings).ok()?;
+    Some(file.map(|f| f.sessions).unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -255,7 +282,7 @@ mod tests {
         let r = repo_root(repo.path()).unwrap();
         let es = vec![entry("a", &r, Some(&r)), entry("b", other.path(), None)];
         save(&es, home.path()).unwrap();
-        let mut got = load(home.path()).0;
+        let mut got = load(home.path()).entries;
         got.sort_by(|x, y| x.name.cmp(&y.name));
         assert_eq!(got, es);
     }
@@ -286,7 +313,7 @@ mod tests {
         let es = [entry("a", &r, Some(&r)), entry("b", other.path(), None)];
         save(&es, home.path()).unwrap();
         drop(repo);
-        let got = load(home.path()).0;
+        let got = load(home.path()).entries;
         assert_eq!(got, vec![entry("b", other.path(), None)]);
     }
 
@@ -296,8 +323,10 @@ mod tests {
         let r = repo_root(repo.path()).unwrap();
         save(&[entry("a", &r, Some(&r))], home.path()).unwrap();
         save(&[], home.path()).unwrap();
-        assert_eq!(load(home.path()).0, vec![]);
-        let f = read(&r.join(".a4s/sessions.toml"), &mut vec![]).unwrap();
+        assert_eq!(load(home.path()).entries, vec![]);
+        let f = read(&r.join(".a4s/sessions.toml"), &mut vec![])
+            .unwrap()
+            .unwrap();
         assert_eq!(f.sessions, vec![]);
     }
 
@@ -307,14 +336,28 @@ mod tests {
         let path = manifest_path(None, home.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "not [valid toml").unwrap();
-        let (got, warnings) = load(home.path());
-        assert_eq!(got, vec![]);
-        assert_eq!(warnings.len(), 1);
+        let l = load(home.path());
+        assert_eq!(l.entries, vec![]);
+        assert_eq!(l.warnings.len(), 1);
         let bak = path.with_extension("toml.bak");
         assert_eq!(fs::read_to_string(&bak).unwrap(), "not [valid toml");
         save(&[entry("b", other.path(), None)], home.path()).unwrap();
         assert_eq!(fs::read_to_string(&bak).unwrap(), "not [valid toml");
-        assert_eq!(load(home.path()).0.len(), 1);
+        assert_eq!(load(home.path()).entries.len(), 1);
+    }
+
+    #[test]
+    fn non_utf8_global_is_backed_up() {
+        let (home, other) = (tmp(), tmp());
+        let path = manifest_path(None, home.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, [0xff, 0xfe]).unwrap();
+        let l = load(home.path());
+        assert_eq!((l.entries, l.warnings.len()), (vec![], 1));
+        let bak = path.with_extension("toml.bak");
+        assert_eq!(fs::read(&bak).unwrap(), [0xff, 0xfe]);
+        save(&[entry("b", other.path(), None)], home.path()).unwrap();
+        assert_eq!(fs::read(&bak).unwrap(), [0xff, 0xfe]);
     }
 
     #[test]
@@ -324,8 +367,8 @@ mod tests {
         save(&[entry("a", &r, Some(&r))], home.path()).unwrap();
         let path = manifest_path(Some(&r), home.path());
         fs::write(&path, "garbage = [").unwrap();
-        let (got, warnings) = load(home.path());
-        assert_eq!((got, warnings.len()), (vec![], 1));
+        let l = load(home.path());
+        assert_eq!((l.entries, l.warnings.len()), (vec![], 1));
         let bak = path.with_extension("toml.bak");
         assert_eq!(fs::read_to_string(&bak).unwrap(), "garbage = [");
         // A second corrupt file must not clobber the first backup.
