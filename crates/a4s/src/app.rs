@@ -2,6 +2,7 @@ use core::time::Duration;
 use std::{
     io::stdout,
     panic::{set_hook, take_hook},
+    path::Path,
 };
 
 use crossterm::{
@@ -27,7 +28,11 @@ use tokio::sync::mpsc::{
     UnboundedReceiver, UnboundedSender, unbounded_channel,
 };
 
-use crate::{keymap::SPEC, session::SessionRow};
+#[cfg(unix)]
+use crate::hooks::HookSocket;
+use crate::{
+    keymap::SPEC, pty::SessionId, session::SessionRow, status::Status,
+};
 
 pub const APP_NAME: &str = r"        _  _
   __ _ | || |  ___
@@ -45,6 +50,8 @@ pub const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub enum BackgroundEvent {
     /// Message for the status line from a background task.
     Status(String),
+    /// Status reported by an agent hook (`a4s notify`).
+    Hook { id: SessionId, status: Status },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -66,6 +73,9 @@ pub struct App {
     pub(crate) build_info: String,
     pub(crate) bg_tx: UnboundedSender<BackgroundEvent>,
     pub(crate) bg_rx: UnboundedReceiver<BackgroundEvent>,
+    /// Keeps the hook socket alive (and removes it on drop).
+    #[cfg(unix)]
+    pub(crate) hook_socket: Option<HookSocket>,
 }
 
 impl App {
@@ -82,6 +92,21 @@ impl App {
             build_info: format!("Name: {PKG_NAME}\nVersion: {PKG_VERSION}"),
             bg_tx,
             bg_rx,
+            #[cfg(unix)]
+            hook_socket: None,
+        }
+    }
+
+    /// Path of the hook socket, to pass to agents as `A4S_SOCKET`.
+    #[must_use]
+    pub fn socket_path(&self) -> Option<&Path> {
+        #[cfg(unix)]
+        {
+            self.hook_socket.as_ref().map(HookSocket::path)
+        }
+        #[cfg(not(unix))]
+        {
+            None
         }
     }
 
@@ -110,6 +135,8 @@ impl App {
                 BackgroundEvent::Status(message) => {
                     self.status_line.set_message(message);
                 }
+                // Task 6 routes hooks to sessions.
+                BackgroundEvent::Hook { .. } => {}
             }
         }
     }
@@ -145,6 +172,11 @@ impl TuiApp for App {
     }
 
     fn start(&mut self, terminal: DefaultTerminal) -> Result<()> {
+        #[cfg(unix)]
+        {
+            // Hooks are best effort: run without them if binding fails.
+            self.hook_socket = HookSocket::bind(self.bg_tx.clone()).ok();
+        }
         let _guard = InputModes::enter();
         self.run(terminal)
     }
