@@ -9,11 +9,17 @@ authors = ["Rob <robertazzopardi@users.noreply.github.com>"]
 license = "MIT"
 repository = "https://github.com/robertazzopardi/t7s"
 
+# Fast local release builds; shipped binaries use `dist`.
 [profile.release]
-codegen-units = 1
-lto = true
+lto = "thin"
 opt-level = "s"
 strip = true
+
+# Smallest binaries for GitHub releases (slow: fat LTO, single codegen unit).
+[profile.dist]
+inherits = "release"
+codegen-units = 1
+lto = true
 
 [workspace.lints.clippy]
 indexing_slicing = "deny"
