@@ -104,13 +104,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
 
       - name: Build release binary
-        run: cargo build --release --locked --target ${{ matrix.target }} -p ${{ env.CRATE }}
+        run: cargo build --profile dist --locked --target ${{ matrix.target }} -p ${{ env.CRATE }}
 
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p "dist/$NAME"
-          cp "target/${{ matrix.target }}/release/$CRATE" "crates/$CRATE/LICENSE" "crates/$CRATE/README.md" "dist/$NAME/"
+          cp "target/${{ matrix.target }}/dist/$CRATE" "crates/$CRATE/LICENSE" "crates/$CRATE/README.md" "dist/$NAME/"
           tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
 
       - name: Package (windows)
@@ -118,7 +118,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force "dist/$env:NAME" | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/$env:CRATE.exe", "crates/$env:CRATE/LICENSE", "crates/$env:CRATE/README.md" "dist/$env:NAME/"
+          Copy-Item "target/${{ matrix.target }}/dist/$env:CRATE.exe", "crates/$env:CRATE/LICENSE", "crates/$env:CRATE/README.md" "dist/$env:NAME/"
           Compress-Archive -Path "dist/$env:NAME" -DestinationPath "dist/$env:NAME.zip"
 
       - name: Upload archive
