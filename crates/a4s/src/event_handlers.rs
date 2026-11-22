@@ -13,7 +13,7 @@ use k9tui::{
 
 use crate::{
     app::{App, View},
-    chords::{AppAction, Route},
+    chords::{self, AppAction, Route},
     keys::{encode, encode_paste},
     new_session::NewSessionModal,
     pty::{Pty, SessionId},
@@ -96,7 +96,11 @@ impl App {
         if key.kind == KeyEventKind::Press {
             self.scroll_focused(|_| 0);
         }
-        match self.router.route(key) {
+        let exited = self
+            .focused
+            .and_then(|id| self.session_mut(id))
+            .is_none_or(|s| s.is_exited());
+        match chords::route(key, exited) {
             Route::Agent(k) => self.send_focused(|p| {
                 encode(
                     k,
@@ -105,40 +109,19 @@ impl App {
                 )
             }),
             Route::App(action) => self.run_action(action),
-            Route::Pending | Route::Ignore => {}
+            Route::Ignore => {}
         }
     }
 
     fn run_action(&mut self, action: AppAction) {
-        let count = self.sessions_by_id.len();
-        let current = self
-            .focused
-            .and_then(|f| self.sessions_by_id.iter().position(|s| s.id == f));
-        let focus_index = |app: &mut Self, i: usize| {
-            if let Some(id) = app.sessions_by_id.get(i).map(|s| s.id) {
-                app.focus_session(id);
-            }
-        };
         match action {
             AppAction::Quit => self.request_quit(),
-            AppAction::Focus(n) => focus_index(self, n - 1),
-            AppAction::Next if count > 0 => {
-                focus_index(self, current.map_or(0, |i| (i + 1) % count));
-            }
-            AppAction::Prev if count > 0 => {
-                focus_index(self, current.map_or(0, |i| (i + count - 1) % count));
-            }
-            AppAction::Next | AppAction::Prev => {}
-            AppAction::Sessions => self.view = View::Sessions,
-            AppAction::New => self.open_new_modal(),
-            AppAction::Restart => {
-                if let Some(id) = self.focused {
-                    self.restart_session(id);
+            AppAction::Focus(n) => {
+                if let Some(id) = self.sessions_by_id.get(n - 1).map(|s| s.id) {
+                    self.focus_session(id);
                 }
             }
-            AppAction::Help => self.status_line.set_message(
-                "Ctrl+a: n next, p prev, s sessions, c new, r restart, 1-9 focus; Ctrl+q quit",
-            ),
+            AppAction::Sessions => self.view = View::Sessions,
         }
     }
 
@@ -620,11 +603,12 @@ mod tests {
     }
 
     #[test]
-    fn prefix_s_leaves_agent_view_and_digit_reenters() {
+    fn back_chord_leaves_agent_view_and_digit_reenters() {
         let mut app = App::new();
         app.create_session("one", &SH, &tmp());
-        ctrl(&mut app, 'a');
-        press(&mut app, KeyCode::Char('s'));
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.view, View::Agent, "Esc goes to a running agent");
+        ctrl(&mut app, ']');
         assert_eq!(app.view, View::Sessions);
         press(&mut app, KeyCode::Char('1'));
         assert_eq!(app.view, View::Agent);
@@ -708,7 +692,9 @@ mod tests {
                 repo: None,
             });
         }
-        app.sessions_by_id[1].status.exited(2);
+        app.sessions_by_id[1]
+            .status
+            .exited(2, created + Duration::from_secs(60));
         app.refresh_table_at(now);
         let mut terminal = Terminal::new(TestBackend::new(100, 14)).unwrap();
         terminal.draw(|f| app.render(f)).unwrap();

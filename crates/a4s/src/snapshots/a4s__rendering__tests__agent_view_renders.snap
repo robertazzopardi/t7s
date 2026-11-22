@@ -1,14 +1,13 @@
 ---
 source: crates/a4s/src/rendering.rs
-assertion_line: 240
 expression: dump(&terminal)
 ---
-            <Ctrl+1>  <Ctrl+a s> sessi          _  _
-                      <Ctrl+a ?> help     __ _ | || |  ___
-                      <Ctrl+q> quit      / _` || || |_/ __|
-                                        | (_| ||__   _\__ \
-                                         \__,_|   |_| |___/
-
+          <Ctrl+1> <Ctrl+]> sess             _____
+                   <Ctrl+q> quit  _____     /  |  |  ______
+                                  \__  \   /   |  |_/  ___/
+                                   / __ \_/    ^   /\___ \
+                                  (____  /\____   |/____  >
+                                       \/      |__|     \/
 
 ┌──────────────────── one · test-sleep ────────────────────┐
 │hello red                                                 │

@@ -34,19 +34,16 @@ cargo install a4s --locked && a4s
 
 ### Agent view
 
-Keys go to the agent, including `q` and `Ctrl+c`. These chords are handled by a4s:
+Keys go to the agent, including `q`, `Esc` and `Ctrl+c`. Only these single chords are handled by a4s:
 
 | Key | Action |
 | --- | --- |
-| `Ctrl+a` `1`-`9` | Focus session N |
-| `Ctrl+a` `n` / `p` | Next / previous session |
-| `Ctrl+a` `s` | Back to the sessions view |
-| `Ctrl+a` `c` | New session |
-| `Ctrl+a` `r` | Restart this session |
-| `Ctrl+a` `?` | Show the chord help |
-| `Ctrl+a` `Ctrl+a` | Send a literal `Ctrl+a` to the agent |
+| `Ctrl+]` | Back to the sessions view |
+| `Esc` | Back to the sessions view, once the agent has exited |
 | `Ctrl+1`-`Ctrl+9` | Focus session N |
 | `Ctrl+q` | Quit a4s |
+
+`Ctrl+]` and `Ctrl+1`-`Ctrl+9` need a terminal with the kitty keyboard protocol (kitty, Ghostty, WezTerm, iTerm2 with CSI u). Elsewhere `Ctrl+]` arrives as `Ctrl+5`.
 
 Quitting while an agent is working asks first. Quitting stops every agent.
 

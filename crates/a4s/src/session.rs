@@ -13,8 +13,8 @@ use crate::{
     status::{Status, StatusTracker},
 };
 
-const COLUMNS: [&str; 6] = ["#", "ST", "NAME", "AGENT", "DIR", "AGE"];
-const ST_COLUMN: usize = 1;
+const COLUMNS: [&str; 6] = ["#", "STATUS", "NAME", "AGENT", "DIR", "AGE"];
+const STATUS_COLUMN: usize = 1;
 
 /// A running (or exited) agent. `pty` stays `Some` after the child exits so
 /// its last screen remains visible; it is `None` after a kill.
@@ -47,7 +47,12 @@ impl Session {
             name: self.name.clone(),
             agent: self.agent.name.to_string(),
             dir: self.dir.display().to_string(),
-            age: age(now.duration_since(self.created).unwrap_or_default()),
+            age: age(self
+                .status
+                .ended()
+                .unwrap_or(now)
+                .duration_since(self.created)
+                .unwrap_or_default()),
         }
     }
 }
@@ -111,7 +116,7 @@ impl TableData for SessionRow {
     }
 
     fn cell_style(&self, column: usize) -> Option<Style> {
-        (self.blocked && column == ST_COLUMN).then(theme::warning)
+        (self.blocked && column == STATUS_COLUMN).then(theme::warning)
     }
 }
 

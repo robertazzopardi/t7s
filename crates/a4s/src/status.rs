@@ -1,6 +1,6 @@
 //! Per-session agent status derived from screen text, hooks and exit.
 
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use crate::{agent::AgentProfile, defaults::IDLE_AFTER};
 
@@ -17,6 +17,8 @@ pub struct StatusTracker {
     status: Status,
     last_output: Instant,
     hook_seen: bool,
+    /// When the agent exited; the AGE column stops here.
+    ended: Option<SystemTime>,
 }
 
 impl StatusTracker {
@@ -26,6 +28,7 @@ impl StatusTracker {
             status: Status::Idle,
             last_output: now,
             hook_seen: false,
+            ended: None,
         }
     }
 
@@ -65,8 +68,14 @@ impl StatusTracker {
         }
     }
 
-    pub const fn exited(&mut self, code: u32) {
+    pub fn exited(&mut self, code: u32, at: SystemTime) {
         self.status = Status::Exited(code);
+        self.ended.get_or_insert(at);
+    }
+
+    #[must_use]
+    pub const fn ended(&self) -> Option<SystemTime> {
+        self.ended
     }
 
     #[must_use]
@@ -155,7 +164,7 @@ mod tests {
     fn exited_is_final() {
         let now = Instant::now();
         let mut t = StatusTracker::new(now);
-        t.exited(3);
+        t.exited(3, SystemTime::UNIX_EPOCH);
         t.observe("esc to interrupt", claude(), now);
         t.hook(Status::Working);
         t.tick(now + IDLE_AFTER);

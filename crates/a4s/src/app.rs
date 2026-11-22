@@ -36,7 +36,6 @@ use tokio::{
 use crate::hooks::HookSocket;
 use crate::{
     agent::profile,
-    chords::Router,
     keymap::SPEC,
     manifest::{self, Entry},
     new_session::NewSessionModal,
@@ -46,11 +45,12 @@ use crate::{
     status::{Status, StatusTracker},
 };
 
-pub const APP_NAME: &str = r"        _  _
-  __ _ | || |  ___
- / _` || || |_/ __|
-| (_| ||__   _\__ \
- \__,_|   |_| |___/
+pub const APP_NAME: &str = r"           _____
+_____     /  |  |  ______
+\__  \   /   |  |_/  ___/
+ / __ \_/    ^   /\___ \
+(____  /\____   |/____  >
+     \/      |__|     \/
 ";
 
 pub const PKG_NAME: &str = env!("CARGO_PKG_NAME");
@@ -90,7 +90,6 @@ pub struct App {
     pub(crate) next_id: SessionId,
     pub(crate) new_modal: Option<NewSessionModal>,
     pub(crate) pending: Option<Pending>,
-    pub(crate) router: Router,
     /// Default directory for new sessions.
     pub(crate) launch_dir: PathBuf,
     /// BELs sent for newly blocked background sessions.
@@ -128,7 +127,6 @@ impl App {
             next_id: 1,
             new_modal: None,
             pending: None,
-            router: Router::default(),
             launch_dir: env::current_dir().unwrap_or_default(),
             bells: 0,
             state_home: None,
@@ -193,7 +191,7 @@ impl App {
                 continue;
             };
             let mut status = StatusTracker::new(Instant::now());
-            status.exited(0);
+            status.exited(0, SystemTime::now());
             self.sessions_by_id.push(Session {
                 id: self.next_id,
                 name: e.name,

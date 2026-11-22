@@ -1,16 +1,15 @@
 ---
 source: crates/a4s/src/rendering.rs
-assertion_line: 255
 expression: dump(&terminal)
 ---
-                        <Ctrl+3> ✗ 1 gamma   <Enter> open                        <q> quit         _  _
-                        <Ctrl+1> ○ alpha     <c> new                                        __ _ | || |  ___
-                                             <K> kill                                      / _` || || |_/ __|
-                                             <F> forget                                   | (_| ||__   _\__ \
-                                             <r> restart                                   \__,_|   |_| |___/
-
+                       <Ctrl+3> ✗ 1 gamma <Enter> open                     <q> quit            _____
+                       <Ctrl+1> ○ alpha   <c> new                                   _____     /  |  |  ______
+                                          <K> kill                                  \__  \   /   |  |_/  ___/
+                                          <F> forget                                 / __ \_/    ^   /\___ \
+                                          <r> restart                               (____  /\____   |/____  >
+                                                                                         \/      |__|     \/
 
 ┌─────────────────────────────────────────────── Sessions [3] ───────────────────────────────────────────────┐
-│#  ST   NAME   AGENT       DIR  AGE                                                                         │
-│1  ○    alpha  test-sleep  /w   0s                                                                          │
+│#  STATUS  NAME   AGENT       DIR  AGE                                                                      │
+│1  ○       alpha  test-sleep  /w   0s                                                                       │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

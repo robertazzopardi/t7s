@@ -27,9 +27,9 @@ pub fn socket_name(pid: u32) -> String {
     format!("a4s-{pid}.sock")
 }
 
-/// Agent-mode chord prefix (`Ctrl+a`, then a command key).
-pub const PREFIX: (KeyCode, KeyModifiers) =
-    (KeyCode::Char('a'), KeyModifiers::CONTROL);
+/// Agent-mode chord back to the sessions list.
+pub const BACK: (KeyCode, KeyModifiers) =
+    (KeyCode::Char(']'), KeyModifiers::CONTROL);
 /// Agent-mode quit chord.
 pub const QUIT: (KeyCode, KeyModifiers) =
     (KeyCode::Char('q'), KeyModifiers::CONTROL);

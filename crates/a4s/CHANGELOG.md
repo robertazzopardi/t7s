@@ -13,7 +13,7 @@ Initial release.
 - Agent sessions in PTYs with a vt100 screen, scrollback, bracketed paste and the kitty keyboard protocol.
 - Answers to terminal queries agents wait on (cursor position, device attributes, kitty flags).
 - Sessions table with working / blocked / done / idle / exited status, from `a4s notify` hooks or output detection.
-- Agent view with `Ctrl+a` prefix chords, `Ctrl+1`-`Ctrl+9` focus and `Ctrl+q` quit; every other key goes to the agent.
+- Agent view with single-press chords: `Ctrl+]` back to sessions (also `Esc` once the agent has exited), `Ctrl+1`-`Ctrl+9` focus and `Ctrl+q` quit; every other key goes to the agent.
 - New session dialog (name, agent, directory), kill and forget with confirmation, restart with resume.
 - A bell when a background session becomes blocked.
 - Sessions saved per git repo (`.a4s/sessions.toml`) or in the state directory, and restored at startup.

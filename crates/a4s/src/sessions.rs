@@ -208,7 +208,7 @@ impl App {
             && !s.is_exited()
         {
             s.pty = None;
-            s.status.exited(KILLED_CODE);
+            s.status.exited(KILLED_CODE, SystemTime::now());
         }
         self.refresh_table();
     }
@@ -304,7 +304,7 @@ impl App {
                 if !s.is_exited()
                     && let Some(code) = s.pty.as_mut().and_then(Pty::try_exit)
                 {
-                    s.status.exited(code);
+                    s.status.exited(code, SystemTime::now());
                 }
             });
         }

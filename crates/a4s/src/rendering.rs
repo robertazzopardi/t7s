@@ -256,7 +256,9 @@ mod tests {
                 repo: None,
             });
         }
-        app.sessions_by_id[2].status.exited(1);
+        app.sessions_by_id[2]
+            .status
+            .exited(1, SystemTime::UNIX_EPOCH);
         app.focus_session(1);
         app.focus_session(3);
         app.view = View::Sessions;
