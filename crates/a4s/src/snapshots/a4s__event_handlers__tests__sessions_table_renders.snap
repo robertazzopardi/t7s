@@ -1,0 +1,17 @@
+---
+source: crates/a4s/src/event_handlers.rs
+expression: text
+---
+                     <Enter> open                                <q> quit            _____
+                     <c> new                                              _____     /  |  |  ______
+                     <K> kill                                             \__  \   /   |  |_/  ___/
+                     <F> forget                                            / __ \_/    ^   /\___ \
+                     <r> restart                                          (____  /\____   |/____  >
+                                                                               \/      |__|     \/
+
+┌────────────────────────────────────────── Sessions [2] ──────────────────────────────────────────┐
+│#  STATUS  NAME   AGENT    DIR          AGE                                                       │
+│1  ○       alpha  test-sh  /work/alpha  2m                                                        │
+│2  ✗ 2     beta   test-sh  /work/beta   1m                                                        │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘

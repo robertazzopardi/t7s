@@ -1,0 +1,13 @@
+---
+source: crates/a4s/src/default_bars_test.rs
+expression: out
+---
+[sessions]
+Enter open
+c new
+K kill
+F forget
+r restart
+[agent]
+Ctrl+] sessions
+Ctrl+q quit

@@ -103,8 +103,8 @@ release CRATE VERSION:
 
     case "{{CRATE}}" in
         d7s) TAG="v{{VERSION}}" ;;
-        c8s|k9tui|p7s) TAG="{{CRATE}}-v{{VERSION}}" ;;
-        *) echo "Error: CRATE must be one of: k9tui, d7s, c8s, p7s"; exit 1 ;;
+        a4s|c8s|k9tui|p7s) TAG="{{CRATE}}-v{{VERSION}}" ;;
+        *) echo "Error: CRATE must be one of: k9tui, d7s, c8s, p7s, a4s"; exit 1 ;;
     esac
 
     if ! git diff --quiet || ! git diff --cached --quiet; then

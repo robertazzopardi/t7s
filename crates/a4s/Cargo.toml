@@ -1,0 +1,57 @@
+[package]
+name = "a4s"
+version = "0.1.0"
+description = "A k9s-style TUI for running CLI coding agents side by side"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+include = ["src/**/*", "Cargo.toml", "LICENSE", "README.md", "CHANGELOG.md"]
+keywords = [
+    "agents",
+    "tui",
+    "terminal",
+    "multiplexer",
+]
+categories = [
+    "command-line-utilities",
+    "development-tools",
+]
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/a4s-v{ version }/a4s-v{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "a4s-v{ version }-{ target }/{ bin }{ binary-ext }"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/a4s-v{ version }/a4s-v{ version }-{ target }.zip"
+pkg-fmt = "zip"
+
+[dependencies]
+# Internal
+k9tui = { path = "../k9tui", version = "0.1.0" }
+
+# UI
+crossterm = { version = "0.29.0", default-features = false, features = ["osc52", "bracketed-paste", "events", "windows"] }
+ratatui = { version = "0.30.2", features = ["crossterm"], default-features = false }
+
+# Async
+tokio = { version = "1.54.1", features = ["full"] }
+
+# Terminal emulation
+portable-pty = "0.9"
+vt100 = "0.16"
+tui-term = "0.3.4"
+
+# Config
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+insta = "1.49.0"
+tempfile = "3"
