@@ -1,24 +1,37 @@
-#[cfg(debug_assertions)]
 use core::{
     error::Error as StdError,
     fmt::{Display, Formatter, Result as FmtResult},
 };
 #[cfg(not(debug_assertions))]
-use core::{
-    error::Error as StdError,
-    fmt::{Display, Formatter, Result as FmtResult},
-};
+use std::sync::OnceLock;
 #[cfg(debug_assertions)]
 use std::{
     collections::HashMap,
     sync::{Mutex, OnceLock},
 };
 
-// Debug builds use the in-memory store below; keep `keyring` counted as used.
-#[cfg(debug_assertions)]
-use keyring as _;
 #[cfg(not(debug_assertions))]
-use keyring::Entry;
+use keyring_core::Entry;
+
+#[cfg(debug_assertions)]
+#[allow(dead_code)]
+mod keep_linked {
+    // Debug builds use the in-memory store; keep platform crates linked.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    use apple_native_keyring_store as _;
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "android"
+        ))
+    ))]
+    use dbus_secret_service_keyring_store as _;
+    use keyring_core as _;
+    #[cfg(target_os = "windows")]
+    use windows_native_keyring_store as _;
+}
 
 #[cfg(not(debug_assertions))]
 const SERVICE_NAME: &str = "d7s";
@@ -42,12 +55,12 @@ fn dev_store() -> &'static Mutex<HashMap<String, String>> {
 #[cfg(not(debug_assertions))]
 #[derive(Debug)]
 pub enum Error {
-    KeyringError(keyring::Error),
+    KeyringError(keyring_core::Error),
 }
 
 #[cfg(not(debug_assertions))]
-impl From<keyring::Error> for Error {
-    fn from(err: keyring::Error) -> Self {
+impl From<keyring_core::Error> for Error {
+    fn from(err: keyring_core::Error) -> Self {
         Self::KeyringError(err)
     }
 }
@@ -84,6 +97,58 @@ impl Display for Error {
 #[cfg(not(debug_assertions))]
 impl StdError for Error {}
 
+#[cfg(not(debug_assertions))]
+fn init_platform_store() -> keyring_core::Result<()> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        let store = apple_native_keyring_store::keychain::Store::new()?;
+        keyring_core::set_default_store(store);
+        return Ok(());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let store = windows_native_keyring_store::Store::new()?;
+        keyring_core::set_default_store(store);
+        return Ok(());
+    }
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "android"
+        ))
+    ))]
+    {
+        let store = dbus_secret_service_keyring_store::Store::new()?;
+        keyring_core::set_default_store(store);
+        return Ok(());
+    }
+    #[cfg(not(all(
+        any(unix, windows),
+        not(any(target_os = "ios", target_os = "android"))
+    )))]
+    {
+        return Err(keyring_core::Error::Invalid(
+            "platform".to_string(),
+            "must be macOS, Windows, or a non-iOS, non-Android *nix variant"
+                .to_string(),
+        ));
+    }
+}
+
+/// `Ok` if the default store is ready; `Err` if init failed (details not Clone).
+#[cfg(not(debug_assertions))]
+fn ensure_default_store() -> Result<(), Error> {
+    static INIT: OnceLock<Result<(), ()>> = OnceLock::new();
+    match INIT.get_or_init(|| init_platform_store().map_err(|_| ())) {
+        Ok(()) => Ok(()),
+        Err(()) => {
+            Err(Error::KeyringError(keyring_core::Error::NoDefaultStore))
+        }
+    }
+}
+
 impl Keyring {
     /// Creates a new keyring entry
     ///
@@ -92,6 +157,7 @@ impl Keyring {
     /// Returns an error if the keyring entry cannot be created
     #[cfg(not(debug_assertions))]
     pub fn new(user: &str) -> Result<Self, Error> {
+        ensure_default_store()?;
         Ok(Self {
             entry: Entry::new(SERVICE_NAME, user)?,
         })

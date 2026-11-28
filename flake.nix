@@ -52,10 +52,10 @@
         # Match the dev toolchain
         rustAnalyzer = pkgs.rust-bin.stable.latest.rust-analyzer;
 
-        # Libraries the crates link against. None today: the keyring uses zbus
-        # (pure Rust), rusqlite is built with `bundled` (static SQLite),
-        # tokio-postgres is pure Rust and TLS uses rustls.
-        packageInputs = [ ];
+        # Libraries the crates link against. d7s's Linux keyring uses
+        # dbus-secret-service (libdbus). rusqlite is `bundled` (static SQLite);
+        # tokio-postgres / TLS are rustls.
+        packageInputs = with pkgs; [ dbus ];
 
         # Build-time tools. pkg-config has to live here rather than above:
         # rustPlatform sets strictDeps, which keeps buildInputs off PATH and

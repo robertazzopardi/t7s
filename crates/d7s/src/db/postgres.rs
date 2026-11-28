@@ -6,7 +6,10 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use jiff::{
+    Timestamp,
+    civil::{Date, DateTime, Time},
+};
 use rust_decimal::Decimal;
 use serde_json::Value;
 use tokio_postgres::{
@@ -1329,58 +1332,34 @@ fn try_get_numeric_array(row: &Row, index: usize) -> String {
         .map_or_else(|| "NULL".to_string(), |s| format!("[{s}]"))
 }
 
-/// Helper to get TIMESTAMP values with better compatibility
-/// Tries multiple datetime representations for robustness
+/// TIMESTAMP: civil datetime, then instant, then text.
 fn try_get_timestamp(row: &Row, index: usize) -> String {
-    // Try NaiveDateTime first (TIMESTAMP WITHOUT TIME ZONE)
-    if let Ok(Some(v)) = row.try_get::<_, Option<NaiveDateTime>>(index) {
+    if let Ok(Some(v)) = row.try_get::<_, Option<DateTime>>(index) {
         return v.to_string();
     }
-
-    // Fallback to DateTime<Utc> in case it's stored with timezone info
-    if let Ok(Some(v)) = row.try_get::<_, Option<DateTime<Utc>>>(index) {
-        return v.naive_utc().to_string();
+    if let Ok(Some(v)) = row.try_get::<_, Option<Timestamp>>(index) {
+        return v.to_string();
     }
-
-    // Final fallback to string
     try_get::<String>(row, index)
 }
 
-/// Helper to get TIMESTAMPTZ values with better compatibility
-/// Handles timezone-aware timestamps
+/// TIMESTAMPTZ: instant, then civil datetime, then text.
 fn try_get_timestamptz(row: &Row, index: usize) -> String {
-    // Try DateTime<Utc> first (TIMESTAMP WITH TIME ZONE)
-    if let Ok(Some(v)) = row.try_get::<_, Option<DateTime<Utc>>>(index) {
-        return v.to_rfc3339();
-    }
-
-    // Fallback to NaiveDateTime if stored without timezone
-    if let Ok(Some(v)) = row.try_get::<_, Option<NaiveDateTime>>(index) {
+    if let Ok(Some(v)) = row.try_get::<_, Option<Timestamp>>(index) {
         return v.to_string();
     }
-
-    // Final fallback to string
+    if let Ok(Some(v)) = row.try_get::<_, Option<DateTime>>(index) {
+        return v.to_string();
+    }
     try_get::<String>(row, index)
 }
 
-/// Helper to get DATE values
 fn try_get_date(row: &Row, index: usize) -> String {
-    if let Ok(Some(v)) = row.try_get::<_, Option<NaiveDate>>(index) {
-        return v.format("%Y-%m-%d").to_string();
-    }
-
-    // Fallback to string
-    try_get::<String>(row, index)
+    try_get::<Date>(row, index)
 }
 
-/// Helper to get TIME values
 fn try_get_time(row: &Row, index: usize) -> String {
-    if let Ok(Some(v)) = row.try_get::<_, Option<NaiveTime>>(index) {
-        return v.format("%H:%M:%S%.f").to_string();
-    }
-
-    // Fallback to string
-    try_get::<String>(row, index)
+    try_get::<Time>(row, index)
 }
 
 #[cfg(test)]
