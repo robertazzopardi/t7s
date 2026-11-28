@@ -127,10 +127,11 @@ const fn ctrl_punct(c: char) -> Option<u8> {
     match c {
         ' ' | '@' => Some(0x00),
         '[' => Some(0x1b),
-        '\\' => Some(0x1c),
+        // Legacy terminals report 0x1C..0x1F as Ctrl+4..7.
+        '\\' | '4' => Some(0x1c),
         ']' => Some(0x1d),
-        '^' => Some(0x1e),
-        '_' | '/' => Some(0x1f),
+        '^' | '6' => Some(0x1e),
+        '_' | '/' | '7' => Some(0x1f),
         _ => None,
     }
 }
@@ -428,6 +429,14 @@ mod tests {
         for (key, app, want) in cases {
             assert_eq!(encode(key, false, app), want, "{key:?}");
         }
+    }
+
+    #[test]
+    fn legacy_ctrl_digits_are_punct_bytes() {
+        let ctrl = |c| k(KeyCode::Char(c), KeyModifiers::CONTROL);
+        assert_eq!(encode(ctrl('4'), false, false), vec![0x1c]);
+        assert_eq!(encode(ctrl('6'), false, false), vec![0x1e]);
+        assert_eq!(encode(ctrl('7'), false, false), vec![0x1f]);
     }
 
     #[test]

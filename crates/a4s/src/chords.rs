@@ -38,6 +38,7 @@ pub fn route(key: KeyEvent, exited: bool, enhanced: bool) -> Route {
         return Route::App(AppAction::Sessions);
     }
     // Legacy Ctrl+] is byte 0x1D, the same as Ctrl+5, so Ctrl+5 means back there.
+    // Legacy Ctrl+4/6/7 are really Ctrl+\ ^ _ (0x1C/0x1E/0x1F), so they go to the agent.
     if !enhanced && chord == (KeyCode::Char('5'), KeyModifiers::CONTROL) {
         return Route::App(AppAction::Sessions);
     }
@@ -45,6 +46,7 @@ pub fn route(key: KeyEvent, exited: bool, enhanced: bool) -> Route {
         && let KeyCode::Char(c) = key.code
         && let Some(n) = c.to_digit(10).filter(|d| *d >= 1)
         && let Ok(n) = usize::try_from(n)
+        && (enhanced || !matches!(c, '4' | '6' | '7'))
     {
         return Route::App(AppAction::Focus(n));
     }
@@ -95,6 +97,17 @@ mod tests {
             route(ctrl('5'), false, true),
             Route::App(AppAction::Focus(5))
         );
+    }
+
+    #[test]
+    fn legacy_ctrl_punct_reaches_agent() {
+        for (c, n) in [('4', 4), ('6', 6), ('7', 7)] {
+            assert_eq!(route(ctrl(c), false, false), Route::Agent(ctrl(c)));
+            assert_eq!(
+                route(ctrl(c), false, true),
+                Route::App(AppAction::Focus(n))
+            );
+        }
     }
 
     #[test]

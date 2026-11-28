@@ -37,6 +37,7 @@ use tokio::{
 use crate::hooks::HookSocket;
 use crate::{
     agent::profile,
+    defaults::KILLED_CODE,
     keymap::SPEC,
     manifest::{self, Entry},
     new_session::NewSessionModal,
@@ -158,6 +159,11 @@ impl App {
     }
 
     pub(crate) fn quit(&mut self) {
+        // Live PTYs drop after this, so record them as killed before saving.
+        let now = SystemTime::now();
+        for s in self.sessions_by_id.iter_mut().filter(|s| !s.is_exited()) {
+            s.status.exited(KILLED_CODE, now);
+        }
         self.persist();
         self.running = false;
     }
@@ -433,6 +439,7 @@ mod tests {
     use std::{fs, process::Command, slice};
 
     use super::*;
+    use crate::agent::AgentProfile;
 
     #[test]
     fn restored_session_keeps_created_and_ended() {
@@ -491,6 +498,28 @@ mod tests {
         let mut got = manifest::load(home.path()).entries;
         got.sort_by(|x, y| x.name.cmp(&y.name));
         assert_eq!(got, saved);
+    }
+
+    #[test]
+    fn quit_saves_live_session_as_killed() {
+        static SLEEP: AgentProfile = AgentProfile {
+            name: "test-sleep",
+            command: &["/bin/sh", "-c", "sleep 30"],
+            resume: None,
+            blocked: &[],
+            working: &[],
+        };
+        let home = tempfile::tempdir().unwrap();
+        let mut app = App::new();
+        app.state_home = Some(home.path().into());
+        assert!(app.create_session("live", &SLEEP, home.path()));
+        app.quit();
+        let entries = manifest::load(home.path()).entries;
+        let [entry] = entries.as_slice() else {
+            panic!("expected one saved entry, got {entries:?}");
+        };
+        assert!(entry.ended.is_some());
+        assert_eq!(entry.exit_code, Some(KILLED_CODE));
     }
 
     #[test]

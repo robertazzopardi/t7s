@@ -43,7 +43,7 @@ Keys go to the agent, including `q`, `Esc` and `Ctrl+c`. Only these single chord
 | `Ctrl+1`-`Ctrl+9` | Focus session N |
 | `Ctrl+q` | Quit a4s |
 
-`Ctrl+]` and `Ctrl+1`-`Ctrl+9` need a terminal with the kitty keyboard protocol (kitty, Ghostty, WezTerm, iTerm2 with CSI u). Elsewhere `Ctrl+]` arrives as `Ctrl+5`, so a4s treats `Ctrl+5` as back in those terminals (session 5 is still reachable from the sessions list).
+`Ctrl+]` and `Ctrl+1`-`Ctrl+9` need a terminal with the kitty keyboard protocol (kitty, Ghostty, WezTerm, iTerm2 with CSI u). Elsewhere `Ctrl+]` arrives as `Ctrl+5`, so a4s treats `Ctrl+5` as back in those terminals (session 5 is still reachable from the sessions list). `Ctrl+4`, `Ctrl+6` and `Ctrl+7` arrive as `Ctrl+\`, `Ctrl+^` and `Ctrl+_`, so they go to the agent there (sessions 4, 6 and 7 are reached from the sessions list).
 
 Quitting while an agent is working asks first. Quitting stops every agent.
 

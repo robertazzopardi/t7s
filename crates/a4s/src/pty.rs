@@ -82,6 +82,22 @@ impl vt100::Callbacks for Replies {
     }
 }
 
+/// Swap in a fresh parser of the same size, after a panic left the old one
+/// half-updated. The screen content is lost; the replies keep working.
+fn reset_parser(p: &mut vt100::Parser<Replies>) {
+    let (rows, cols) = p.screen().size();
+    let replies = Replies {
+        tx: p.callbacks().tx.clone(),
+        kitty: Arc::clone(&p.callbacks().kitty),
+    };
+    *p = vt100::Parser::new_with_callbacks(
+        rows,
+        cols,
+        SCROLLBACK_LINES,
+        replies,
+    );
+}
+
 impl Pty {
     /// `on_output` runs on the reader thread after each chunk and once more at EOF.
     ///
@@ -102,7 +118,7 @@ impl Pty {
         if !on_path(prog) {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("{prog} not found on PATH"),
+                format!("`{prog}` not found on PATH"),
             ));
         }
         let pair = native_pty_system()
@@ -111,6 +127,10 @@ impl Pty {
         let mut builder = CommandBuilder::new(prog);
         builder.args(args);
         builder.cwd(cwd);
+        // Output is parsed by vt100, not the outer terminal, so advertise that.
+        builder.env("TERM", "xterm-256color");
+        builder.env_remove("TERM_PROGRAM");
+        builder.env_remove("TERM_PROGRAM_VERSION");
         for (k, v) in env {
             builder.env(k, v);
         }
@@ -157,12 +177,13 @@ impl Pty {
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner);
                 // A vt100 bug must not take the app (and every agent) down.
-                let ok = catch_unwind(AssertUnwindSafe(|| p.process(chunk)));
+                // Keep draining the PTY either way, or the child blocks on write.
+                if catch_unwind(AssertUnwindSafe(|| p.process(chunk))).is_err()
+                {
+                    reset_parser(&mut p);
+                }
                 drop(p);
                 on_output();
-                if ok.is_err() {
-                    break;
-                }
             }
             on_output();
         });
@@ -237,6 +258,8 @@ impl Drop for Pty {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
 
     #[test]
@@ -264,5 +287,45 @@ mod tests {
                 b"\x1b[?3u".to_vec(),
             ]
         );
+    }
+
+    #[test]
+    fn reset_keeps_size_and_replies() {
+        let (tx, rx) = mpsc::channel();
+        let kitty = Arc::new(Mutex::new(KittyMode::default()));
+        let replies = Replies {
+            tx,
+            kitty: Arc::clone(&kitty),
+        };
+        let mut p = vt100::Parser::new_with_callbacks(10, 40, 0, replies);
+        p.process(b"junk");
+        reset_parser(&mut p);
+        assert_eq!(p.screen().size(), (10, 40));
+        assert_eq!(p.screen().contents(), "");
+        p.process(b"\x1b[6n");
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), [b"\x1b[1;1R".to_vec()]);
+    }
+
+    #[test]
+    fn child_sees_xterm_term_and_no_term_program() {
+        let pty = Pty::spawn(
+            &[
+                "/bin/sh".into(),
+                "-c".into(),
+                "echo \"$TERM|${TERM_PROGRAM-unset}\"".into(),
+            ],
+            Path::new("/"),
+            &[],
+            24,
+            80,
+            || {},
+        )
+        .unwrap();
+        let want = "xterm-256color|unset";
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pty.screen().screen().contents().contains(want) {
+            assert!(Instant::now() < deadline, "no output");
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 }

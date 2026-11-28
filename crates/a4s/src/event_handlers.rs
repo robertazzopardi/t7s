@@ -389,7 +389,7 @@ mod tests {
         assert_eq!(app.view, View::Sessions);
         assert_eq!(
             app.status_line.message(),
-            "`a4s-no-such-cmd` not found on PATH"
+            "failed to start test-missing: `a4s-no-such-cmd` not found on PATH"
         );
     }
 
@@ -640,10 +640,12 @@ mod tests {
         let mut app = App::new();
         app.running = true;
         app.create_session("one", &SH, &tmp());
-        let id = app.sessions_by_id[0].id;
         ctrl(&mut app, 'q');
         assert!(!app.running, "idle agents quit without asking");
+        // quit() marked "one" killed, so the busy check needs a fresh session.
         app.running = true;
+        app.create_session("two", &SH, &tmp());
+        let id = app.sessions_by_id.last().unwrap().id;
         app.on_hook(id, Status::Working);
         ctrl(&mut app, 'q');
         assert!(app.running);

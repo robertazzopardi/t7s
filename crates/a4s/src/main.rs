@@ -8,16 +8,18 @@ use k9tui::error::Result;
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
-    if let [cmd, state] = args.as_slice()
-        && cmd == "notify"
-    {
+    // Hooks must never fail the calling agent, so bad arity still exits 0.
+    if args.first().is_some_and(|cmd| cmd == "notify") {
         #[cfg(unix)]
-        process::exit(notify(state));
+        let code = if let [_, state] = args.as_slice() {
+            notify(state)
+        } else {
+            eprintln!("usage: a4s notify <working|blocked|done>");
+            0
+        };
         #[cfg(not(unix))]
-        {
-            let _ = state;
-            process::exit(0);
-        }
+        let code = 0;
+        process::exit(code);
     }
     k9tui::launch::<App>(())
 }

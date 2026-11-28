@@ -9,6 +9,7 @@ on:
     tags:
       - "v*"
       - "c8s-v*"
+      - "a4s-v*"
   workflow_dispatch:
     inputs:
       tag:

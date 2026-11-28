@@ -14,7 +14,7 @@ use k9tui::widgets::{
 };
 
 use crate::{
-    agent::{AgentProfile, on_path, resolve_command},
+    agent::{AgentProfile, resolve_command},
     app::{App, BackgroundEvent, View},
     defaults::KILLED_CODE,
     manifest::repo_root,
@@ -52,7 +52,7 @@ fn initial_size() -> (u16, u16) {
     })
 }
 
-/// Resolved launch command, or the status-line text for a missing binary.
+/// Resolved launch command, or the status-line text for an empty command.
 fn launch_command(
     profile: &AgentProfile,
     resume: bool,
@@ -60,11 +60,10 @@ fn launch_command(
     let cmd = resolve_command(
         profile.resume.filter(|_| resume).unwrap_or(profile.command),
     );
-    match cmd.first() {
-        Some(prog) if on_path(prog) => Ok(cmd),
-        Some(prog) => Err(format!("`{prog}` not found on PATH")),
-        None => Err("empty agent command".into()),
+    if cmd.is_empty() {
+        return Err("empty agent command".into());
     }
+    Ok(cmd)
 }
 
 impl App {

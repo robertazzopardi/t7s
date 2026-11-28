@@ -171,7 +171,9 @@ pub fn save(entries: &[Entry], state_home: &Path) -> io::Result<()> {
     let mut kept = Vec::new();
     for repo in repos {
         if !repo.is_dir() {
-            continue; // repo gone: nothing to write, drop it from the list
+            // Unmounted or gone for now: keep it listed so its file loads later.
+            kept.push(repo);
+            continue;
         }
         let sessions = entries
             .iter()
@@ -327,6 +329,20 @@ mod tests {
         drop(repo);
         let got = load(home.path()).entries;
         assert_eq!(got, vec![entry("b", other.path(), None)]);
+    }
+
+    #[test]
+    fn missing_repo_dir_stays_listed() {
+        let (home, other) = (tmp(), tmp());
+        let gone = other.path().join("unmounted");
+        save(&[entry("a", &gone, Some(&gone))], home.path()).unwrap();
+        let global = read(&manifest_path(None, home.path()), &mut vec![])
+            .unwrap()
+            .unwrap();
+        assert_eq!(global.repos, vec![gone]);
+        let loaded = load(home.path());
+        assert_eq!(loaded.warnings, Vec::<String>::new());
+        assert_eq!(loaded.entries, vec![]);
     }
 
     #[test]
