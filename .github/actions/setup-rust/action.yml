@@ -18,6 +18,11 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Install libdbus (d7s Linux keyring)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       with:

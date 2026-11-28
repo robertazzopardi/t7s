@@ -351,11 +351,8 @@ impl Sqlite {
 
         let mut stmt = client.prepare(sql)?;
 
-        let column_names: Vec<String> = stmt
-            .column_names()
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
+        let column_names: Vec<String> =
+            stmt.column_names().map(str::to_string).collect();
 
         // Statements without result columns (INSERT/UPDATE/DELETE/DDL) are
         // executed once on the prepared statement; never re-run.

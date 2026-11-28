@@ -6,7 +6,11 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use jiff::{
+    Timestamp,
+    civil::{Date, DateTime, Time},
+    tz::Offset,
+};
 use rust_decimal::Decimal;
 use serde_json::Value;
 use tokio_postgres::{
@@ -1329,58 +1333,45 @@ fn try_get_numeric_array(row: &Row, index: usize) -> String {
         .map_or_else(|| "NULL".to_string(), |s| format!("[{s}]"))
 }
 
-/// Helper to get TIMESTAMP values with better compatibility
-/// Tries multiple datetime representations for robustness
+/// Match prior chrono display: space separator, optional fractional seconds.
+fn format_timestamp(dt: DateTime) -> String {
+    dt.strftime("%Y-%m-%d %H:%M:%S%.f").to_string()
+}
+
+/// Match prior chrono `to_rfc3339()`: offset form (`+00:00`), not `Z`.
+fn format_timestamptz(ts: Timestamp) -> String {
+    ts.display_with_offset(Offset::UTC).to_string()
+}
+
+/// TIMESTAMP: civil datetime, then instant, then text.
 fn try_get_timestamp(row: &Row, index: usize) -> String {
-    // Try NaiveDateTime first (TIMESTAMP WITHOUT TIME ZONE)
-    if let Ok(Some(v)) = row.try_get::<_, Option<NaiveDateTime>>(index) {
-        return v.to_string();
+    if let Ok(Some(v)) = row.try_get::<_, Option<DateTime>>(index) {
+        return format_timestamp(v);
     }
-
-    // Fallback to DateTime<Utc> in case it's stored with timezone info
-    if let Ok(Some(v)) = row.try_get::<_, Option<DateTime<Utc>>>(index) {
-        return v.naive_utc().to_string();
+    if let Ok(Some(v)) = row.try_get::<_, Option<Timestamp>>(index) {
+        // Instant decoded as TIMESTAMP: UTC civil, chrono NaiveDateTime style.
+        return v.strftime("%Y-%m-%d %H:%M:%S%.f").to_string();
     }
-
-    // Final fallback to string
     try_get::<String>(row, index)
 }
 
-/// Helper to get TIMESTAMPTZ values with better compatibility
-/// Handles timezone-aware timestamps
+/// TIMESTAMPTZ: instant, then civil datetime, then text.
 fn try_get_timestamptz(row: &Row, index: usize) -> String {
-    // Try DateTime<Utc> first (TIMESTAMP WITH TIME ZONE)
-    if let Ok(Some(v)) = row.try_get::<_, Option<DateTime<Utc>>>(index) {
-        return v.to_rfc3339();
+    if let Ok(Some(v)) = row.try_get::<_, Option<Timestamp>>(index) {
+        return format_timestamptz(v);
     }
-
-    // Fallback to NaiveDateTime if stored without timezone
-    if let Ok(Some(v)) = row.try_get::<_, Option<NaiveDateTime>>(index) {
-        return v.to_string();
+    if let Ok(Some(v)) = row.try_get::<_, Option<DateTime>>(index) {
+        return format_timestamp(v);
     }
-
-    // Final fallback to string
     try_get::<String>(row, index)
 }
 
-/// Helper to get DATE values
 fn try_get_date(row: &Row, index: usize) -> String {
-    if let Ok(Some(v)) = row.try_get::<_, Option<NaiveDate>>(index) {
-        return v.format("%Y-%m-%d").to_string();
-    }
-
-    // Fallback to string
-    try_get::<String>(row, index)
+    try_get::<Date>(row, index)
 }
 
-/// Helper to get TIME values
 fn try_get_time(row: &Row, index: usize) -> String {
-    if let Ok(Some(v)) = row.try_get::<_, Option<NaiveTime>>(index) {
-        return v.format("%H:%M:%S%.f").to_string();
-    }
-
-    // Fallback to string
-    try_get::<String>(row, index)
+    try_get::<Time>(row, index)
 }
 
 #[cfg(test)]
@@ -1460,5 +1451,13 @@ mod tests {
             assert!(size.ends_with("kB") || size.ends_with("bytes"), "{size}");
             assert_eq!(idx.unwrap(), vec![format!("{t}_pkey")]);
         }
+    }
+
+    #[test]
+    fn timestamp_display_matches_chrono_style() {
+        let dt = DateTime::new(2024, 1, 15, 12, 30, 45, 123_000_000).unwrap();
+        assert_eq!(format_timestamp(dt), "2024-01-15 12:30:45.123");
+        let ts: Timestamp = "2024-01-15T12:30:45Z".parse().unwrap();
+        assert_eq!(format_timestamptz(ts), "2024-01-15T12:30:45+00:00");
     }
 }
