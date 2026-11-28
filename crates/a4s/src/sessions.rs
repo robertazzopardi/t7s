@@ -174,6 +174,8 @@ impl App {
             }
         };
         self.next_id += 1;
+        // Drop the error from an earlier failed attempt, e.g. an empty name.
+        self.status_line.clear();
         self.sessions_by_id.push(Session {
             id,
             name: name.to_string(),

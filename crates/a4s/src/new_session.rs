@@ -185,4 +185,38 @@ mod tests {
             DialogAction::Submit
         );
     }
+
+    #[test]
+    fn long_dir_stays_inside_border() {
+        let dirs = [
+            "/Users/rob/".to_string() + &"deeply/nested/".repeat(10),
+            "/Users/rob/".to_string() + &"プロジェクト/🚀/".repeat(4),
+        ];
+        for dir in &dirs {
+            for width in 20..=80 {
+                let mut m = NewSessionModal::new(dir);
+                m.move_focus(2);
+                let area = Rect::new(0, 0, width, 12);
+                let mut buf = Buffer::empty(area);
+                (&m).render(area, &mut buf);
+                let (w, h) = (WIDTH.min(width), HEIGHT.min(12));
+                let right = (width - w) / 2 + w - 1;
+                let top = (12 - h) / 2;
+                for y in top + 1..top + h - 1 {
+                    assert_eq!(
+                        buf[(right, y)].symbol(),
+                        "│",
+                        "w={width} y={y}"
+                    );
+                    for x in right + 1..width {
+                        assert_eq!(
+                            buf[(x, y)].symbol(),
+                            " ",
+                            "w={width} x={x} y={y}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

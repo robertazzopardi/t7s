@@ -24,6 +24,9 @@ pub struct Entry {
     /// Seconds since `UNIX_EPOCH`; `None` while the session is still running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended: Option<u64>,
+    /// Exit code of an ended session; absent means 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<u32>,
 }
 
 /// On-disk shape of both file kinds; `repos` is only used by the global one.
@@ -277,6 +280,7 @@ mod tests {
             repo: repo.map(Path::to_path_buf),
             created: None,
             ended: None,
+            exit_code: None,
         }
     }
 
@@ -425,6 +429,7 @@ mod tests {
                 repo: None,
                 created: None,
                 ended: None,
+                exit_code: None,
             }]
         );
     }

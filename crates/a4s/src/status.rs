@@ -82,6 +82,17 @@ impl StatusTracker {
     pub const fn status(&self) -> Status {
         self.status
     }
+
+    /// The child's exit code once it has exited.
+    #[must_use]
+    pub const fn exit_code(&self) -> Option<u32> {
+        match self.status {
+            Status::Exited(code) => Some(code),
+            Status::Working | Status::Blocked | Status::Done | Status::Idle => {
+                None
+            }
+        }
+    }
 }
 
 #[cfg(test)]

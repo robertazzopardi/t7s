@@ -175,6 +175,7 @@ impl App {
                 repo: s.repo.clone(),
                 created: Some(secs(s.created)),
                 ended: s.status.ended().map(secs),
+                exit_code: s.status.exit_code(),
             })
             .chain(self.orphans.iter().cloned())
             .collect();
@@ -199,7 +200,10 @@ impl App {
             let now = SystemTime::now();
             let created = e.created.map_or(now, from_secs);
             let mut status = StatusTracker::new(Instant::now());
-            status.exited(0, e.ended.map_or(now, from_secs));
+            status.exited(
+                e.exit_code.unwrap_or(0),
+                e.ended.map_or(now, from_secs),
+            );
             self.sessions_by_id.push(Session {
                 id: self.next_id,
                 name: e.name,
@@ -440,6 +444,7 @@ mod tests {
             repo: None,
             created: Some(1_000_000),
             ended: Some(1_000_500),
+            exit_code: Some(127),
         };
         manifest::save(slice::from_ref(&saved), home.path()).unwrap();
 
@@ -448,6 +453,7 @@ mod tests {
         let s = app.sessions_by_id.first().unwrap();
         assert_eq!(s.created, from_secs(1_000_000));
         assert_eq!(s.status.ended(), Some(from_secs(1_000_500)));
+        assert_eq!(s.status.status(), Status::Exited(127));
 
         app.state_home = Some(home.path().into());
         app.persist();
@@ -465,6 +471,7 @@ mod tests {
             repo: None,
             created: Some(1_000_000),
             ended: Some(1_000_500),
+            exit_code: Some(0),
         };
         let saved = [entry("a", "claude"), entry("b", "nope")];
         manifest::save(&saved, home.path()).unwrap();
@@ -496,6 +503,7 @@ mod tests {
             repo: None,
             created: None,
             ended: None,
+            exit_code: None,
         });
         let agent = profile("claude").unwrap();
         assert!(!app.create_session("ghost", agent, Path::new("/")));
@@ -522,6 +530,7 @@ mod tests {
             repo: Some(r.clone()),
             created: None,
             ended: None,
+            exit_code: None,
         };
         manifest::save(&[entry("A")], home.path()).unwrap();
         let global = manifest::manifest_path(None, home.path());

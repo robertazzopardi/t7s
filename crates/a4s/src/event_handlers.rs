@@ -394,6 +394,15 @@ mod tests {
     }
 
     #[test]
+    fn success_clears_earlier_error() {
+        let mut app = App::new();
+        assert!(!app.create_session("", &SH, &tmp()));
+        assert_eq!(app.status_line.message(), "name must not be empty");
+        assert!(app.create_session("ok", &SH, &tmp()));
+        assert_eq!(app.status_line.message(), "");
+    }
+
+    #[test]
     fn duplicate_name_rejected() {
         let mut app = App::new();
         assert!(app.create_session("one", &SH, &tmp()));
