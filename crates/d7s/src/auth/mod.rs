@@ -137,11 +137,16 @@ fn init_platform_store() -> keyring_core::Result<()> {
     }
 }
 
-/// `Ok` if the default store is ready; `Err` if init failed (details not Clone).
+/// `Ok` if the default store is ready; `Err` if init failed (`Error` is not `Clone`).
 #[cfg(not(debug_assertions))]
 fn ensure_default_store() -> Result<(), Error> {
     static INIT: OnceLock<Result<(), ()>> = OnceLock::new();
-    match INIT.get_or_init(|| init_platform_store().map_err(|_| ())) {
+    match INIT.get_or_init(|| {
+        init_platform_store().map_err(|err| {
+            // OnceLock can't keep the platform error; print once for headless debug.
+            eprintln!("d7s keyring store init failed: {err}");
+        })
+    }) {
         Ok(()) => Ok(()),
         Err(()) => {
             Err(Error::KeyringError(keyring_core::Error::NoDefaultStore))

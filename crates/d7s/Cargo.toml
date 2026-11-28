@@ -64,7 +64,7 @@ tokio-postgres = { version = "0.7.18", features = [
     "array-impls",
 ] }
 
-# Keyring — avoid keyring v1's zbus 5 stack (RUSTSEC-2026-0370/71/72).
+# Keyring — skip keyring 4's zbus-secret-service stack (RUSTSEC-2026-0370/71/72).
 keyring-core = "1"
 
 # Serialization

@@ -9,6 +9,7 @@ use std::{
 use jiff::{
     Timestamp,
     civil::{Date, DateTime, Time},
+    tz::Offset,
 };
 use rust_decimal::Decimal;
 use serde_json::Value;
@@ -1332,13 +1333,24 @@ fn try_get_numeric_array(row: &Row, index: usize) -> String {
         .map_or_else(|| "NULL".to_string(), |s| format!("[{s}]"))
 }
 
+/// Match prior chrono display: space separator, optional fractional seconds.
+fn format_timestamp(dt: DateTime) -> String {
+    dt.strftime("%Y-%m-%d %H:%M:%S%.f").to_string()
+}
+
+/// Match prior chrono `to_rfc3339()`: offset form (`+00:00`), not `Z`.
+fn format_timestamptz(ts: Timestamp) -> String {
+    ts.display_with_offset(Offset::UTC).to_string()
+}
+
 /// TIMESTAMP: civil datetime, then instant, then text.
 fn try_get_timestamp(row: &Row, index: usize) -> String {
     if let Ok(Some(v)) = row.try_get::<_, Option<DateTime>>(index) {
-        return v.to_string();
+        return format_timestamp(v);
     }
     if let Ok(Some(v)) = row.try_get::<_, Option<Timestamp>>(index) {
-        return v.to_string();
+        // Instant decoded as TIMESTAMP: UTC civil, chrono NaiveDateTime style.
+        return v.strftime("%Y-%m-%d %H:%M:%S%.f").to_string();
     }
     try_get::<String>(row, index)
 }
@@ -1346,10 +1358,10 @@ fn try_get_timestamp(row: &Row, index: usize) -> String {
 /// TIMESTAMPTZ: instant, then civil datetime, then text.
 fn try_get_timestamptz(row: &Row, index: usize) -> String {
     if let Ok(Some(v)) = row.try_get::<_, Option<Timestamp>>(index) {
-        return v.to_string();
+        return format_timestamptz(v);
     }
     if let Ok(Some(v)) = row.try_get::<_, Option<DateTime>>(index) {
-        return v.to_string();
+        return format_timestamp(v);
     }
     try_get::<String>(row, index)
 }
@@ -1439,5 +1451,13 @@ mod tests {
             assert!(size.ends_with("kB") || size.ends_with("bytes"), "{size}");
             assert_eq!(idx.unwrap(), vec![format!("{t}_pkey")]);
         }
+    }
+
+    #[test]
+    fn timestamp_display_matches_chrono_style() {
+        let dt = DateTime::new(2024, 1, 15, 12, 30, 45, 123_000_000).unwrap();
+        assert_eq!(format_timestamp(dt), "2024-01-15 12:30:45.123");
+        let ts: Timestamp = "2024-01-15T12:30:45Z".parse().unwrap();
+        assert_eq!(format_timestamptz(ts), "2024-01-15T12:30:45+00:00");
     }
 }
