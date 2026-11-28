@@ -5,6 +5,7 @@ use std::{
     io::stdout,
     panic::{set_hook, take_hook},
     path::{Path, PathBuf},
+    thread,
     time::{Instant, SystemTime},
 };
 
@@ -107,6 +108,8 @@ pub struct App {
     /// Keeps the hook socket alive (and removes it on drop).
     #[cfg(unix)]
     pub(crate) hook_socket: Option<HookSocket>,
+    /// Kitty keyboard enhancement is on, so Ctrl+] and Ctrl+5 differ.
+    pub keys_enhanced: bool,
 }
 
 impl App {
@@ -137,6 +140,7 @@ impl App {
             bg_rx,
             #[cfg(unix)]
             hook_socket: None,
+            keys_enhanced: false,
         }
     }
 
@@ -169,6 +173,8 @@ impl App {
                 agent: s.agent.name.to_string(),
                 dir: s.dir.clone(),
                 repo: s.repo.clone(),
+                created: Some(secs(s.created)),
+                ended: s.status.ended().map(secs),
             })
             .chain(self.orphans.iter().cloned())
             .collect();
@@ -190,8 +196,10 @@ impl App {
                 self.orphans.push(e);
                 continue;
             };
+            let now = SystemTime::now();
+            let created = e.created.map_or(now, from_secs);
             let mut status = StatusTracker::new(Instant::now());
-            status.exited(0, SystemTime::now());
+            status.exited(0, e.ended.map_or(now, from_secs));
             self.sessions_by_id.push(Session {
                 id: self.next_id,
                 name: e.name,
@@ -199,7 +207,7 @@ impl App {
                 dir: e.dir,
                 pty: None,
                 status,
-                created: SystemTime::now(),
+                created,
                 repo: e.repo,
             });
             self.next_id += 1;
@@ -348,7 +356,8 @@ impl TuiApp for App {
                 every.tick().await;
             }
         });
-        let _guard = InputModes::enter();
+        let guard = InputModes::enter();
+        self.keys_enhanced = guard.enhanced;
         self.run(terminal)
     }
 }
@@ -371,8 +380,14 @@ impl InputModes {
             );
         }
         let _ = execute!(stdout(), EnableMouseCapture);
+        let main = thread::current().id();
         let prev_hook = take_hook();
         set_hook(Box::new(move |info| {
+            // Pty reader threads catch their own parser panics; restoring the
+            // terminal there would wreck a TUI that keeps running.
+            if thread::current().id() != main {
+                return;
+            }
             restore(enhanced);
             prev_hook(info);
         }));
@@ -399,11 +414,45 @@ impl Default for App {
     }
 }
 
+/// Manifests store times as whole seconds since `UNIX_EPOCH`.
+fn secs(t: SystemTime) -> u64 {
+    t.duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+fn from_secs(s: u64) -> SystemTime {
+    SystemTime::UNIX_EPOCH + Duration::from_secs(s)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{fs, process::Command};
+    use std::{fs, process::Command, slice};
 
     use super::*;
+
+    #[test]
+    fn restored_session_keeps_created_and_ended() {
+        let home = tempfile::tempdir().unwrap();
+        let saved = Entry {
+            name: "a".into(),
+            agent: "claude".into(),
+            dir: "/".into(),
+            repo: None,
+            created: Some(1_000_000),
+            ended: Some(1_000_500),
+        };
+        manifest::save(slice::from_ref(&saved), home.path()).unwrap();
+
+        let mut app = App::new();
+        app.load_sessions(home.path());
+        let s = app.sessions_by_id.first().unwrap();
+        assert_eq!(s.created, from_secs(1_000_000));
+        assert_eq!(s.status.ended(), Some(from_secs(1_000_500)));
+
+        app.state_home = Some(home.path().into());
+        app.persist();
+        assert_eq!(manifest::load(home.path()).entries, vec![saved]);
+    }
 
     #[test]
     fn persist_then_load_keeps_sessions_and_orphans() {
@@ -414,6 +463,8 @@ mod tests {
             agent: agent.into(),
             dir: dir.path().into(),
             repo: None,
+            created: Some(1_000_000),
+            ended: Some(1_000_500),
         };
         let saved = [entry("a", "claude"), entry("b", "nope")];
         manifest::save(&saved, home.path()).unwrap();
@@ -443,6 +494,8 @@ mod tests {
             agent: "nope".into(),
             dir: "/".into(),
             repo: None,
+            created: None,
+            ended: None,
         });
         let agent = profile("claude").unwrap();
         assert!(!app.create_session("ghost", agent, Path::new("/")));
@@ -467,6 +520,8 @@ mod tests {
             agent: "claude".into(),
             dir: r.clone(),
             repo: Some(r.clone()),
+            created: None,
+            ended: None,
         };
         manifest::save(&[entry("A")], home.path()).unwrap();
         let global = manifest::manifest_path(None, home.path());

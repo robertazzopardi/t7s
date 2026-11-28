@@ -18,6 +18,12 @@ pub struct Entry {
     pub agent: String,
     pub dir: PathBuf,
     pub repo: Option<PathBuf>,
+    /// Seconds since `UNIX_EPOCH`. Absent in manifests written before this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<u64>,
+    /// Seconds since `UNIX_EPOCH`; `None` while the session is still running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended: Option<u64>,
 }
 
 /// On-disk shape of both file kinds; `repos` is only used by the global one.
@@ -269,6 +275,8 @@ mod tests {
             agent: "claude".into(),
             dir: dir.into(),
             repo: repo.map(Path::to_path_buf),
+            created: None,
+            ended: None,
         }
     }
 
@@ -394,6 +402,31 @@ mod tests {
         fs::write(&file, [0xff, 0xfe, b'\n']).unwrap();
         assert!(ensure_excluded(repo.path()).is_err());
         assert_eq!(fs::read(&file).unwrap(), [0xff, 0xfe, b'\n']);
+    }
+
+    #[test]
+    fn old_manifest_without_times_loads() {
+        let home = tmp();
+        let path = manifest_path(None, home.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "[[sessions]]\nname = \"a\"\nagent = \"claude\"\ndir = \"/x\"\n",
+        )
+        .unwrap();
+        let l = load(home.path());
+        assert_eq!(l.warnings, Vec::<String>::new());
+        assert_eq!(
+            l.entries,
+            vec![Entry {
+                name: "a".into(),
+                agent: "claude".into(),
+                dir: "/x".into(),
+                repo: None,
+                created: None,
+                ended: None,
+            }]
+        );
     }
 
     #[test]

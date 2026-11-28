@@ -20,10 +20,12 @@ pub enum Route {
     Ignore,
 }
 
-/// Route one key. `exited` is true when the focused agent is gone, so Esc
-/// has no one to interrupt and goes back to the sessions list instead.
+/// Route one key.
+///
+/// `exited` is true when the focused agent is gone, so Esc has no one to
+/// interrupt and goes back to the sessions list instead. `enhanced` is whether the terminal has kitty keyboard enhancement.
 #[must_use]
-pub fn route(key: KeyEvent, exited: bool) -> Route {
+pub fn route(key: KeyEvent, exited: bool, enhanced: bool) -> Route {
     if key.kind != KeyEventKind::Press {
         return Route::Ignore;
     }
@@ -35,8 +37,10 @@ pub fn route(key: KeyEvent, exited: bool) -> Route {
     {
         return Route::App(AppAction::Sessions);
     }
-    // shortcut: without kitty keyboard enhancement the terminal sends Ctrl+]
-    // as the same byte as Ctrl+5, which then focuses session 5.
+    // Legacy Ctrl+] is byte 0x1D, the same as Ctrl+5, so Ctrl+5 means back there.
+    if !enhanced && chord == (KeyCode::Char('5'), KeyModifiers::CONTROL) {
+        return Route::App(AppAction::Sessions);
+    }
     if key.modifiers == KeyModifiers::CONTROL
         && let KeyCode::Char(c) = key.code
         && let Some(n) = c.to_digit(10).filter(|d| *d >= 1)
@@ -64,30 +68,48 @@ mod tests {
     #[test]
     fn agent_keys_pass_through() {
         for k in [ctrl('c'), ctrl('a'), esc(), ctrl('0')] {
-            assert_eq!(route(k, false), Route::Agent(k));
+            assert_eq!(route(k, false, true), Route::Agent(k));
         }
     }
 
     #[test]
     fn single_chords() {
-        assert_eq!(route(ctrl('q'), false), Route::App(AppAction::Quit));
-        assert_eq!(route(ctrl(']'), false), Route::App(AppAction::Sessions));
-        assert_eq!(route(ctrl('3'), false), Route::App(AppAction::Focus(3)));
+        assert_eq!(route(ctrl('q'), false, true), Route::App(AppAction::Quit));
+        assert_eq!(
+            route(ctrl(']'), false, true),
+            Route::App(AppAction::Sessions)
+        );
+        assert_eq!(
+            route(ctrl('3'), false, true),
+            Route::App(AppAction::Focus(3))
+        );
+    }
+
+    #[test]
+    fn legacy_ctrl5_goes_back() {
+        assert_eq!(
+            route(ctrl('5'), false, false),
+            Route::App(AppAction::Sessions)
+        );
+        assert_eq!(
+            route(ctrl('5'), false, true),
+            Route::App(AppAction::Focus(5))
+        );
     }
 
     #[test]
     fn esc_goes_back_only_after_exit() {
-        assert_eq!(route(esc(), true), Route::App(AppAction::Sessions));
+        assert_eq!(route(esc(), true, true), Route::App(AppAction::Sessions));
         let shift_esc = press(KeyCode::Esc, KeyModifiers::SHIFT);
-        assert_eq!(route(shift_esc, true), Route::Agent(shift_esc));
+        assert_eq!(route(shift_esc, true, true), Route::Agent(shift_esc));
     }
 
     #[test]
     fn release_events_ignored() {
         let mut k = ctrl('q');
         k.kind = KeyEventKind::Release;
-        assert_eq!(route(k, false), Route::Ignore);
+        assert_eq!(route(k, false, true), Route::Ignore);
         k.kind = KeyEventKind::Repeat;
-        assert_eq!(route(k, false), Route::Ignore);
+        assert_eq!(route(k, false, true), Route::Ignore);
     }
 }

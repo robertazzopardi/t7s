@@ -100,7 +100,7 @@ impl App {
             .focused
             .and_then(|id| self.session_mut(id))
             .is_none_or(|s| s.is_exited());
-        match chords::route(key, exited) {
+        match chords::route(key, exited, self.keys_enhanced) {
             Route::Agent(k) => self.send_focused(|p| {
                 encode(
                     k,
