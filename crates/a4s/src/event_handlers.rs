@@ -14,6 +14,7 @@ use k9tui::{
 use crate::{
     app::{App, View},
     chords::{self, AppAction, Route},
+    defaults::QUIT,
     keys::{encode, encode_paste},
     new_session::NewSessionModal,
     pty::{Pty, SessionId},
@@ -116,12 +117,11 @@ impl App {
     fn run_action(&mut self, action: AppAction) {
         match action {
             AppAction::Quit => self.request_quit(),
-            AppAction::Focus(n) => {
-                if let Some(id) = self.sessions_by_id.get(n - 1).map(|s| s.id) {
-                    self.focus_session(id);
-                }
+            AppAction::Focus(n) => self.focus_nth(n),
+            AppAction::Sessions => {
+                self.view = View::Sessions;
+                self.refresh_table();
             }
-            AppAction::Sessions => self.view = View::Sessions,
         }
     }
 
@@ -153,10 +153,7 @@ impl App {
     }
 
     fn on_key_sessions(&mut self, key: KeyEvent) {
-        if is_ctrl_c(key)
-            || (key.code == KeyCode::Char('q')
-                && key.modifiers == KeyModifiers::CONTROL)
-        {
+        if is_ctrl_c(key) || (key.code, key.modifiers) == QUIT {
             self.request_quit();
             return;
         }
@@ -167,10 +164,7 @@ impl App {
                 KeyModifiers::NONE | KeyModifiers::CONTROL
             )
         {
-            let n = c.to_digit(10).map_or(0, |d| d as usize);
-            if let Some(id) = self.sessions_by_id.get(n - 1).map(|s| s.id) {
-                self.focus_session(id);
-            }
+            self.focus_nth(c.to_digit(10).map_or(0, |d| d as usize));
             return;
         }
         let screen = "sessions";
@@ -432,10 +426,7 @@ mod tests {
         press(&mut app, KeyCode::Left); // select Yes
         press(&mut app, KeyCode::Enter);
         assert!(app.confirm_dialog.is_none());
-        assert_eq!(
-            app.sessions_by_id[0].status.status(),
-            Status::Exited(KILLED_CODE)
-        );
+        assert_eq!(app.sessions_by_id[0].status.exit_code(), Some(KILLED_CODE));
         assert!(app.sessions_by_id[0].pty.is_none());
         assert!(app.sessions.model.items[0].state.starts_with('✗'));
     }
@@ -490,7 +481,7 @@ mod tests {
         assert!(app.create_session("one", &EXIT3, &tmp()));
         let id = app.sessions_by_id[0].id;
         wait_exited(&mut app, id);
-        assert_eq!(app.sessions_by_id[0].status.status(), Status::Exited(3));
+        assert_eq!(app.sessions_by_id[0].status.exit_code(), Some(3));
         assert!(app.sessions_by_id[0].pty.is_some(), "last screen kept");
         assert!(!app.send_to_session(id, b"hello\n"));
         app.kill_session(id);

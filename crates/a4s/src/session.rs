@@ -8,6 +8,7 @@ use crate::{
     agent::AgentProfile,
     defaults::{
         GLYPH_BLOCKED, GLYPH_DONE, GLYPH_EXITED, GLYPH_IDLE, GLYPH_WORKING,
+        KILLED_CODE,
     },
     pty::{Pty, SessionId},
     status::{Status, StatusTracker},
@@ -33,7 +34,12 @@ pub struct Session {
 impl Session {
     #[must_use]
     pub const fn is_exited(&self) -> bool {
-        matches!(self.status.status(), Status::Exited(_))
+        self.status.is_exited()
+    }
+
+    /// Record a kill at `at` (the sentinel `KILLED_CODE`); no-op if exited.
+    pub const fn mark_killed(&mut self, at: SystemTime) {
+        self.status.exited(KILLED_CODE, at);
     }
 
     /// Table row; `number` is the 1-based `#` (also the `Ctrl+N` number).
@@ -64,7 +70,7 @@ pub fn glyph(status: Status) -> String {
         Status::Blocked => GLYPH_BLOCKED.into(),
         Status::Done => GLYPH_DONE.into(),
         Status::Idle => GLYPH_IDLE.into(),
-        Status::Exited(code) => format!("{GLYPH_EXITED} {code}"),
+        Status::Exited { code, .. } => format!("{GLYPH_EXITED} {code}"),
     }
 }
 
@@ -134,6 +140,7 @@ mod tests {
 
     #[test]
     fn exited_glyph_has_code() {
-        assert_eq!(glyph(Status::Exited(3)), "✗ 3");
+        let ended = SystemTime::UNIX_EPOCH;
+        assert_eq!(glyph(Status::Exited { code: 3, ended }), "✗ 3");
     }
 }

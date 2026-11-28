@@ -37,7 +37,6 @@ use tokio::{
 use crate::hooks::HookSocket;
 use crate::{
     agent::profile,
-    defaults::KILLED_CODE,
     keymap::SPEC,
     manifest::{self, Entry},
     new_session::NewSessionModal,
@@ -58,8 +57,7 @@ _____     /  |  |  ______
 pub const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 pub const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Update pushed from a background task into the app's event loop. Later
-/// tasks add variants.
+/// Update pushed from a background task into the app's event loop.
 pub enum BackgroundEvent {
     /// Status reported by an agent hook (`a4s notify`).
     Hook { id: SessionId, status: Status },
@@ -110,7 +108,7 @@ pub struct App {
     #[cfg(unix)]
     pub(crate) hook_socket: Option<HookSocket>,
     /// Kitty keyboard enhancement is on, so Ctrl+] and Ctrl+5 differ.
-    pub keys_enhanced: bool,
+    pub(crate) keys_enhanced: bool,
 }
 
 impl App {
@@ -161,8 +159,8 @@ impl App {
     pub(crate) fn quit(&mut self) {
         // Live PTYs drop after this, so record them as killed before saving.
         let now = SystemTime::now();
-        for s in self.sessions_by_id.iter_mut().filter(|s| !s.is_exited()) {
-            s.status.exited(KILLED_CODE, now);
+        for s in &mut self.sessions_by_id {
+            s.mark_killed(now);
         }
         self.persist();
         self.running = false;
@@ -179,8 +177,8 @@ impl App {
                 agent: s.agent.name.to_string(),
                 dir: s.dir.clone(),
                 repo: s.repo.clone(),
-                created: Some(secs(s.created)),
-                ended: s.status.ended().map(secs),
+                created: Some(s.created),
+                ended: s.status.ended(),
                 exit_code: s.status.exit_code(),
             })
             .chain(self.orphans.iter().cloned())
@@ -204,12 +202,9 @@ impl App {
                 continue;
             };
             let now = SystemTime::now();
-            let created = e.created.map_or(now, from_secs);
+            let created = e.created.unwrap_or(now);
             let mut status = StatusTracker::new(Instant::now());
-            status.exited(
-                e.exit_code.unwrap_or(0),
-                e.ended.map_or(now, from_secs),
-            );
+            status.exited(e.exit_code.unwrap_or(0), e.ended.unwrap_or(now));
             self.sessions_by_id.push(Session {
                 id: self.next_id,
                 name: e.name,
@@ -314,7 +309,8 @@ impl App {
         if tick {
             self.on_tick();
         }
-        if changed {
+        // The table is only drawn in the sessions view; entering it refreshes.
+        if changed && self.view == View::Sessions {
             self.refresh_table();
         }
     }
@@ -424,22 +420,16 @@ impl Default for App {
     }
 }
 
-/// Manifests store times as whole seconds since `UNIX_EPOCH`.
-fn secs(t: SystemTime) -> u64 {
-    t.duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
-
-fn from_secs(s: u64) -> SystemTime {
-    SystemTime::UNIX_EPOCH + Duration::from_secs(s)
-}
-
 #[cfg(test)]
 mod tests {
     use std::{fs, process::Command, slice};
 
     use super::*;
-    use crate::agent::AgentProfile;
+    use crate::{agent::AgentProfile, defaults::KILLED_CODE};
+
+    fn at(secs: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+    }
 
     #[test]
     fn restored_session_keeps_created_and_ended() {
@@ -449,8 +439,8 @@ mod tests {
             agent: "claude".into(),
             dir: "/".into(),
             repo: None,
-            created: Some(1_000_000),
-            ended: Some(1_000_500),
+            created: Some(at(1_000_000)),
+            ended: Some(at(1_000_500)),
             exit_code: Some(127),
         };
         manifest::save(slice::from_ref(&saved), home.path()).unwrap();
@@ -458,9 +448,9 @@ mod tests {
         let mut app = App::new();
         app.load_sessions(home.path());
         let s = app.sessions_by_id.first().unwrap();
-        assert_eq!(s.created, from_secs(1_000_000));
-        assert_eq!(s.status.ended(), Some(from_secs(1_000_500)));
-        assert_eq!(s.status.status(), Status::Exited(127));
+        assert_eq!(s.created, at(1_000_000));
+        assert_eq!(s.status.ended(), Some(at(1_000_500)));
+        assert_eq!(s.status.exit_code(), Some(127));
 
         app.state_home = Some(home.path().into());
         app.persist();
@@ -476,8 +466,8 @@ mod tests {
             agent: agent.into(),
             dir: dir.path().into(),
             repo: None,
-            created: Some(1_000_000),
-            ended: Some(1_000_500),
+            created: Some(at(1_000_000)),
+            ended: Some(at(1_000_500)),
             exit_code: Some(0),
         };
         let saved = [entry("a", "claude"), entry("b", "nope")];

@@ -33,6 +33,7 @@ impl NewSessionModal {
     pub fn new(dir: &str) -> Self {
         let mut name = ModalField::new("Name");
         let mut agent = ModalField::new("Agent");
+        // Options make `input_key` a no-op on Agent, so typing cannot edit it.
         agent.set_options(PROFILES.iter().map(|p| p.name).collect());
         let mut d = ModalField::new("Dir");
         d.set_value(dir);
@@ -43,13 +44,15 @@ impl NewSessionModal {
         }
     }
 
-    fn move_focus(&mut self, delta: usize) {
-        if let Some(f) = self.fields.get_mut(self.focus) {
-            f.set_focus(false);
-        }
-        self.focus = (self.focus + delta) % self.fields.len();
-        if let Some(f) = self.fields.get_mut(self.focus) {
-            f.set_focus(true);
+    fn move_focus(&mut self, forward: bool) {
+        let len = self.fields.len();
+        self.focus = if forward {
+            (self.focus + 1) % len
+        } else {
+            (self.focus + len - 1) % len
+        };
+        for (i, f) in self.fields.iter_mut().enumerate() {
+            f.set_focus(i == self.focus);
         }
     }
 
@@ -74,8 +77,8 @@ impl NewSessionModal {
         match key.code {
             KeyCode::Esc => return DialogAction::Cancel,
             KeyCode::Enter => return DialogAction::Submit,
-            KeyCode::Tab | KeyCode::Down => self.move_focus(1),
-            KeyCode::BackTab | KeyCode::Up => self.move_focus(2),
+            KeyCode::Tab | KeyCode::Down => self.move_focus(true),
+            KeyCode::BackTab | KeyCode::Up => self.move_focus(false),
             KeyCode::Left | KeyCode::Right if self.focus == AGENT => {
                 self.cycle_agent(key.code == KeyCode::Right);
             }
@@ -195,7 +198,7 @@ mod tests {
         for dir in &dirs {
             for width in 20..=80 {
                 let mut m = NewSessionModal::new(dir);
-                m.move_focus(2);
+                m.move_focus(false);
                 let area = Rect::new(0, 0, width, 12);
                 let mut buf = Buffer::empty(area);
                 (&m).render(area, &mut buf);

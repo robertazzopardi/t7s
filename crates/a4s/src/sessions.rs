@@ -16,7 +16,6 @@ use k9tui::widgets::{
 use crate::{
     agent::{AgentProfile, resolve_command},
     app::{App, BackgroundEvent, View},
-    defaults::KILLED_CODE,
     manifest::repo_root,
     pty::{Pty, SessionId},
     session::Session,
@@ -135,10 +134,6 @@ impl App {
             dir,
             env::var_os("HOME").map(PathBuf::from).as_deref(),
         );
-        let repo = repo_root(dir);
-        if let Some(r) = &repo {
-            self.adopt_repo(r);
-        }
         let error = if name.is_empty() {
             Some("name must not be empty".to_string())
         } else if self.sessions_by_id.iter().any(|s| s.name == name)
@@ -153,6 +148,10 @@ impl App {
         if let Some(e) = error {
             self.status_line.set_message(e);
             return false;
+        }
+        let repo = repo_root(dir);
+        if let Some(r) = &repo {
+            self.adopt_repo(r);
         }
         let cmd = match launch_command(profile, false) {
             Ok(cmd) => cmd,
@@ -202,6 +201,17 @@ impl App {
         self.view = View::Agent;
     }
 
+    /// Focus the `n`th session, 1-based. No-op for 0 or out of range.
+    pub(crate) fn focus_nth(&mut self, n: usize) {
+        if let Some(id) = n
+            .checked_sub(1)
+            .and_then(|i| self.sessions_by_id.get(i))
+            .map(|s| s.id)
+        {
+            self.focus_session(id);
+        }
+    }
+
     /// Kill the child by dropping its PTY. The row stays as `Exited` with
     /// the sentinel code `KILLED_CODE` until forgotten or restarted.
     pub(crate) fn kill_session(&mut self, id: SessionId) {
@@ -209,7 +219,7 @@ impl App {
             && !s.is_exited()
         {
             s.pty = None;
-            s.status.exited(KILLED_CODE, SystemTime::now());
+            s.mark_killed(SystemTime::now());
         }
         self.refresh_table();
     }
@@ -285,8 +295,13 @@ impl App {
     pub(crate) fn on_output(&mut self, id: SessionId) {
         self.update_status(id, |s| {
             if let Some(pty) = &s.pty {
-                let text = pty.screen().screen().contents();
-                s.status.observe(&text, s.agent, Instant::now());
+                let now = Instant::now();
+                if s.status.wants_screen() {
+                    let text = pty.screen().screen().contents();
+                    s.status.observe(&text, s.agent, now);
+                } else {
+                    s.status.observe_output(now);
+                }
             }
         });
     }

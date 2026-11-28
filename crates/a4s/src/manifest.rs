@@ -8,9 +8,33 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
+    time::SystemTime,
 };
 
 use serde::{Deserialize, Serialize};
+
+/// Times are stored as whole seconds since `UNIX_EPOCH`.
+mod epoch_secs {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[allow(clippy::ref_option, reason = "serde passes &Option<T>")]
+    pub fn serialize<S: Serializer>(
+        t: &Option<SystemTime>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        t.map(|t| t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()))
+            .serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<SystemTime>, D::Error> {
+        Ok(Option::<u64>::deserialize(d)?
+            .map(|s| UNIX_EPOCH + Duration::from_secs(s)))
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
@@ -18,12 +42,20 @@ pub struct Entry {
     pub agent: String,
     pub dir: PathBuf,
     pub repo: Option<PathBuf>,
-    /// Seconds since `UNIX_EPOCH`. Absent in manifests written before this field.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created: Option<u64>,
-    /// Seconds since `UNIX_EPOCH`; `None` while the session is still running.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ended: Option<u64>,
+    /// Absent in manifests written before this field.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "epoch_secs"
+    )]
+    pub created: Option<SystemTime>,
+    /// `None` while the session is still running.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "epoch_secs"
+    )]
+    pub ended: Option<SystemTime>,
     /// Exit code of an ended session; absent means 0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<u32>,

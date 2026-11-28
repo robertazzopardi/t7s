@@ -10,15 +10,17 @@ pub enum Status {
     Blocked,
     Done,
     Idle,
-    Exited(u32),
+    /// The child exited with `code`; the AGE column stops at `ended`.
+    Exited {
+        code: u32,
+        ended: SystemTime,
+    },
 }
 
 pub struct StatusTracker {
     status: Status,
     last_output: Instant,
     hook_seen: bool,
-    /// When the agent exited; the AGE column stops here.
-    ended: Option<SystemTime>,
 }
 
 impl StatusTracker {
@@ -28,17 +30,14 @@ impl StatusTracker {
             status: Status::Idle,
             last_output: now,
             hook_seen: false,
-            ended: None,
         }
     }
 
-    /// Feed the rendered screen text after new output arrived.
+    /// Feed the rendered screen text after new output arrived. Callers that
+    /// skip the screen when `wants_screen` is false use `observe_output`.
     pub fn observe(&mut self, screen: &str, p: &AgentProfile, now: Instant) {
-        if matches!(self.status, Status::Exited(_)) {
-            return;
-        }
-        self.last_output = now;
-        if self.hook_seen {
+        self.observe_output(now);
+        if !self.wants_screen() {
             return;
         }
         let hit = |pats: &[&str]| pats.iter().any(|s| screen.contains(s));
@@ -62,20 +61,45 @@ impl StatusTracker {
 
     /// Agent-reported status; from now on screen matching is ignored.
     pub const fn hook(&mut self, status: Status) {
-        if !matches!(self.status, Status::Exited(_)) {
+        if !self.is_exited() {
             self.status = status;
             self.hook_seen = true;
         }
     }
 
-    pub fn exited(&mut self, code: u32, at: SystemTime) {
-        self.status = Status::Exited(code);
-        self.ended.get_or_insert(at);
+    /// Output arrived at `now`. Refreshes the quiet timer unless exited.
+    pub const fn observe_output(&mut self, now: Instant) {
+        if !self.is_exited() {
+            self.last_output = now;
+        }
+    }
+
+    /// Whether `observe` reads the screen: not once exited or hook-reported.
+    #[must_use]
+    pub const fn wants_screen(&self) -> bool {
+        !self.is_exited() && !self.hook_seen
+    }
+
+    /// First exit wins; later calls (kill, poll, quit) are ignored.
+    pub const fn exited(&mut self, code: u32, at: SystemTime) {
+        if !self.is_exited() {
+            self.status = Status::Exited { code, ended: at };
+        }
+    }
+
+    #[must_use]
+    pub const fn is_exited(&self) -> bool {
+        matches!(self.status, Status::Exited { .. })
     }
 
     #[must_use]
     pub const fn ended(&self) -> Option<SystemTime> {
-        self.ended
+        match self.status {
+            Status::Exited { ended, .. } => Some(ended),
+            Status::Working | Status::Blocked | Status::Done | Status::Idle => {
+                None
+            }
+        }
     }
 
     #[must_use]
@@ -87,7 +111,7 @@ impl StatusTracker {
     #[must_use]
     pub const fn exit_code(&self) -> Option<u32> {
         match self.status {
-            Status::Exited(code) => Some(code),
+            Status::Exited { code, .. } => Some(code),
             Status::Working | Status::Blocked | Status::Done | Status::Idle => {
                 None
             }
@@ -179,6 +203,12 @@ mod tests {
         t.observe("esc to interrupt", claude(), now);
         t.hook(Status::Working);
         t.tick(now + IDLE_AFTER);
-        assert_eq!(t.status(), Status::Exited(3));
+        assert_eq!(
+            t.status(),
+            Status::Exited {
+                code: 3,
+                ended: SystemTime::UNIX_EPOCH
+            }
+        );
     }
 }

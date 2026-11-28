@@ -37,8 +37,11 @@ impl App {
         self.recent
             .iter()
             .filter_map(|id| {
-                let i = self.sessions_by_id.iter().position(|s| s.id == *id)?;
-                let s = self.sessions_by_id.get(i)?;
+                let (i, s) = self
+                    .sessions_by_id
+                    .iter()
+                    .enumerate()
+                    .find(|(_, s)| s.id == *id)?;
                 let glyph = glyph(s.status.status());
                 Some(Hotkey::labeled(
                     &format!("Ctrl+{}", i + 1),
@@ -65,7 +68,8 @@ impl App {
         let content_area = layout.get(1).copied().unwrap_or_default();
         let footer_area = layout.get(2).copied().unwrap_or_default();
 
-        let n = self.sessions.model.items.len();
+        // Read the sessions, not the table: the table is stale outside the sessions view.
+        let n = self.sessions_by_id.len();
         let hotkeys = self.config.bar(if self.view == View::Agent {
             "agent"
         } else {
@@ -91,9 +95,7 @@ impl App {
         );
 
         let agent = match (self.view, self.focused) {
-            (View::Agent, Some(id)) => {
-                self.sessions_by_id.iter_mut().find(|s| s.id == id)
-            }
+            (View::Agent, Some(id)) => self.session_mut(id),
             _ => None,
         };
         if let Some(s) = agent {
